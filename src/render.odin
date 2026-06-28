@@ -293,6 +293,9 @@ ez_gfx_render_submit_and_present :: proc(render: ^Ez_Gfx_Render) -> bool {
 		fmt.eprintf("failed to present swapchain image: %v\n", present_result)
 		ez_gfx_window_set_should_close(window, true)
 		return false
+	} else {
+		swapchain.last_presented_index = render.image_index
+		swapchain.has_presented_image = true
 	}
 	return true
 }

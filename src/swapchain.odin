@@ -8,14 +8,16 @@ import vk "vendor:vulkan"
 MAX_SWAPCHAIN_IMAGES :: 16
 
 Ez_Gfx_Swapchain :: struct {
-	handle:           vk.SwapchainKHR,
-	format:           vk.Format,
-	extent:           vk.Extent2D,
-	images:           [MAX_SWAPCHAIN_IMAGES]vk.Image,
-	image_views:      [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
-	image_layouts:    [MAX_SWAPCHAIN_IMAGES]vk.ImageLayout,
-	image_count:      u32,
-	present_finished: [MAX_SWAPCHAIN_IMAGES]vk.Semaphore,
+	handle:               vk.SwapchainKHR,
+	format:               vk.Format,
+	extent:               vk.Extent2D,
+	images:               [MAX_SWAPCHAIN_IMAGES]vk.Image,
+	image_views:          [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
+	image_layouts:        [MAX_SWAPCHAIN_IMAGES]vk.ImageLayout,
+	image_count:          u32,
+	present_finished:     [MAX_SWAPCHAIN_IMAGES]vk.Semaphore,
+	last_presented_index: u32,
+	has_presented_image:  bool,
 }
 
 ez_gfx_swapchain_recreate :: proc(
@@ -46,7 +48,7 @@ ez_gfx_swapchain_recreate :: proc(
 		imageColorSpace  = format.colorSpace,
 		imageExtent      = extent,
 		imageArrayLayers = 1,
-		imageUsage       = {.COLOR_ATTACHMENT},
+		imageUsage       = {.COLOR_ATTACHMENT, .TRANSFER_SRC},
 		imageSharingMode = .EXCLUSIVE,
 		preTransform     = capabilities.currentTransform,
 		compositeAlpha   = {.OPAQUE},
@@ -106,6 +108,8 @@ ez_gfx_swapchain_destroy :: proc(swapchain: ^Ez_Gfx_Swapchain) {
 		swapchain.image_layouts[i] = .UNDEFINED
 	}
 	swapchain.image_count = 0
+	swapchain.last_presented_index = 0
+	swapchain.has_presented_image = false
 
 	if swapchain.handle != vk.SwapchainKHR(0) {
 		vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
