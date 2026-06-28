@@ -1,5 +1,6 @@
 package main
 
+import sp "../vendor/odin-slang/slang"
 import "core:c"
 import "core:fmt"
 import "vendor:glfw"
@@ -15,6 +16,10 @@ Ez_Gfx_Ctx :: struct {
 	command_buffer:     vk.CommandBuffer,
 	image_available:    vk.Semaphore,
 	in_flight:          vk.Fence,
+	slang_session:      ^sp.IGlobalSession,
+	pipeline_layout:    vk.PipelineLayout,
+	pipeline:           vk.Pipeline,
+	index_buffer:       Ez_Gfx_Buffer,
 }
 
 vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
@@ -78,6 +83,8 @@ ez_gfx_ctx_wait_idle :: proc(ctx: ^Ez_Gfx_Ctx) {
 ez_gfx_ctx_destroy :: proc(ctx: ^Ez_Gfx_Ctx) {
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
+		ez_gfx_buffer_destroy(ctx, &ctx.index_buffer)
+		ez_gfx_pipeline_destroy(ctx)
 		if ctx.image_available != vk.Semaphore(0) {
 			vk.DestroySemaphore(ctx.device, ctx.image_available, nil)
 			ctx.image_available = vk.Semaphore(0)
@@ -93,6 +100,7 @@ ez_gfx_ctx_destroy :: proc(ctx: ^Ez_Gfx_Ctx) {
 		vk.DestroyDevice(ctx.device, nil)
 		ctx.device = nil
 	}
+	ez_gfx_shader_destroy_session(ctx)
 	if ctx.instance != nil {
 		vk.DestroyInstance(ctx.instance, nil)
 		ctx.instance = nil
@@ -190,11 +198,16 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		pNext            = &dynamic_rendering,
 		synchronization2 = true,
 	}
+	vulkan11_features := vk.PhysicalDeviceVulkan11Features {
+		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+		pNext                = &synchronization2,
+		shaderDrawParameters = true,
+	}
 
 	device_extensions := [?]cstring{vk.KHR_SWAPCHAIN_EXTENSION_NAME}
 	create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
-		pNext                   = &synchronization2,
+		pNext                   = &vulkan11_features,
 		queueCreateInfoCount    = 1,
 		pQueueCreateInfos       = &queue_info,
 		enabledExtensionCount   = u32(len(device_extensions)),

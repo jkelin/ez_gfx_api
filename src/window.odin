@@ -64,6 +64,7 @@ ez_gfx_window_create :: proc(
 
 	glfw.SetWindowUserPointer(window.handle, window)
 	glfw.SetFramebufferSizeCallback(window.handle, ez_gfx_window_framebuffer_size_callback)
+	glfw.SwapInterval(1)
 	return true
 }
 

@@ -2,18 +2,18 @@ package main
 
 import "core:c"
 import "core:fmt"
-import "core:math"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
 WIDTH :: 1280
 HEIGHT :: 720
-RUN_SECONDS :: 2.0
 UINT64_MAX :: ~u64(0)
 
+TRIANGLE_INDICES :: [3]u32{0, 1, 2}
+
 App :: struct {
-	ctx:         Ez_Gfx_Ctx,
-	windows:     [MAX_WINDOWS]Ez_Gfx_Window,
+	ctx:          Ez_Gfx_Ctx,
+	windows:      [MAX_WINDOWS]Ez_Gfx_Window,
 	window_count: int,
 }
 
@@ -40,27 +40,60 @@ init_app :: proc(app: ^App) -> bool {
 	if !ez_gfx_window_create_surface(main_window, &app.ctx) do return false
 	if !ez_gfx_ctx_init_device(&app.ctx, main_window.surface) do return false
 	if !ez_gfx_window_recreate_swapchain(main_window, &app.ctx) do return false
+	if !ez_gfx_triangle_init(&app.ctx, &main_window.swapchain) do return false
+
+	return true
+}
+
+// Compiles the Slang shader, creates the graphics pipeline, and uploads the index buffer.
+ez_gfx_triangle_init :: proc(ctx: ^Ez_Gfx_Ctx, swapchain: ^Ez_Gfx_Swapchain) -> bool {
+	if !ez_gfx_shader_init_session(ctx) do return false
+
+	shader_module, shader_ok := ez_gfx_shader_compile_triangle(ctx)
+	if !shader_ok do return false
+	defer vk.DestroyShaderModule(ctx.device, shader_module, nil)
+
+	if !ez_gfx_pipeline_create_triangle(ctx, shader_module, swapchain.format) do return false
+
+	index_size := vk.DeviceSize(size_of(TRIANGLE_INDICES))
+	index_buffer, index_ok := ez_gfx_buffer_create(
+		ctx,
+		index_size,
+		{.INDEX_BUFFER},
+		{.HOST_VISIBLE, .HOST_COHERENT},
+	)
+	if !index_ok do return false
+	ctx.index_buffer = index_buffer
+
+	indices := TRIANGLE_INDICES
+	if !ez_gfx_buffer_write(&ctx.index_buffer, ctx, indices[:]) do return false
 
 	return true
 }
 
 run :: proc(app: ^App) {
 	main_window := &app.windows[0]
+	run_seconds := ez_gfx_config_run_seconds()
+	screenshot_enabled := ez_gfx_config_screenshot_enabled()
 	start_time := glfw.GetTime()
-	for {
+
+	for !ez_gfx_window_should_close(main_window) {
 		ez_gfx_window_poll_events()
-
-		if ez_gfx_window_should_close(main_window) ||
-		   glfw.GetTime() - start_time >= RUN_SECONDS {
-			ez_gfx_window_set_should_close(main_window, true)
-			break
-		}
-
+		if glfw.GetTime() - start_time >= run_seconds do break
 		draw_frame(app, main_window)
 	}
 
-	// Stop GPU work before destroying swapchain and device-owned resources.
 	ez_gfx_ctx_wait_idle(&app.ctx)
+	if app.ctx.in_flight != vk.Fence(0) {
+		vk.WaitForFences(app.ctx.device, 1, &app.ctx.in_flight, true, UINT64_MAX)
+	}
+	glfw.PollEvents()
+
+	if screenshot_enabled {
+		if !ez_gfx_screenshot_save_window(main_window, SCREENSHOT_PATH) {
+			fmt.eprintln("failed to save screenshot")
+		}
+	}
 }
 
 draw_frame :: proc(app: ^App, window: ^Ez_Gfx_Window) {
@@ -95,7 +128,7 @@ draw_frame :: proc(app: ^App, window: ^Ez_Gfx_Window) {
 
 	vk.ResetFences(ctx.device, 1, &ctx.in_flight)
 	vk.ResetCommandBuffer(ctx.command_buffer, {})
-	record_clear_commands(ctx, swapchain, image_index)
+	record_frame_commands(ctx, swapchain, image_index)
 
 	wait_stage := vk.SemaphoreSubmitInfo {
 		sType     = .SEMAPHORE_SUBMIT_INFO,
@@ -147,11 +180,7 @@ draw_frame :: proc(app: ^App, window: ^Ez_Gfx_Window) {
 	}
 }
 
-record_clear_commands :: proc(
-	ctx: ^Ez_Gfx_Ctx,
-	swapchain: ^Ez_Gfx_Swapchain,
-	image_index: u32,
-) {
+record_frame_commands :: proc(ctx: ^Ez_Gfx_Ctx, swapchain: ^Ez_Gfx_Swapchain, image_index: u32) {
 	begin_info := vk.CommandBufferBeginInfo {
 		sType = .COMMAND_BUFFER_BEGIN_INFO,
 		flags = {.ONE_TIME_SUBMIT},
@@ -170,14 +199,8 @@ record_clear_commands :: proc(
 		{.COLOR_ATTACHMENT_OUTPUT},
 	)
 
-	time := glfw.GetTime()
-	// Best-practices validation warns on unlimited clear-color values, so keep the sine clear on registered grays.
-	gray: f32 = 0.0
-	if math.sin(time) > 0 {
-		gray = 1.0
-	}
 	clear_value := vk.ClearValue {
-		color = vk.ClearColorValue{float32 = {gray, gray, gray, 1.0}},
+		color = vk.ClearColorValue{float32 = {0.1, 0.1, 0.1, 1.0}},
 	}
 	color_attachment := vk.RenderingAttachmentInfo {
 		sType       = .RENDERING_ATTACHMENT_INFO,
@@ -188,14 +211,35 @@ record_clear_commands :: proc(
 		clearValue  = clear_value,
 	}
 	render_info := vk.RenderingInfo {
-		sType                = .RENDERING_INFO,
-		renderArea           = vk.Rect2D{extent = swapchain.extent},
-		layerCount           = 1,
+		sType = .RENDERING_INFO,
+		renderArea = vk.Rect2D{extent = swapchain.extent},
+		layerCount = 1,
 		colorAttachmentCount = 1,
-		pColorAttachments    = &color_attachment,
+		pColorAttachments = &color_attachment,
 	}
 
 	vk.CmdBeginRendering(ctx.command_buffer, &render_info)
+
+	viewport := vk.Viewport {
+		x        = 0,
+		y        = 0,
+		width    = f32(swapchain.extent.width),
+		height   = f32(swapchain.extent.height),
+		minDepth = 0.0,
+		maxDepth = 1.0,
+	}
+	vk.CmdSetViewport(ctx.command_buffer, 0, 1, &viewport)
+
+	scissor := vk.Rect2D {
+		offset = {x = 0, y = 0},
+		extent = swapchain.extent,
+	}
+	vk.CmdSetScissor(ctx.command_buffer, 0, 1, &scissor)
+
+	vk.CmdBindPipeline(ctx.command_buffer, .GRAPHICS, ctx.pipeline)
+	vk.CmdBindIndexBuffer(ctx.command_buffer, ctx.index_buffer.handle, 0, .UINT32)
+	vk.CmdDrawIndexed(ctx.command_buffer, 3, 1, 0, 0, 0)
+
 	vk.CmdEndRendering(ctx.command_buffer)
 
 	transition_image(
@@ -222,22 +266,22 @@ transition_image :: proc(
 ) {
 	// Dynamic rendering keeps render passes out of the sample, so layouts are explicit here.
 	barrier := vk.ImageMemoryBarrier2 {
-		sType               = .IMAGE_MEMORY_BARRIER_2,
-		srcStageMask        = src_stage,
-		srcAccessMask       = src_access,
-		dstStageMask        = dst_stage,
-		dstAccessMask       = dst_access,
-		oldLayout           = old_layout,
-		newLayout           = new_layout,
+		sType = .IMAGE_MEMORY_BARRIER_2,
+		srcStageMask = src_stage,
+		srcAccessMask = src_access,
+		dstStageMask = dst_stage,
+		dstAccessMask = dst_access,
+		oldLayout = old_layout,
+		newLayout = new_layout,
 		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-		image               = image,
+		image = image,
 		subresourceRange = vk.ImageSubresourceRange {
-			aspectMask     = {.COLOR},
-			baseMipLevel   = 0,
-			levelCount     = 1,
+			aspectMask = {.COLOR},
+			baseMipLevel = 0,
+			levelCount = 1,
 			baseArrayLayer = 0,
-			layerCount     = 1,
+			layerCount = 1,
 		},
 	}
 	dependency := vk.DependencyInfo {
