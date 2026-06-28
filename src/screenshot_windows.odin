@@ -45,12 +45,14 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 	defer win32.DeleteObject(win32.HGDIOBJ(bitmap))
 
 	old_bitmap := win32.SelectObject(memory_dc, win32.HGDIOBJ(bitmap))
-	defer win32.SelectObject(memory_dc, old_bitmap)
 
 	if !win32.BitBlt(memory_dc, 0, 0, width, height, window_dc, 0, 0, win32.SRCCOPY) {
+		win32.SelectObject(memory_dc, old_bitmap)
 		fmt.eprintln("failed to copy window pixels")
 		return false
 	}
+	// GetDIBits requires the bitmap to be deselected from its device context.
+	win32.SelectObject(memory_dc, old_bitmap)
 
 	row_stride := ((width * 3) + 3) / 4 * 4
 	pixel_data_size := row_stride * height
@@ -67,7 +69,9 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 		biPlanes      = 1,
 		biBitCount    = 24,
 		biCompression = win32.BI_RGB,
+		biSizeImage   = u32(pixel_data_size),
 	}
+	bitmap_info := win32.BITMAPINFO{bmiHeader = info}
 
 	if win32.GetDIBits(
 		   memory_dc,
@@ -75,7 +79,7 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 		   0,
 		   u32(height),
 		   raw_data(pixels),
-		   &win32.BITMAPINFO{bmiHeader = info},
+		   &bitmap_info,
 		   win32.DIB_RGB_COLORS,
 	   ) ==
 	   0 {

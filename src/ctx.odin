@@ -7,19 +7,25 @@ import "vendor:glfw"
 import vk "vendor:vulkan"
 
 Ez_Gfx_Ctx :: struct {
-	instance:           vk.Instance,
-	physical_device:    vk.PhysicalDevice,
-	device:             vk.Device,
-	queue_family_index: u32,
-	graphics_queue:     vk.Queue,
-	command_pool:       vk.CommandPool,
-	command_buffer:     vk.CommandBuffer,
-	image_available:    vk.Semaphore,
-	in_flight:          vk.Fence,
-	slang_session:      ^sp.IGlobalSession,
-	pipeline_layout:    vk.PipelineLayout,
-	pipeline:           vk.Pipeline,
-	index_buffer:       Ez_Gfx_Buffer,
+	instance:              vk.Instance,
+	physical_device:       vk.PhysicalDevice,
+	device:                vk.Device,
+	queue_family_index:    u32,
+	graphics_queue:        vk.Queue,
+	command_pool:          vk.CommandPool,
+	command_buffer:        vk.CommandBuffer,
+	image_available:       vk.Semaphore,
+	in_flight:             vk.Fence,
+	slang_session:         ^sp.IGlobalSession,
+	pipeline_layout:       vk.PipelineLayout,
+	pipeline:              vk.Pipeline,
+	vertex_manager:        Ez_Gfx_Vertex_Manager,
+	descriptor_set_layout: vk.DescriptorSetLayout,
+	descriptor_pool:       vk.DescriptorPool,
+	descriptor_set:        vk.DescriptorSet,
+	triangle_index_start:  u32,
+	triangle_index_count:  u32,
+	triangle_vertex_start: u32,
 }
 
 vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
@@ -83,8 +89,17 @@ ez_gfx_ctx_wait_idle :: proc(ctx: ^Ez_Gfx_Ctx) {
 ez_gfx_ctx_destroy :: proc(ctx: ^Ez_Gfx_Ctx) {
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
-		ez_gfx_buffer_destroy(ctx, &ctx.index_buffer)
+		ez_gfx_vertex_manager_destroy(ctx, &ctx.vertex_manager)
 		ez_gfx_pipeline_destroy(ctx)
+		if ctx.descriptor_pool != vk.DescriptorPool(0) {
+			vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
+			ctx.descriptor_pool = vk.DescriptorPool(0)
+		}
+		if ctx.descriptor_set_layout != vk.DescriptorSetLayout(0) {
+			vk.DestroyDescriptorSetLayout(ctx.device, ctx.descriptor_set_layout, nil)
+			ctx.descriptor_set_layout = vk.DescriptorSetLayout(0)
+		}
+		ctx.descriptor_set = vk.DescriptorSet(0)
 		if ctx.image_available != vk.Semaphore(0) {
 			vk.DestroySemaphore(ctx.device, ctx.image_available, nil)
 			ctx.image_available = vk.Semaphore(0)

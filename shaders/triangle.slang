@@ -3,18 +3,21 @@ struct V2P
     float4 pos : SV_Position;
 };
 
-// Three hardcoded triangle vertices; the index buffer selects which one to use.
-static const float3 VERTICES[3] = {
-    { -0.5f, -0.5f, 0.0f },
-    { 0.5f, -0.5f, 0.0f },
-    { 0.0f, 0.5f, 0.0f },
+[__AttributeUsage(_AttributeTargets.Var)]
+struct VertexHeapAttribute
+{
+    string name;
 };
+
+[VertexHeap("position")]
+[[vk::binding(0, 0)]]
+StructuredBuffer<float4> positions;
 
 [shader("vertex")]
 V2P vertexmain(uint vertex_index: SV_VertexID)
 {
     V2P output;
-    output.pos = float4(VERTICES[vertex_index], 1.0);
+    output.pos = float4(positions[vertex_index].xyz, 1.0);
     return output;
 }
 

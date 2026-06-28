@@ -10,6 +10,8 @@ HEIGHT :: 720
 UINT64_MAX :: ~u64(0)
 
 TRIANGLE_INDICES :: [3]u32{0, 1, 2}
+TRIANGLE_POSITIONS :: [3][4]f32{{-0.5, -0.5, 0.0, 1.0}, {0.5, -0.5, 0.0, 1.0}, {0.0, 0.5, 0.0, 1.0}}
+TRIANGLE_POSITION_HEAP :: "position"
 
 App :: struct {
 	ctx:          Ez_Gfx_Ctx,
@@ -31,17 +33,25 @@ main :: proc() {
 }
 
 init_app :: proc(app: ^App) -> bool {
+	fmt.println("checkpoint: glfw init")
 	if !ez_gfx_glfw_init() do return false
 
 	app.window_count = 1
 	main_window := &app.windows[0]
+	fmt.println("checkpoint: window create")
 	if !ez_gfx_window_create(main_window, "ez_gfx_api Vulkan", WIDTH, HEIGHT) do return false
+	fmt.println("checkpoint: instance create")
 	if !ez_gfx_ctx_create_instance(&app.ctx) do return false
+	fmt.println("checkpoint: surface create")
 	if !ez_gfx_window_create_surface(main_window, &app.ctx) do return false
+	fmt.println("checkpoint: device init")
 	if !ez_gfx_ctx_init_device(&app.ctx, main_window.surface) do return false
+	fmt.println("checkpoint: swapchain recreate")
 	if !ez_gfx_window_recreate_swapchain(main_window, &app.ctx) do return false
+	fmt.println("checkpoint: triangle init")
 	if !ez_gfx_triangle_init(&app.ctx, &main_window.swapchain) do return false
 
+	fmt.println("checkpoint: init done")
 	return true
 }
 
@@ -49,24 +59,41 @@ init_app :: proc(app: ^App) -> bool {
 ez_gfx_triangle_init :: proc(ctx: ^Ez_Gfx_Ctx, swapchain: ^Ez_Gfx_Swapchain) -> bool {
 	if !ez_gfx_shader_init_session(ctx) do return false
 
-	shader_module, shader_ok := ez_gfx_shader_compile_triangle(ctx)
+	shader_program, shader_ok := ez_gfx_shader_compile_triangle(ctx)
 	if !shader_ok do return false
-	defer vk.DestroyShaderModule(ctx.device, shader_module, nil)
+	defer vk.DestroyShaderModule(ctx.device, shader_program.module, nil)
 
-	if !ez_gfx_pipeline_create_triangle(ctx, shader_module, swapchain.format) do return false
-
-	index_size := vk.DeviceSize(size_of(TRIANGLE_INDICES))
-	index_buffer, index_ok := ez_gfx_buffer_create(
+	vertex_heap_names := [?]string{TRIANGLE_POSITION_HEAP}
+	if !ez_gfx_vertex_manager_create(
 		ctx,
-		index_size,
-		{.INDEX_BUFFER},
-		{.HOST_VISIBLE, .HOST_COHERENT},
-	)
-	if !index_ok do return false
-	ctx.index_buffer = index_buffer
+		&ctx.vertex_manager,
+		vertex_heap_names[:],
+		vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
+	) {
+		return false
+	}
 
 	indices := TRIANGLE_INDICES
-	if !ez_gfx_buffer_write(&ctx.index_buffer, ctx, indices[:]) do return false
+	index_start, index_ok := ez_gfx_vertex_manager_upload_indices(
+		&ctx.vertex_manager,
+		ctx,
+		indices[:],
+	)
+	if !index_ok do return false
+	ctx.triangle_index_start = index_start
+	ctx.triangle_index_count = u32(len(indices))
+
+	positions := TRIANGLE_POSITIONS
+	vertex_start, vertex_ok := ez_gfx_vertex_manager_upload_vertices(
+		&ctx.vertex_manager,
+		ctx,
+		TRIANGLE_POSITION_HEAP,
+		positions[:],
+	)
+	if !vertex_ok do return false
+	ctx.triangle_vertex_start = vertex_start
+
+	if !ez_gfx_pipeline_create_triangle(ctx, &shader_program, swapchain.format) do return false
 
 	return true
 }
@@ -237,8 +264,32 @@ record_frame_commands :: proc(ctx: ^Ez_Gfx_Ctx, swapchain: ^Ez_Gfx_Swapchain, im
 	vk.CmdSetScissor(ctx.command_buffer, 0, 1, &scissor)
 
 	vk.CmdBindPipeline(ctx.command_buffer, .GRAPHICS, ctx.pipeline)
-	vk.CmdBindIndexBuffer(ctx.command_buffer, ctx.index_buffer.handle, 0, .UINT32)
-	vk.CmdDrawIndexed(ctx.command_buffer, 3, 1, 0, 0, 0)
+	if ctx.descriptor_set != vk.DescriptorSet(0) {
+		vk.CmdBindDescriptorSets(
+			ctx.command_buffer,
+			.GRAPHICS,
+			ctx.pipeline_layout,
+			0,
+			1,
+			&ctx.descriptor_set,
+			0,
+			nil,
+		)
+	}
+	vk.CmdBindIndexBuffer(
+		ctx.command_buffer,
+		ctx.vertex_manager.index_heap.buffer.handle,
+		0,
+		.UINT32,
+	)
+	vk.CmdDrawIndexed(
+		ctx.command_buffer,
+		ctx.triangle_index_count,
+		1,
+		ctx.triangle_index_start,
+		i32(ctx.triangle_vertex_start),
+		0,
+	)
 
 	vk.CmdEndRendering(ctx.command_buffer)
 

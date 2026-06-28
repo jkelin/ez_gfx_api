@@ -79,14 +79,25 @@ ez_gfx_buffer_create :: proc(
 
 // Maps host-visible memory and copies slice data into the buffer.
 ez_gfx_buffer_write :: proc(buffer: ^Ez_Gfx_Buffer, ctx: ^Ez_Gfx_Ctx, data: []$T) -> bool {
+	return ez_gfx_buffer_write_at(buffer, ctx, 0, data)
+}
+
+// Maps host-visible memory and copies slice data into a byte range of the buffer.
+ez_gfx_buffer_write_at :: proc(
+	buffer: ^Ez_Gfx_Buffer,
+	ctx: ^Ez_Gfx_Ctx,
+	offset: vk.DeviceSize,
+	data: []$T,
+) -> bool {
 	byte_size := len(data) * size_of(T)
-	if vk.DeviceSize(byte_size) > buffer.size {
+	if offset + vk.DeviceSize(byte_size) > buffer.size {
 		fmt.eprintln("buffer write exceeds allocation size")
 		return false
 	}
 
 	mapped: rawptr
-	if vk.MapMemory(ctx.device, buffer.memory, 0, buffer.size, {}, &mapped) != .SUCCESS {
+	if vk.MapMemory(ctx.device, buffer.memory, offset, vk.DeviceSize(byte_size), {}, &mapped) !=
+	   .SUCCESS {
 		fmt.eprintln("failed to map buffer memory")
 		return false
 	}
