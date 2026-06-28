@@ -7,19 +7,21 @@ import "vendor:glfw"
 import vk "vendor:vulkan"
 
 Ez_Gfx_Ctx :: struct {
-	instance:           vk.Instance,
-	physical_device:    vk.PhysicalDevice,
-	device:             vk.Device,
-	queue_family_index: u32,
-	graphics_queue:     vk.Queue,
-	command_pool:       vk.CommandPool,
-	command_buffer:     vk.CommandBuffer,
-	image_available:    vk.Semaphore,
-	in_flight:          vk.Fence,
-	slang_session:      ^sp.IGlobalSession,
-	vertex_manager:     Ez_Gfx_Vertex_Manager,
-	pipeline_manager:   Ez_Gfx_Pipeline_Manager,
-	indirect_manager:   Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
+	instance:              vk.Instance,
+	physical_device:       vk.PhysicalDevice,
+	device:                vk.Device,
+	queue_family_index:    u32,
+	graphics_queue:        vk.Queue,
+	command_pool:          vk.CommandPool,
+	command_buffer:        vk.CommandBuffer,
+	image_available:       vk.Semaphore,
+	image_acquired:        vk.Fence,
+	in_flight:             vk.Fence,
+	slang_session:         ^sp.IGlobalSession,
+	vertex_manager:        Ez_Gfx_Vertex_Manager,
+	pipeline_manager:      Ez_Gfx_Pipeline_Manager,
+	indirect_manager:      Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
+	render_target_manager: Ez_Gfx_Render_Target_Manager,
 }
 
 @(thread_local)
@@ -107,9 +109,14 @@ ez_gfx_ctx_destroy :: proc() {
 		ez_gfx_vertex_manager_destroy(&ctx.vertex_manager)
 		ez_gfx_pipeline_manager_destroy(&ctx.pipeline_manager)
 		ez_gfx_indirect_buffer_manager_destroy(&ctx.indirect_manager)
+		ez_gfx_render_target_manager_destroy(&ctx.render_target_manager)
 		if ctx.image_available != vk.Semaphore(0) {
 			vk.DestroySemaphore(ctx.device, ctx.image_available, nil)
 			ctx.image_available = vk.Semaphore(0)
+		}
+		if ctx.image_acquired != vk.Fence(0) {
+			vk.DestroyFence(ctx.device, ctx.image_acquired, nil)
+			ctx.image_acquired = vk.Fence(0)
 		}
 		if ctx.in_flight != vk.Fence(0) {
 			vk.DestroyFence(ctx.device, ctx.in_flight, nil)
@@ -322,6 +329,11 @@ ez_gfx_ctx_create_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 
 	if vk.CreateSemaphore(ctx.device, &semaphore_info, nil, &ctx.image_available) != .SUCCESS {
 		fmt.eprintln("failed to create acquire semaphore")
+		return false
+	}
+	if vk.CreateFence(ctx.device, &{sType = .FENCE_CREATE_INFO}, nil, &ctx.image_acquired) !=
+	   .SUCCESS {
+		fmt.eprintln("failed to create acquire fence")
 		return false
 	}
 	if vk.CreateFence(ctx.device, &fence_info, nil, &ctx.in_flight) != .SUCCESS {

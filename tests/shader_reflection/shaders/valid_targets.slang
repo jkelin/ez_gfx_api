@@ -5,10 +5,6 @@ struct V2P
     float4 pos : SV_Position;
 };
 
-[VertexHeap("position")]
-[[vk::binding(0, 0)]]
-StructuredBuffer<float4> positions;
-
 [RelativeScale(1.0)]
 [TargetLayout("depth", "d32_float")]
 [[vk::binding(1, 0)]]
@@ -19,7 +15,7 @@ Texture2D<float> depth;
 V2P vertexmain(uint vertex_index: SV_VertexID)
 {
     V2P output;
-    output.pos = float4(positions[vertex_index].xyz, 1.0);
+    output.pos = float4(0.0, 0.0, 0.0, 1.0);
     return output;
 }
 
