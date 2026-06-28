@@ -1,4 +1,4 @@
-package main
+package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
 import "core:c"
@@ -7,25 +7,33 @@ import "vendor:glfw"
 import vk "vendor:vulkan"
 
 Ez_Gfx_Ctx :: struct {
-	instance:              vk.Instance,
-	physical_device:       vk.PhysicalDevice,
-	device:                vk.Device,
-	queue_family_index:    u32,
-	graphics_queue:        vk.Queue,
-	command_pool:          vk.CommandPool,
-	command_buffer:        vk.CommandBuffer,
-	image_available:       vk.Semaphore,
-	in_flight:             vk.Fence,
-	slang_session:         ^sp.IGlobalSession,
-	pipeline_layout:       vk.PipelineLayout,
-	pipeline:              vk.Pipeline,
-	vertex_manager:        Ez_Gfx_Vertex_Manager,
-	descriptor_set_layout: vk.DescriptorSetLayout,
-	descriptor_pool:       vk.DescriptorPool,
-	descriptor_set:        vk.DescriptorSet,
-	triangle_index_start:  u32,
-	triangle_index_count:  u32,
-	triangle_vertex_start: u32,
+	instance:           vk.Instance,
+	physical_device:    vk.PhysicalDevice,
+	device:             vk.Device,
+	queue_family_index: u32,
+	graphics_queue:     vk.Queue,
+	command_pool:       vk.CommandPool,
+	command_buffer:     vk.CommandBuffer,
+	image_available:    vk.Semaphore,
+	in_flight:          vk.Fence,
+	slang_session:      ^sp.IGlobalSession,
+	vertex_manager:     Ez_Gfx_Vertex_Manager,
+	pipeline_manager:   Ez_Gfx_Pipeline_Manager,
+	indirect_manager:   Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
+}
+
+@(thread_local)
+ez_gfx_current_ctx: ^Ez_Gfx_Ctx
+
+ez_gfx_set_current_ctx :: proc(ctx: ^Ez_Gfx_Ctx) {
+	ez_gfx_current_ctx = ctx
+}
+
+ez_gfx_get_current_ctx :: proc() -> ^Ez_Gfx_Ctx {
+	if ez_gfx_current_ctx == nil {
+		fmt.eprintln("ez_gfx: no current context set")
+	}
+	return ez_gfx_current_ctx
 }
 
 vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
@@ -35,6 +43,7 @@ vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
 
 // Creates the Vulkan instance; call before creating any window surface.
 ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+	ez_gfx_set_current_ctx(ctx)
 	vk.load_proc_addresses_custom(vulkan_global_proc_loader)
 
 	// TODO: Add validation layers and a debug messenger before growing this beyond boilerplate.
@@ -70,7 +79,9 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 }
 
 // Selects a present-capable device and creates command/sync resources; requires a valid surface.
-ez_gfx_ctx_init_device :: proc(ctx: ^Ez_Gfx_Ctx, surface: vk.SurfaceKHR) -> bool {
+ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
 	if !ez_gfx_ctx_pick_physical_device(ctx, surface) do return false
 	if !ez_gfx_ctx_create_device(ctx) do return false
 	vk.load_proc_addresses(ctx.device)
@@ -80,26 +91,22 @@ ez_gfx_ctx_init_device :: proc(ctx: ^Ez_Gfx_Ctx, surface: vk.SurfaceKHR) -> bool
 	return true
 }
 
-ez_gfx_ctx_wait_idle :: proc(ctx: ^Ez_Gfx_Ctx) {
+ez_gfx_ctx_wait_idle :: proc() {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
 	}
 }
 
-ez_gfx_ctx_destroy :: proc(ctx: ^Ez_Gfx_Ctx) {
+ez_gfx_ctx_destroy :: proc() {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
-		ez_gfx_vertex_manager_destroy(ctx, &ctx.vertex_manager)
-		ez_gfx_pipeline_destroy(ctx)
-		if ctx.descriptor_pool != vk.DescriptorPool(0) {
-			vk.DestroyDescriptorPool(ctx.device, ctx.descriptor_pool, nil)
-			ctx.descriptor_pool = vk.DescriptorPool(0)
-		}
-		if ctx.descriptor_set_layout != vk.DescriptorSetLayout(0) {
-			vk.DestroyDescriptorSetLayout(ctx.device, ctx.descriptor_set_layout, nil)
-			ctx.descriptor_set_layout = vk.DescriptorSetLayout(0)
-		}
-		ctx.descriptor_set = vk.DescriptorSet(0)
+		ez_gfx_vertex_manager_destroy(&ctx.vertex_manager)
+		ez_gfx_pipeline_manager_destroy(&ctx.pipeline_manager)
+		ez_gfx_indirect_buffer_manager_destroy(&ctx.indirect_manager)
 		if ctx.image_available != vk.Semaphore(0) {
 			vk.DestroySemaphore(ctx.device, ctx.image_available, nil)
 			ctx.image_available = vk.Semaphore(0)
@@ -119,6 +126,9 @@ ez_gfx_ctx_destroy :: proc(ctx: ^Ez_Gfx_Ctx) {
 	if ctx.instance != nil {
 		vk.DestroyInstance(ctx.instance, nil)
 		ctx.instance = nil
+	}
+	if ez_gfx_current_ctx == ctx {
+		ez_gfx_current_ctx = nil
 	}
 }
 
@@ -155,6 +165,9 @@ ez_gfx_ctx_is_device_suitable :: proc(
 	queue_index: ^u32,
 ) -> bool {
 	if !ez_gfx_ctx_device_supports_extension(device, vk.KHR_SWAPCHAIN_EXTENSION_NAME) {
+		return false
+	}
+	if !ez_gfx_ctx_device_supports_required_features(device) {
 		return false
 	}
 
@@ -204,25 +217,31 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		pQueuePriorities = &priority,
 	}
 
-	dynamic_rendering := vk.PhysicalDeviceDynamicRenderingFeatures {
-		sType            = .PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+	vulkan13_features := vk.PhysicalDeviceVulkan13Features {
+		sType            = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
 		dynamicRendering = true,
-	}
-	synchronization2 := vk.PhysicalDeviceSynchronization2Features {
-		sType            = .PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES,
-		pNext            = &dynamic_rendering,
 		synchronization2 = true,
+	}
+	vulkan12_features := vk.PhysicalDeviceVulkan12Features {
+		sType             = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+		pNext             = &vulkan13_features,
+		drawIndirectCount = true,
 	}
 	vulkan11_features := vk.PhysicalDeviceVulkan11Features {
 		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-		pNext                = &synchronization2,
+		pNext                = &vulkan12_features,
 		shaderDrawParameters = true,
+	}
+	features := vk.PhysicalDeviceFeatures2 {
+		sType = .PHYSICAL_DEVICE_FEATURES_2,
+		pNext = &vulkan11_features,
+		features = {multiDrawIndirect = true},
 	}
 
 	device_extensions := [?]cstring{vk.KHR_SWAPCHAIN_EXTENSION_NAME}
 	create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
-		pNext                   = &vulkan11_features,
+		pNext                   = &features,
 		queueCreateInfoCount    = 1,
 		pQueueCreateInfos       = &queue_info,
 		enabledExtensionCount   = u32(len(device_extensions)),
@@ -236,6 +255,35 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	}
 
 	vk.GetDeviceQueue(ctx.device, ctx.queue_family_index, 0, &ctx.graphics_queue)
+	return true
+}
+
+ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) -> bool {
+	vulkan13_features := vk.PhysicalDeviceVulkan13Features {
+		sType = .PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+	}
+	vulkan12_features := vk.PhysicalDeviceVulkan12Features {
+		sType = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+		pNext = &vulkan13_features,
+	}
+	vulkan11_features := vk.PhysicalDeviceVulkan11Features {
+		sType = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+		pNext = &vulkan12_features,
+	}
+	features := vk.PhysicalDeviceFeatures2 {
+		sType = .PHYSICAL_DEVICE_FEATURES_2,
+		pNext = &vulkan11_features,
+	}
+	vk.GetPhysicalDeviceFeatures2(device, &features)
+
+	if !features.features.multiDrawIndirect ||
+	   !vulkan12_features.drawIndirectCount ||
+	   !vulkan13_features.dynamicRendering ||
+	   !vulkan13_features.synchronization2 ||
+	   !vulkan11_features.shaderDrawParameters {
+		fmt.eprintln("Vulkan device is missing required EasyGraphics rendering features")
+		return false
+	}
 	return true
 }
 

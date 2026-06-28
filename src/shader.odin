@@ -1,13 +1,12 @@
-package main
+package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
 import "core:fmt"
 import "core:slice"
 import vk "vendor:vulkan"
 
-SLANG_SHADER_PATH :: "shaders/triangle.slang"
-SLANG_VERTEX_ENTRY :: "vertexmain"
-SLANG_FRAGMENT_ENTRY :: "fragmentmain"
+EZ_GFX_DEFAULT_VERTEX_ENTRY :: cstring("vertexmain")
+EZ_GFX_DEFAULT_FRAGMENT_ENTRY :: cstring("fragmentmain")
 SLANG_VERTEX_HEAP_ATTRIBUTE :: "VertexHeap"
 EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS :: 8
 
@@ -19,9 +18,17 @@ Ez_Gfx_Vertex_Heap_Binding :: struct {
 }
 
 Ez_Gfx_Shader_Program :: struct {
+	desc:                      Ez_Gfx_Shader_Desc,
+	identity:                  u64,
 	module:                    vk.ShaderModule,
 	vertex_heap_bindings:      [EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS]Ez_Gfx_Vertex_Heap_Binding,
 	vertex_heap_binding_count: int,
+}
+
+Ez_Gfx_Shader_Desc :: struct {
+	path:           cstring,
+	vertex_entry:   cstring,
+	fragment_entry: cstring,
 }
 
 ez_gfx_slang_check :: proc(result: sp.Result, loc := #caller_location) -> bool {
@@ -45,7 +52,10 @@ ez_gfx_slang_diagnostics_check :: proc(diagnostics: ^sp.IBlob) -> bool {
 }
 
 // Creates the long-lived Slang global session used for shader compilation.
-ez_gfx_shader_init_session :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+ez_gfx_shader_init_session :: proc() -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+	if ctx.slang_session != nil do return true
 	if sp.createGlobalSession(sp.API_VERSION, &ctx.slang_session) != sp.OK {
 		fmt.eprintln("failed to create Slang global session")
 		return false
@@ -60,13 +70,20 @@ ez_gfx_shader_destroy_session :: proc(ctx: ^Ez_Gfx_Ctx) {
 	}
 }
 
-// Compiles the triangle shader to SPIR-V and creates a Vulkan shader module.
-ez_gfx_shader_compile_triangle :: proc(
-	ctx: ^Ez_Gfx_Ctx,
-) -> (
-	program: Ez_Gfx_Shader_Program,
-	ok: bool,
-) {
+// Compiles a Slang shader to SPIR-V and creates a Vulkan shader module.
+ez_gfx_shader_compile :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_Program) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+	if ctx.slang_session == nil {
+		if !ez_gfx_shader_init_session() do return false
+	}
+	program^ = {}
+	shader_desc := desc
+	if shader_desc.vertex_entry == nil do shader_desc.vertex_entry = EZ_GFX_DEFAULT_VERTEX_ENTRY
+	if shader_desc.fragment_entry == nil do shader_desc.fragment_entry = EZ_GFX_DEFAULT_FRAGMENT_ENTRY
+	program.desc = shader_desc
+	program.identity = ez_gfx_shader_desc_identity(shader_desc)
+
 	target_desc := sp.TargetDesc {
 		structureSize = size_of(sp.TargetDesc),
 		format        = .SPIRV,
@@ -87,42 +104,44 @@ ez_gfx_shader_compile_triangle :: proc(
 
 	session: ^sp.ISession
 	if !ez_gfx_slang_check(ctx.slang_session->createSession(session_desc, &session)) {
-		return program, false
+		return false
 	}
-	defer session->release()
+	// TODO: Audit odin-slang ownership before releasing session/module/component objects here.
 
 	diagnostics: ^sp.IBlob
-	slang_module := session->loadModule(SLANG_SHADER_PATH, &diagnostics)
+	slang_module := session->loadModule(shader_desc.path, &diagnostics)
 	if slang_module == nil {
 		_ = ez_gfx_slang_diagnostics_check(diagnostics)
 		fmt.eprintln("failed to load Slang shader module")
-		return program, false
+		return false
 	}
-	defer slang_module->release()
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return program, false
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
 
 	vertex_entry: ^sp.IEntryPoint
-	if !ez_gfx_slang_check(slang_module->findEntryPointByName(SLANG_VERTEX_ENTRY, &vertex_entry)) {
-		return program, false
+	if !ez_gfx_slang_check(
+		slang_module->findEntryPointByName(shader_desc.vertex_entry, &vertex_entry),
+	) {
+		return false
 	}
 	if vertex_entry == nil {
-		fmt.eprintf("missing Slang entry point: %v\n", SLANG_VERTEX_ENTRY)
-		return program, false
+		fmt.eprintf("missing Slang entry point: %v\n", shader_desc.vertex_entry)
+		return false
 	}
 
 	fragment_entry: ^sp.IEntryPoint
 	if !ez_gfx_slang_check(
-		slang_module->findEntryPointByName(SLANG_FRAGMENT_ENTRY, &fragment_entry),
+		slang_module->findEntryPointByName(shader_desc.fragment_entry, &fragment_entry),
 	) {
-		return program, false
+		return false
 	}
 	if fragment_entry == nil {
-		fmt.eprintf("missing Slang entry point: %v\n", SLANG_FRAGMENT_ENTRY)
-		return program, false
+		fmt.eprintf("missing Slang entry point: %v\n", shader_desc.fragment_entry)
+		return false
 	}
 
 	components: [3]^sp.IComponentType = {slang_module, vertex_entry, fragment_entry}
 	linked_program: ^sp.IComponentType
+	diagnostics = nil
 	if !ez_gfx_slang_check(
 		session->createCompositeComponentType(
 			&components[0],
@@ -131,43 +150,71 @@ ez_gfx_shader_compile_triangle :: proc(
 			&diagnostics,
 		),
 	) {
-		return program, false
+		return false
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return program, false
-	defer linked_program->release()
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
 
-	if !ez_gfx_shader_reflect_vertex_heap_bindings(ctx, linked_program, &program, &diagnostics) {
-		return program, false
+	if !ez_gfx_shader_reflect_vertex_heap_bindings(linked_program, program, &diagnostics) {
+		return false
 	}
 
 	target_code: ^sp.IBlob
+	diagnostics = nil
 	if !ez_gfx_slang_check(linked_program->getTargetCode(0, &target_code, &diagnostics)) {
-		return program, false
+		return false
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return program, false
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
 
 	code_size := target_code->getBufferSize()
-	spirv_bytes := slice.bytes_from_ptr(target_code->getBufferPointer(), auto_cast code_size)
 
 	create_info := vk.ShaderModuleCreateInfo {
 		sType    = .SHADER_MODULE_CREATE_INFO,
-		codeSize = len(spirv_bytes),
-		pCode    = raw_data(slice.reinterpret([]u32, spirv_bytes)),
+		codeSize = auto_cast code_size,
+		pCode    = cast([^]u32)target_code->getBufferPointer(),
 	}
 	if vk.CreateShaderModule(ctx.device, &create_info, nil, &program.module) != .SUCCESS {
 		fmt.eprintln("failed to create Vulkan shader module")
-		return program, false
+		return false
 	}
 
-	return program, true
+	return true
+}
+
+ez_gfx_shader_destroy :: proc(program: ^Ez_Gfx_Shader_Program) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
+	if program.module != vk.ShaderModule(0) {
+		vk.DestroyShaderModule(ctx.device, program.module, nil)
+		program.module = vk.ShaderModule(0)
+	}
+}
+
+ez_gfx_shader_desc_identity :: proc(desc: Ez_Gfx_Shader_Desc) -> u64 {
+	hash: u64 = 14695981039346656037
+	hash = ez_gfx_hash_cstring(hash, desc.path)
+	hash = ez_gfx_hash_cstring(hash, desc.vertex_entry)
+	hash = ez_gfx_hash_cstring(hash, desc.fragment_entry)
+	return hash
+}
+
+ez_gfx_hash_cstring :: proc(hash: u64, value: cstring) -> u64 {
+	result := hash
+	if value == nil do return result
+	bytes := cast([^]u8)value
+	for i := 0; bytes[i] != 0; i += 1 {
+		result = (result ~ u64(bytes[i])) * 1099511628211
+	}
+	return result
 }
 
 ez_gfx_shader_reflect_vertex_heap_bindings :: proc(
-	ctx: ^Ez_Gfx_Ctx,
 	linked_program: ^sp.IComponentType,
 	program: ^Ez_Gfx_Shader_Program,
 	diagnostics: ^^sp.IBlob,
 ) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+	diagnostics^ = nil
 	program_layout := linked_program->getLayout(0, diagnostics)
 	if !ez_gfx_slang_diagnostics_check(diagnostics^) do return false
 	if program_layout == nil {

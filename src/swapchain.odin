@@ -1,4 +1,4 @@
-package main
+package ez_gfx
 
 import "core:c"
 import "core:fmt"
@@ -8,24 +8,25 @@ import vk "vendor:vulkan"
 MAX_SWAPCHAIN_IMAGES :: 16
 
 Ez_Gfx_Swapchain :: struct {
-	handle:               vk.SwapchainKHR,
-	format:               vk.Format,
-	extent:               vk.Extent2D,
-	images:               [MAX_SWAPCHAIN_IMAGES]vk.Image,
-	image_views:          [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
-	image_layouts:        [MAX_SWAPCHAIN_IMAGES]vk.ImageLayout,
-	image_count:          u32,
-	present_finished:     [MAX_SWAPCHAIN_IMAGES]vk.Semaphore,
+	handle:           vk.SwapchainKHR,
+	format:           vk.Format,
+	extent:           vk.Extent2D,
+	images:           [MAX_SWAPCHAIN_IMAGES]vk.Image,
+	image_views:      [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
+	image_layouts:    [MAX_SWAPCHAIN_IMAGES]vk.ImageLayout,
+	image_count:      u32,
+	present_finished: [MAX_SWAPCHAIN_IMAGES]vk.Semaphore,
 }
 
 ez_gfx_swapchain_recreate :: proc(
-	ctx: ^Ez_Gfx_Ctx,
 	swapchain: ^Ez_Gfx_Swapchain,
 	surface: vk.SurfaceKHR,
 	width, height: c.int,
 ) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
 	vk.DeviceWaitIdle(ctx.device)
-	ez_gfx_swapchain_destroy(ctx, swapchain)
+	ez_gfx_swapchain_destroy(swapchain)
 
 	capabilities: vk.SurfaceCapabilitiesKHR
 	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.physical_device, surface, &capabilities)
@@ -84,12 +85,14 @@ ez_gfx_swapchain_recreate :: proc(
 	}
 
 	return(
-		ez_gfx_swapchain_create_image_views(ctx, swapchain) &&
-		ez_gfx_swapchain_create_present_semaphores(ctx, swapchain)
+		ez_gfx_swapchain_create_image_views(swapchain) &&
+		ez_gfx_swapchain_create_present_semaphores(swapchain) \
 	)
 }
 
-ez_gfx_swapchain_destroy :: proc(ctx: ^Ez_Gfx_Ctx, swapchain: ^Ez_Gfx_Swapchain) {
+ez_gfx_swapchain_destroy :: proc(swapchain: ^Ez_Gfx_Swapchain) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
 	for i in 0 ..< swapchain.image_count {
 		if swapchain.present_finished[i] != vk.Semaphore(0) {
 			vk.DestroySemaphore(ctx.device, swapchain.present_finished[i], nil)
@@ -149,14 +152,13 @@ ez_gfx_swapchain_choose_extent :: proc(
 	}
 }
 
-ez_gfx_swapchain_create_image_views :: proc(
-	ctx: ^Ez_Gfx_Ctx,
-	swapchain: ^Ez_Gfx_Swapchain,
-) -> bool {
+ez_gfx_swapchain_create_image_views :: proc(swapchain: ^Ez_Gfx_Swapchain) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
 	for image, i in swapchain.images[:swapchain.image_count] {
 		create_info := vk.ImageViewCreateInfo {
-			sType  = .IMAGE_VIEW_CREATE_INFO,
-			image  = image,
+			sType = .IMAGE_VIEW_CREATE_INFO,
+			image = image,
 			viewType = .D2,
 			format = swapchain.format,
 			components = vk.ComponentMapping {
@@ -166,11 +168,11 @@ ez_gfx_swapchain_create_image_views :: proc(
 				a = .IDENTITY,
 			},
 			subresourceRange = vk.ImageSubresourceRange {
-				aspectMask     = {.COLOR},
-				baseMipLevel   = 0,
-				levelCount     = 1,
+				aspectMask = {.COLOR},
+				baseMipLevel = 0,
+				levelCount = 1,
 				baseArrayLayer = 0,
-				layerCount     = 1,
+				layerCount = 1,
 			},
 		}
 		if vk.CreateImageView(ctx.device, &create_info, nil, &swapchain.image_views[i]) !=
@@ -182,16 +184,14 @@ ez_gfx_swapchain_create_image_views :: proc(
 	return true
 }
 
-ez_gfx_swapchain_create_present_semaphores :: proc(
-	ctx: ^Ez_Gfx_Ctx,
-	swapchain: ^Ez_Gfx_Swapchain,
-) -> bool {
+ez_gfx_swapchain_create_present_semaphores :: proc(swapchain: ^Ez_Gfx_Swapchain) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
 	info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,
 	}
 	for i in 0 ..< swapchain.image_count {
-		if vk.CreateSemaphore(ctx.device, &info, nil, &swapchain.present_finished[i]) !=
-		   .SUCCESS {
+		if vk.CreateSemaphore(ctx.device, &info, nil, &swapchain.present_finished[i]) != .SUCCESS {
 			fmt.eprintln("failed to create present semaphore")
 			return false
 		}

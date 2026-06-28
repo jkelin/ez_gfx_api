@@ -1,4 +1,4 @@
-package main
+package ez_gfx
 
 import "core:fmt"
 import "core:mem"
@@ -30,7 +30,6 @@ ez_gfx_find_memory_type :: proc(
 }
 
 ez_gfx_buffer_create :: proc(
-	ctx: ^Ez_Gfx_Ctx,
 	size: vk.DeviceSize,
 	usage: vk.BufferUsageFlags,
 	properties: vk.MemoryPropertyFlags,
@@ -38,6 +37,8 @@ ez_gfx_buffer_create :: proc(
 	buffer: Ez_Gfx_Buffer,
 	ok: bool,
 ) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return buffer, false
 	buffer_info := vk.BufferCreateInfo {
 		sType       = .BUFFER_CREATE_INFO,
 		size        = size,
@@ -63,13 +64,13 @@ ez_gfx_buffer_create :: proc(
 	}
 	if vk.AllocateMemory(ctx.device, &alloc_info, nil, &buffer.memory) != .SUCCESS {
 		fmt.eprintln("failed to allocate buffer memory")
-		ez_gfx_buffer_destroy(ctx, &buffer)
+		ez_gfx_buffer_destroy(&buffer)
 		return buffer, false
 	}
 
 	if vk.BindBufferMemory(ctx.device, buffer.handle, buffer.memory, 0) != .SUCCESS {
 		fmt.eprintln("failed to bind buffer memory")
-		ez_gfx_buffer_destroy(ctx, &buffer)
+		ez_gfx_buffer_destroy(&buffer)
 		return buffer, false
 	}
 
@@ -78,17 +79,14 @@ ez_gfx_buffer_create :: proc(
 }
 
 // Maps host-visible memory and copies slice data into the buffer.
-ez_gfx_buffer_write :: proc(buffer: ^Ez_Gfx_Buffer, ctx: ^Ez_Gfx_Ctx, data: []$T) -> bool {
-	return ez_gfx_buffer_write_at(buffer, ctx, 0, data)
+ez_gfx_buffer_write :: proc(buffer: ^Ez_Gfx_Buffer, data: []$T) -> bool {
+	return ez_gfx_buffer_write_at(buffer, 0, data)
 }
 
 // Maps host-visible memory and copies slice data into a byte range of the buffer.
-ez_gfx_buffer_write_at :: proc(
-	buffer: ^Ez_Gfx_Buffer,
-	ctx: ^Ez_Gfx_Ctx,
-	offset: vk.DeviceSize,
-	data: []$T,
-) -> bool {
+ez_gfx_buffer_write_at :: proc(buffer: ^Ez_Gfx_Buffer, offset: vk.DeviceSize, data: []$T) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
 	byte_size := len(data) * size_of(T)
 	if offset + vk.DeviceSize(byte_size) > buffer.size {
 		fmt.eprintln("buffer write exceeds allocation size")
@@ -106,7 +104,9 @@ ez_gfx_buffer_write_at :: proc(
 	return true
 }
 
-ez_gfx_buffer_destroy :: proc(ctx: ^Ez_Gfx_Ctx, buffer: ^Ez_Gfx_Buffer) {
+ez_gfx_buffer_destroy :: proc(buffer: ^Ez_Gfx_Buffer) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
 	if ctx.device == nil do return
 	if buffer.handle != vk.Buffer(0) {
 		vk.DestroyBuffer(ctx.device, buffer.handle, nil)

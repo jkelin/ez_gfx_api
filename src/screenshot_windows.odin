@@ -1,6 +1,6 @@
 #+build windows
 
-package main
+package ez_gfx
 
 import "core:fmt"
 import "core:os"
@@ -54,7 +54,7 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 	// GetDIBits requires the bitmap to be deselected from its device context.
 	win32.SelectObject(memory_dc, old_bitmap)
 
-	row_stride := ((width * 3) + 3) / 4 * 4
+	row_stride := width * 4
 	pixel_data_size := row_stride * height
 	pixels, alloc_err := make([]u8, pixel_data_size, context.temp_allocator)
 	if alloc_err != nil {
@@ -67,11 +67,13 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 		biWidth       = width,
 		biHeight      = -height,
 		biPlanes      = 1,
-		biBitCount    = 24,
+		biBitCount    = 32,
 		biCompression = win32.BI_RGB,
 		biSizeImage   = u32(pixel_data_size),
 	}
-	bitmap_info := win32.BITMAPINFO{bmiHeader = info}
+	bitmap_info := win32.BITMAPINFO {
+		bmiHeader = info,
+	}
 
 	if win32.GetDIBits(
 		   memory_dc,
@@ -87,11 +89,11 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 		return false
 	}
 
-	return ez_gfx_write_bmp_rgb(path, int(width), int(height), int(row_stride), pixels)
+	return ez_gfx_write_bmp_bgra(path, int(width), int(height), int(row_stride), pixels)
 }
 
-ez_gfx_write_bmp_rgb :: proc(path: string, width, height, row_stride: int, rgb: []u8) -> bool {
-	file_size := 54 + len(rgb)
+ez_gfx_write_bmp_bgra :: proc(path: string, width, height, row_stride: int, bgra: []u8) -> bool {
+	file_size := 54 + len(bgra)
 
 	file, err := os.open(path, {.Write, .Create, .Trunc}, os.perm_number(0o644))
 	if err != nil {
@@ -109,25 +111,17 @@ ez_gfx_write_bmp_rgb :: proc(path: string, width, height, row_stride: int, rgb: 
 	put_u32(&header[18], u32(width))
 	put_i32(&header[22], i32(height))
 	put_u16(&header[26], 1)
-	put_u16(&header[28], 24)
+	put_u16(&header[28], 32)
 	if _, write_err := os.write(file, header[:]); write_err != nil {
 		fmt.eprintf("failed to write BMP header: %v\n", write_err)
 		return false
 	}
 
 	for y in 0 ..< height {
-		row := rgb[y * row_stride:(y + 1) * row_stride]
-		if _, write_err := os.write(file, row[:width * 3]); write_err != nil {
+		row := bgra[y * row_stride:(y + 1) * row_stride]
+		if _, write_err := os.write(file, row[:width * 4]); write_err != nil {
 			fmt.eprintf("failed to write BMP row: %v\n", write_err)
 			return false
-		}
-		padding := row_stride - width * 3
-		if padding > 0 {
-			pad := [3]u8{}
-			if _, write_err := os.write(file, pad[:padding]); write_err != nil {
-				fmt.eprintf("failed to write BMP row padding: %v\n", write_err)
-				return false
-			}
 		}
 	}
 

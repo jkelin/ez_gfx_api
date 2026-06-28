@@ -1,4 +1,4 @@
-package main
+package ez_gfx
 
 import "core:c"
 import "core:fmt"
@@ -68,7 +68,9 @@ ez_gfx_window_create :: proc(
 	return true
 }
 
-ez_gfx_window_create_surface :: proc(window: ^Ez_Gfx_Window, ctx: ^Ez_Gfx_Ctx) -> bool {
+ez_gfx_window_create_surface :: proc(window: ^Ez_Gfx_Window) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
 	if glfw.CreateWindowSurface(ctx.instance, window.handle, nil, &window.surface) != .SUCCESS {
 		fmt.eprintln("failed to create Vulkan surface")
 		return false
@@ -77,7 +79,9 @@ ez_gfx_window_create_surface :: proc(window: ^Ez_Gfx_Window, ctx: ^Ez_Gfx_Ctx) -
 }
 
 // Waits for a non-zero framebuffer, then rebuilds the window swapchain.
-ez_gfx_window_recreate_swapchain :: proc(window: ^Ez_Gfx_Window, ctx: ^Ez_Gfx_Ctx) -> bool {
+ez_gfx_window_recreate_swapchain :: proc(window: ^Ez_Gfx_Window) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
 	width, height := ez_gfx_window_get_framebuffer_size(window)
 	for width == 0 || height == 0 {
 		glfw.WaitEvents()
@@ -85,7 +89,7 @@ ez_gfx_window_recreate_swapchain :: proc(window: ^Ez_Gfx_Window, ctx: ^Ez_Gfx_Ct
 		if glfw.WindowShouldClose(window.handle) do return false
 	}
 
-	return ez_gfx_swapchain_recreate(ctx, &window.swapchain, window.surface, width, height)
+	return ez_gfx_swapchain_recreate(&window.swapchain, window.surface, width, height)
 }
 
 ez_gfx_window_get_framebuffer_size :: proc(window: ^Ez_Gfx_Window) -> (width, height: c.int) {
@@ -104,9 +108,11 @@ ez_gfx_window_poll_events :: proc() {
 	glfw.PollEvents()
 }
 
-ez_gfx_window_destroy :: proc(window: ^Ez_Gfx_Window, ctx: ^Ez_Gfx_Ctx) {
+ez_gfx_window_destroy :: proc(window: ^Ez_Gfx_Window) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
 	if ctx.device != nil {
-		ez_gfx_swapchain_destroy(ctx, &window.swapchain)
+		ez_gfx_swapchain_destroy(&window.swapchain)
 	}
 	if ctx.instance != nil && window.surface != vk.SurfaceKHR(0) {
 		vk.DestroySurfaceKHR(ctx.instance, window.surface, nil)

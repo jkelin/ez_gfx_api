@@ -1,21 +1,84 @@
-package main
+package ez_gfx
 
 import "core:fmt"
 import vk "vendor:vulkan"
 
-// Builds an empty pipeline layout and a dynamic-rendering graphics pipeline for the triangle shader.
-ez_gfx_pipeline_create_triangle :: proc(
+EZ_GFX_MAX_PIPELINES :: 8
+
+Ez_Gfx_Pipeline_Record :: struct {
+	shader_identity:       u64,
+	color_format:          vk.Format,
+	pipeline_layout:       vk.PipelineLayout,
+	pipeline:              vk.Pipeline,
+	descriptor_set_layout: vk.DescriptorSetLayout,
+	descriptor_pool:       vk.DescriptorPool,
+	descriptor_set:        vk.DescriptorSet,
+	last_used:             u64,
+}
+
+Ez_Gfx_Pipeline_Manager :: struct {
+	records: [EZ_GFX_MAX_PIPELINES]Ez_Gfx_Pipeline_Record,
+	count:   int,
+	clock:   u64,
+}
+
+// TODO: Add topology, blend, depth, and rasterization options to the cache key.
+ez_gfx_pipeline_manager_get :: proc(
+	manager: ^Ez_Gfx_Pipeline_Manager,
+	shader: ^Ez_Gfx_Shader_Program,
+	color_format: vk.Format,
+) -> (
+	record: ^Ez_Gfx_Pipeline_Record,
+	ok: bool,
+) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return nil, false
+	manager.clock += 1
+
+	for i in 0 ..< manager.count {
+		candidate := &manager.records[i]
+		if candidate.shader_identity == shader.identity && candidate.color_format == color_format {
+			candidate.last_used = manager.clock
+			return candidate, true
+		}
+	}
+
+	slot: ^Ez_Gfx_Pipeline_Record
+	if manager.count < EZ_GFX_MAX_PIPELINES {
+		slot = &manager.records[manager.count]
+		manager.count += 1
+	} else {
+		oldest := 0
+		for i in 1 ..< manager.count {
+			if manager.records[i].last_used < manager.records[oldest].last_used {
+				oldest = i
+			}
+		}
+		slot = &manager.records[oldest]
+		ez_gfx_pipeline_record_destroy(ctx, slot)
+	}
+
+	slot.shader_identity = shader.identity
+	slot.color_format = color_format
+	slot.last_used = manager.clock
+	if !ez_gfx_pipeline_record_create(ctx, slot, shader, color_format) {
+		ez_gfx_pipeline_record_destroy(ctx, slot)
+		return nil, false
+	}
+	return slot, true
+}
+
+ez_gfx_pipeline_record_create :: proc(
 	ctx: ^Ez_Gfx_Ctx,
+	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
 	color_format: vk.Format,
 ) -> bool {
-	if !ez_gfx_pipeline_create_vertex_heap_descriptors(ctx, shader) {
-		return false
-	}
+	if !ez_gfx_pipeline_create_vertex_heap_descriptors(ctx, record, shader) do return false
 
 	set_layout_count: u32
-	set_layouts := [?]vk.DescriptorSetLayout{ctx.descriptor_set_layout}
-	if ctx.descriptor_set_layout != vk.DescriptorSetLayout(0) {
+	set_layouts := [?]vk.DescriptorSetLayout{record.descriptor_set_layout}
+	if record.descriptor_set_layout != vk.DescriptorSetLayout(0) {
 		set_layout_count = 1
 	}
 
@@ -24,7 +87,8 @@ ez_gfx_pipeline_create_triangle :: proc(
 		setLayoutCount = set_layout_count,
 		pSetLayouts    = &set_layouts[0],
 	}
-	if vk.CreatePipelineLayout(ctx.device, &layout_info, nil, &ctx.pipeline_layout) != .SUCCESS {
+	if vk.CreatePipelineLayout(ctx.device, &layout_info, nil, &record.pipeline_layout) !=
+	   .SUCCESS {
 		fmt.eprintln("failed to create pipeline layout")
 		return false
 	}
@@ -51,13 +115,13 @@ ez_gfx_pipeline_create_triangle :: proc(
 			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 			stage = {.VERTEX},
 			module = shader.module,
-			pName = SLANG_VERTEX_ENTRY,
+			pName = shader.desc.vertex_entry,
 		},
 		{
 			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
 			stage = {.FRAGMENT},
 			module = shader.module,
-			pName = SLANG_FRAGMENT_ENTRY,
+			pName = shader.desc.fragment_entry,
 		},
 	}
 
@@ -94,13 +158,12 @@ ez_gfx_pipeline_create_triangle :: proc(
 		},
 		pColorBlendState    = &color_blend_state,
 		pDynamicState       = &dynamic_state,
-		layout              = ctx.pipeline_layout,
+		layout              = record.pipeline_layout,
 	}
 
-	if vk.CreateGraphicsPipelines(ctx.device, 0, 1, &pipeline_info, nil, &ctx.pipeline) !=
+	if vk.CreateGraphicsPipelines(ctx.device, 0, 1, &pipeline_info, nil, &record.pipeline) !=
 	   .SUCCESS {
 		fmt.eprintln("failed to create graphics pipeline")
-		ez_gfx_pipeline_destroy(ctx)
 		return false
 	}
 
@@ -109,6 +172,7 @@ ez_gfx_pipeline_create_triangle :: proc(
 
 ez_gfx_pipeline_create_vertex_heap_descriptors :: proc(
 	ctx: ^Ez_Gfx_Ctx,
+	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
 ) -> bool {
 	if shader.vertex_heap_binding_count == 0 {
@@ -161,7 +225,12 @@ ez_gfx_pipeline_create_vertex_heap_descriptors :: proc(
 		bindingCount = u32(shader.vertex_heap_binding_count),
 		pBindings    = &layout_bindings[0],
 	}
-	if vk.CreateDescriptorSetLayout(ctx.device, &layout_info, nil, &ctx.descriptor_set_layout) !=
+	if vk.CreateDescriptorSetLayout(
+		   ctx.device,
+		   &layout_info,
+		   nil,
+		   &record.descriptor_set_layout,
+	   ) !=
 	   .SUCCESS {
 		fmt.eprintln("failed to create descriptor set layout")
 		return false
@@ -177,37 +246,59 @@ ez_gfx_pipeline_create_vertex_heap_descriptors :: proc(
 		poolSizeCount = 1,
 		pPoolSizes    = &pool_size,
 	}
-	if vk.CreateDescriptorPool(ctx.device, &pool_info, nil, &ctx.descriptor_pool) != .SUCCESS {
+	if vk.CreateDescriptorPool(ctx.device, &pool_info, nil, &record.descriptor_pool) != .SUCCESS {
 		fmt.eprintln("failed to create descriptor pool")
 		return false
 	}
 
 	allocate_info := vk.DescriptorSetAllocateInfo {
 		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
-		descriptorPool     = ctx.descriptor_pool,
+		descriptorPool     = record.descriptor_pool,
 		descriptorSetCount = 1,
-		pSetLayouts        = &ctx.descriptor_set_layout,
+		pSetLayouts        = &record.descriptor_set_layout,
 	}
-	if vk.AllocateDescriptorSets(ctx.device, &allocate_info, &ctx.descriptor_set) != .SUCCESS {
+	if vk.AllocateDescriptorSets(ctx.device, &allocate_info, &record.descriptor_set) != .SUCCESS {
 		fmt.eprintln("failed to allocate descriptor set")
 		return false
 	}
 
 	for i in 0 ..< shader.vertex_heap_binding_count {
-		writes[i].dstSet = ctx.descriptor_set
+		writes[i].dstSet = record.descriptor_set
 	}
 	vk.UpdateDescriptorSets(ctx.device, u32(shader.vertex_heap_binding_count), &writes[0], 0, nil)
 	return true
 }
 
-ez_gfx_pipeline_destroy :: proc(ctx: ^Ez_Gfx_Ctx) {
+ez_gfx_pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipeline_Record) {
 	if ctx.device == nil do return
-	if ctx.pipeline != vk.Pipeline(0) {
-		vk.DestroyPipeline(ctx.device, ctx.pipeline, nil)
-		ctx.pipeline = vk.Pipeline(0)
+	if record.pipeline != vk.Pipeline(0) {
+		vk.DestroyPipeline(ctx.device, record.pipeline, nil)
+		record.pipeline = vk.Pipeline(0)
 	}
-	if ctx.pipeline_layout != vk.PipelineLayout(0) {
-		vk.DestroyPipelineLayout(ctx.device, ctx.pipeline_layout, nil)
-		ctx.pipeline_layout = vk.PipelineLayout(0)
+	if record.pipeline_layout != vk.PipelineLayout(0) {
+		vk.DestroyPipelineLayout(ctx.device, record.pipeline_layout, nil)
+		record.pipeline_layout = vk.PipelineLayout(0)
 	}
+	if record.descriptor_pool != vk.DescriptorPool(0) {
+		vk.DestroyDescriptorPool(ctx.device, record.descriptor_pool, nil)
+		record.descriptor_pool = vk.DescriptorPool(0)
+	}
+	if record.descriptor_set_layout != vk.DescriptorSetLayout(0) {
+		vk.DestroyDescriptorSetLayout(ctx.device, record.descriptor_set_layout, nil)
+		record.descriptor_set_layout = vk.DescriptorSetLayout(0)
+	}
+	record.descriptor_set = vk.DescriptorSet(0)
+	record.shader_identity = 0
+	record.color_format = {}
+	record.last_used = 0
+}
+
+ez_gfx_pipeline_manager_destroy :: proc(manager: ^Ez_Gfx_Pipeline_Manager) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
+	for i in 0 ..< manager.count {
+		ez_gfx_pipeline_record_destroy(ctx, &manager.records[i])
+	}
+	manager.count = 0
+	manager.clock = 0
 }

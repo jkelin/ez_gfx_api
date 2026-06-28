@@ -1,6 +1,6 @@
 #+build !windows
 
-package main
+package ez_gfx
 
 import "core:fmt"
 

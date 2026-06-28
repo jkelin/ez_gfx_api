@@ -1,4 +1,4 @@
-package main
+package ez_gfx
 
 import "core:fmt"
 import vk "vendor:vulkan"
@@ -28,13 +28,12 @@ Ez_Gfx_Vertex_Manager :: struct {
 }
 
 ez_gfx_gpu_heap_create :: proc(
-	ctx: ^Ez_Gfx_Ctx,
 	heap: ^Ez_Gfx_Gpu_Heap,
 	capacity: vk.DeviceSize,
 	stride: vk.DeviceSize,
 	usage: vk.BufferUsageFlags,
 ) -> bool {
-	buffer, ok := ez_gfx_buffer_create(ctx, capacity, usage, {.HOST_VISIBLE, .HOST_COHERENT})
+	buffer, ok := ez_gfx_buffer_create(capacity, usage, {.HOST_VISIBLE, .HOST_COHERENT})
 	if !ok do return false
 
 	heap.buffer = buffer
@@ -44,8 +43,8 @@ ez_gfx_gpu_heap_create :: proc(
 	return true
 }
 
-ez_gfx_gpu_heap_destroy :: proc(ctx: ^Ez_Gfx_Ctx, heap: ^Ez_Gfx_Gpu_Heap) {
-	ez_gfx_buffer_destroy(ctx, &heap.buffer)
+ez_gfx_gpu_heap_destroy :: proc(heap: ^Ez_Gfx_Gpu_Heap) {
+	ez_gfx_buffer_destroy(&heap.buffer)
 	heap.capacity = 0
 	heap.stride = 0
 	heap.used = 0
@@ -53,7 +52,6 @@ ez_gfx_gpu_heap_destroy :: proc(ctx: ^Ez_Gfx_Ctx, heap: ^Ez_Gfx_Gpu_Heap) {
 
 ez_gfx_gpu_heap_upload :: proc(
 	heap: ^Ez_Gfx_Gpu_Heap,
-	ctx: ^Ez_Gfx_Ctx,
 	data: []$T,
 ) -> (
 	start_index: u32,
@@ -74,7 +72,7 @@ ez_gfx_gpu_heap_upload :: proc(
 	}
 
 	start_index = u32(heap.used / heap.stride)
-	if !ez_gfx_buffer_write_at(&heap.buffer, ctx, heap.used, data) {
+	if !ez_gfx_buffer_write_at(&heap.buffer, heap.used, data) {
 		return 0, false
 	}
 
@@ -83,13 +81,11 @@ ez_gfx_gpu_heap_upload :: proc(
 }
 
 ez_gfx_vertex_manager_create :: proc(
-	ctx: ^Ez_Gfx_Ctx,
 	manager: ^Ez_Gfx_Vertex_Manager,
 	vertex_heap_names: []string,
 	vertex_stride: vk.DeviceSize,
 ) -> bool {
 	if !ez_gfx_gpu_heap_create(
-		ctx,
 		&manager.index_heap,
 		EZ_GFX_DEFAULT_INDEX_HEAP_BYTES,
 		vk.DeviceSize(size_of(u32)),
@@ -100,13 +96,12 @@ ez_gfx_vertex_manager_create :: proc(
 
 	for name in vertex_heap_names {
 		if !ez_gfx_vertex_manager_add_heap(
-			ctx,
 			manager,
 			name,
 			EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES,
 			vertex_stride,
 		) {
-			ez_gfx_vertex_manager_destroy(ctx, manager)
+			ez_gfx_vertex_manager_destroy(manager)
 			return false
 		}
 	}
@@ -115,7 +110,6 @@ ez_gfx_vertex_manager_create :: proc(
 }
 
 ez_gfx_vertex_manager_add_heap :: proc(
-	ctx: ^Ez_Gfx_Ctx,
 	manager: ^Ez_Gfx_Vertex_Manager,
 	name: string,
 	capacity: vk.DeviceSize,
@@ -130,7 +124,7 @@ ez_gfx_vertex_manager_add_heap :: proc(
 	if !ez_gfx_copy_heap_name(&slot.name, &slot.name_len, name) {
 		return false
 	}
-	if !ez_gfx_gpu_heap_create(ctx, &slot.heap, capacity, stride, {.STORAGE_BUFFER}) {
+	if !ez_gfx_gpu_heap_create(&slot.heap, capacity, stride, {.STORAGE_BUFFER}) {
 		return false
 	}
 
@@ -138,29 +132,27 @@ ez_gfx_vertex_manager_add_heap :: proc(
 	return true
 }
 
-ez_gfx_vertex_manager_destroy :: proc(ctx: ^Ez_Gfx_Ctx, manager: ^Ez_Gfx_Vertex_Manager) {
+ez_gfx_vertex_manager_destroy :: proc(manager: ^Ez_Gfx_Vertex_Manager) {
 	for i in 0 ..< manager.vertex_heap_count {
-		ez_gfx_gpu_heap_destroy(ctx, &manager.vertex_heaps[i].heap)
+		ez_gfx_gpu_heap_destroy(&manager.vertex_heaps[i].heap)
 		manager.vertex_heaps[i].name_len = 0
 	}
 	manager.vertex_heap_count = 0
-	ez_gfx_gpu_heap_destroy(ctx, &manager.index_heap)
+	ez_gfx_gpu_heap_destroy(&manager.index_heap)
 }
 
 ez_gfx_vertex_manager_upload_indices :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
-	ctx: ^Ez_Gfx_Ctx,
 	indices: []u32,
 ) -> (
 	start_index: u32,
 	ok: bool,
 ) {
-	return ez_gfx_gpu_heap_upload(&manager.index_heap, ctx, indices)
+	return ez_gfx_gpu_heap_upload(&manager.index_heap, indices)
 }
 
 ez_gfx_vertex_manager_upload_vertices :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
-	ctx: ^Ez_Gfx_Ctx,
 	heap_name: string,
 	vertices: []$T,
 ) -> (
@@ -172,7 +164,7 @@ ez_gfx_vertex_manager_upload_vertices :: proc(
 		fmt.eprintf("missing vertex heap: %v\n", heap_name)
 		return 0, false
 	}
-	return ez_gfx_gpu_heap_upload(heap, ctx, vertices)
+	return ez_gfx_gpu_heap_upload(heap, vertices)
 }
 
 ez_gfx_vertex_manager_find_heap :: proc(
