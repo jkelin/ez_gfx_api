@@ -84,6 +84,15 @@ Ez_Gfx_Shader_Desc :: struct {
 	fragment_entry: cstring,
 }
 
+@(private)
+Ez_Gfx_Slang_Linked_Program :: struct {
+	session:        ^sp.ISession,
+	slang_module:   ^sp.IModule,
+	vertex_entry:   ^sp.IEntryPoint,
+	fragment_entry: ^sp.IEntryPoint,
+	linked_program: ^sp.IComponentType,
+}
+
 ez_gfx_slang_check :: proc(result: sp.Result, loc := #caller_location) -> bool {
 	if sp.FAILED(result) {
 		code := sp.GET_RESULT_CODE(result)
@@ -94,14 +103,38 @@ ez_gfx_slang_check :: proc(result: sp.Result, loc := #caller_location) -> bool {
 	return true
 }
 
-ez_gfx_slang_diagnostics_check :: proc(diagnostics: ^sp.IBlob) -> bool {
-	if diagnostics == nil do return true
+@(private)
+ez_gfx_slang_blob_release :: proc(blob: ^^sp.IBlob) {
+	if blob != nil && blob^ != nil {
+		blob^->release()
+		blob^ = nil
+	}
+}
+
+@(private)
+ez_gfx_slang_diagnostics_check :: proc(diagnostics: ^^sp.IBlob) -> bool {
+	if diagnostics == nil || diagnostics^ == nil do return true
 	buffer := slice.bytes_from_ptr(
-		diagnostics->getBufferPointer(),
-		int(diagnostics->getBufferSize()),
+		diagnostics^->getBufferPointer(),
+		int(diagnostics^->getBufferSize()),
 	)
 	fmt.eprintf("Slang diagnostics:\n%v\n", string(buffer))
+	ez_gfx_slang_blob_release(diagnostics)
 	return false
+}
+
+@(private)
+ez_gfx_slang_linked_program_release :: proc(program: ^Ez_Gfx_Slang_Linked_Program) {
+	if program == nil do return
+	// Directly releasing module/entry/composite handles corrupts Slang's heap; the session owns them.
+	if program.session != nil {
+		program.session->release()
+		program.session = nil
+	}
+	program.linked_program = nil
+	program.fragment_entry = nil
+	program.vertex_entry = nil
+	program.slang_module = nil
 }
 
 // Creates the long-lived Slang global session used for shader compilation.
@@ -146,10 +179,16 @@ ez_gfx_shader_reflect :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_
 	// This unoptimized metadata pass preserves declarations that the final
 	// optimized shader could otherwise remove as unused.
 	diagnostics: ^sp.IBlob
-	linked_program := ez_gfx_shader_create_linked_program(shader_desc, .NONE, true, &diagnostics)
-	if linked_program == nil do return false
+	linked_program, linked_program_ok := ez_gfx_shader_create_linked_program(
+		shader_desc,
+		.NONE,
+		true,
+		&diagnostics,
+	)
+	if !linked_program_ok do return false
+	defer ez_gfx_slang_linked_program_release(&linked_program)
 
-	if !ez_gfx_shader_reflect_metadata(linked_program, program, &diagnostics) {
+	if !ez_gfx_shader_reflect_metadata(linked_program.linked_program, program, &diagnostics) {
 		return false
 	}
 
@@ -163,20 +202,25 @@ ez_gfx_shader_compile :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_
 	if !ez_gfx_shader_reflect(desc, program) do return false
 
 	diagnostics: ^sp.IBlob
-	linked_program := ez_gfx_shader_create_linked_program(
+	linked_program, linked_program_ok := ez_gfx_shader_create_linked_program(
 		program.desc,
 		.DEFAULT,
 		false,
 		&diagnostics,
 	)
-	if linked_program == nil do return false
+	if !linked_program_ok do return false
+	defer ez_gfx_slang_linked_program_release(&linked_program)
 
 	target_code: ^sp.IBlob
+	defer ez_gfx_slang_blob_release(&target_code)
 	diagnostics = nil
-	if !ez_gfx_slang_check(linked_program->getTargetCode(0, &target_code, &diagnostics)) {
+	if !ez_gfx_slang_check(
+		linked_program.linked_program->getTargetCode(0, &target_code, &diagnostics),
+	) {
+		_ = ez_gfx_slang_diagnostics_check(&diagnostics)
 		return false
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
+	if !ez_gfx_slang_diagnostics_check(&diagnostics) do return false
 
 	code_size := target_code->getBufferSize()
 
@@ -204,9 +248,12 @@ ez_gfx_shader_create_linked_program :: proc(
 	optimization: sp.OptimizationLevel,
 	preserve_parameters: bool,
 	diagnostics: ^^sp.IBlob,
-) -> ^sp.IComponentType {
+) -> (
+	program: Ez_Gfx_Slang_Linked_Program,
+	ok: bool,
+) {
 	ctx := ez_gfx_get_current_ctx()
-	if ctx == nil do return nil
+	if ctx == nil do return
 
 	target_desc := sp.TargetDesc {
 		structureSize = size_of(sp.TargetDesc),
@@ -240,6 +287,7 @@ ez_gfx_shader_create_linked_program :: proc(
 			search_path_count += 1
 		}
 	}
+	if !ez_gfx_shader_validate_source_attributes(shader_path) do return
 	session_desc := sp.SessionDesc {
 		structureSize            = size_of(sp.SessionDesc),
 		targets                  = &target_desc,
@@ -250,58 +298,164 @@ ez_gfx_shader_create_linked_program :: proc(
 		compilerOptionEntryCount = len(compiler_option_entries),
 	}
 
-	session: ^sp.ISession
-	if !ez_gfx_slang_check(ctx.slang_session->createSession(session_desc, &session)) {
-		return nil
+	cleanup_on_failure := true
+	defer {
+		if cleanup_on_failure {
+			ez_gfx_slang_linked_program_release(&program)
+		}
 	}
-	// TODO: Audit odin-slang ownership before releasing session/module/component objects here.
+
+	if !ez_gfx_slang_check(ctx.slang_session->createSession(session_desc, &program.session)) {
+		return
+	}
 
 	diagnostics^ = nil
-	slang_module := session->loadModule(shader_path, diagnostics)
-	if slang_module == nil {
-		_ = ez_gfx_slang_diagnostics_check(diagnostics^)
+	program.slang_module = program.session->loadModule(shader_path, diagnostics)
+	if program.slang_module == nil {
+		_ = ez_gfx_slang_diagnostics_check(diagnostics)
 		fmt.eprintln("failed to load Slang shader module")
-		return nil
+		return
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics^) do return nil
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
 
-	vertex_entry: ^sp.IEntryPoint
 	if !ez_gfx_slang_check(
-		slang_module->findEntryPointByName(shader_desc.vertex_entry, &vertex_entry),
+		program.slang_module->findEntryPointByName(
+			shader_desc.vertex_entry,
+			&program.vertex_entry,
+		),
 	) {
-		return nil
+		return
 	}
-	if vertex_entry == nil {
+	if program.vertex_entry == nil {
 		fmt.eprintf("missing Slang entry point: %v\n", shader_desc.vertex_entry)
-		return nil
+		return
 	}
 
-	fragment_entry: ^sp.IEntryPoint
 	if !ez_gfx_slang_check(
-		slang_module->findEntryPointByName(shader_desc.fragment_entry, &fragment_entry),
+		program.slang_module->findEntryPointByName(
+			shader_desc.fragment_entry,
+			&program.fragment_entry,
+		),
 	) {
-		return nil
+		return
 	}
-	if fragment_entry == nil {
+	if program.fragment_entry == nil {
 		fmt.eprintf("missing Slang entry point: %v\n", shader_desc.fragment_entry)
-		return nil
+		return
 	}
 
-	components: [3]^sp.IComponentType = {slang_module, vertex_entry, fragment_entry}
-	linked_program: ^sp.IComponentType
+	components: [3]^sp.IComponentType = {
+		program.slang_module,
+		program.vertex_entry,
+		program.fragment_entry,
+	}
 	diagnostics^ = nil
 	if !ez_gfx_slang_check(
-		session->createCompositeComponentType(
+		program.session->createCompositeComponentType(
 			&components[0],
 			len(components),
-			&linked_program,
+			&program.linked_program,
 			diagnostics,
 		),
 	) {
-		return nil
+		_ = ez_gfx_slang_diagnostics_check(diagnostics)
+		return
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics^) do return nil
-	return linked_program
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
+	cleanup_on_failure = false
+	ok = true
+	return
+}
+
+ez_gfx_shader_validate_source_attributes :: proc(path: cstring) -> bool {
+	source_path := ez_gfx_shader_cstring_to_string(path)
+	if len(source_path) == 0 do return true
+
+	source_bytes, read_err := os.read_entire_file(source_path, context.temp_allocator)
+	if read_err != nil {
+		return true
+	}
+	source := string(source_bytes)
+	if ez_gfx_shader_source_has_load_target_arguments(source) {
+		// Slang currently crashes on this zero-field attribute misuse, so fail before loadModule.
+		fmt.eprintln("LoadTarget attribute does not take arguments")
+		return false
+	}
+	return true
+}
+
+ez_gfx_shader_source_has_load_target_arguments :: proc(source: string) -> bool {
+	i := 0
+	for i < len(source) {
+		if i + 1 < len(source) && source[i] == '/' && source[i + 1] == '/' {
+			i += 2
+			for i < len(source) && source[i] != '\n' {
+				i += 1
+			}
+			continue
+		}
+		if i + 1 < len(source) && source[i] == '/' && source[i + 1] == '*' {
+			i += 2
+			for i + 1 < len(source) && !(source[i] == '*' && source[i + 1] == '/') {
+				i += 1
+			}
+			if i + 1 < len(source) do i += 2
+			continue
+		}
+		if source[i] == '"' || source[i] == '\'' {
+			quote := source[i]
+			i += 1
+			for i < len(source) {
+				if source[i] == '\\' {
+					i += 2
+					continue
+				}
+				if source[i] == quote {
+					i += 1
+					break
+				}
+				i += 1
+			}
+			continue
+		}
+		if source[i] == '[' {
+			i += 1
+			i = ez_gfx_shader_skip_slang_whitespace(source, i)
+			if i + len(SLANG_LOAD_TARGET_ATTRIBUTE) <= len(source) &&
+			   source[i:i + len(SLANG_LOAD_TARGET_ATTRIBUTE)] == SLANG_LOAD_TARGET_ATTRIBUTE {
+				end := i + len(SLANG_LOAD_TARGET_ATTRIBUTE)
+				if end >= len(source) || !ez_gfx_shader_is_identifier_byte(source[end]) {
+					end = ez_gfx_shader_skip_slang_whitespace(source, end)
+					if end < len(source) && source[end] == '(' {
+						return true
+					}
+				}
+			}
+			continue
+		}
+		i += 1
+	}
+	return false
+}
+
+ez_gfx_shader_skip_slang_whitespace :: proc(source: string, index: int) -> int {
+	i := index
+	for i < len(source) {
+		if source[i] != ' ' && source[i] != '\t' && source[i] != '\n' && source[i] != '\r' {
+			break
+		}
+		i += 1
+	}
+	return i
+}
+
+ez_gfx_shader_is_identifier_byte :: proc(value: byte) -> bool {
+	return(
+		('a' <= value && value <= 'z') ||
+		('A' <= value && value <= 'Z') ||
+		('0' <= value && value <= '9') ||
+		value == '_' \
+	)
 }
 
 ez_gfx_shader_resolve_load_path :: proc(
@@ -420,7 +574,7 @@ ez_gfx_shader_reflect_metadata :: proc(
 ) -> bool {
 	diagnostics^ = nil
 	program_layout := linked_program->getLayout(0, diagnostics)
-	if !ez_gfx_slang_diagnostics_check(diagnostics^) do return false
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
 	if program_layout == nil {
 		fmt.eprintln("failed to get Slang program layout")
 		return false
@@ -445,7 +599,7 @@ ez_gfx_shader_reflect_vertex_heap_bindings :: proc(
 ) -> bool {
 	diagnostics^ = nil
 	program_layout := linked_program->getLayout(0, diagnostics)
-	if !ez_gfx_slang_diagnostics_check(diagnostics^) do return false
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
 	if program_layout == nil {
 		fmt.eprintln("failed to get Slang program layout")
 		return false

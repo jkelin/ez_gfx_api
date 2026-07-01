@@ -1,9 +1,5 @@
 # TODO
 
-- Audit `odin-slang` object ownership in shader compilation so session/module/component objects can be released safely without causing heap corruption. `ez_gfx_shader_create_linked_program` still creates per-compile Slang session/module/entry-point/program/blob objects without a proven release order; verify reflection and SPIR-V extraction cleanup with validation or allocator tracking.
-
-- Investigate the Slang crash triggered by passing arguments to the zero-field `LoadTarget` attribute, then add a negative reflection fixture for that misuse. Keep this until the parser/Slang behavior is captured by a regression test.
-
 - Decouple graphics pipeline caching from descriptor set/pool ownership. `Ez_Gfx_Pipeline_Record` still owns both `VkPipeline` and descriptor resources; `render_target_manager.version` mitigates stale render-target image views on resize, but vertex heap rebinding and per-frame descriptor lifetimes are still tied to cached pipeline records.
 
 - Expand the pipeline cache key to include topology, blend, and rasterization options instead of only shader identity, color formats, and depth format. The current Vulkan pipeline state is hardcoded, so this is not a live bug yet, but the cache will return incompatible pipelines as soon as those states become configurable.

@@ -37,6 +37,11 @@ load_target_reflects_metadata :: proc(t: ^testing.T) {
 }
 
 @(test)
+invalid_load_target_fails_reflection :: proc(t: ^testing.T) {
+	expect_shader_case(t, {"tests/invalid_load_target.slang", false, 0, 0})
+}
+
+@(test)
 missing_declaration_fails_reflection :: proc(t: ^testing.T) {
 	expect_shader_case(t, {"tests/missing_declaration.slang", false, 0, 0})
 }
