@@ -939,7 +939,7 @@ ez_gfx_shader_parse_target_layout :: proc(
 	if ez_gfx_shader_cstring_arg_equals(kind_value, kind_len, "depth") {
 		kind^ = .Depth
 		if ez_gfx_shader_cstring_arg_equals(format_value, format_len, "d32_float") {
-			format^ = .D32_SFLOAT
+			format^ = .D24_UNORM_S8_UINT
 			return true
 		}
 		fmt.eprintln("unsupported depth target format")

@@ -5,8 +5,8 @@ import vk "vendor:vulkan"
 
 EZ_GFX_MAX_VERTEX_HEAPS :: 8
 EZ_GFX_VERTEX_HEAP_NAME_MAX :: 32
-EZ_GFX_DEFAULT_INDEX_HEAP_BYTES :: vk.DeviceSize(64 * 1024)
-EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES :: vk.DeviceSize(64 * 1024)
+EZ_GFX_DEFAULT_INDEX_HEAP_BYTES :: vk.DeviceSize(1024 * 1024)
+EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES :: vk.DeviceSize(1024 * 1024)
 
 Ez_Gfx_Gpu_Heap :: struct {
 	buffer:   Ez_Gfx_Buffer,

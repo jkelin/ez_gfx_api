@@ -154,7 +154,13 @@ triangle_init_app :: proc(app: ^Triangle_App) -> bool {
 	if !gfx.ez_gfx_glfw_init() do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	if !gfx.ez_gfx_window_create(&app.window, "ez_gfx_api triangle", WIDTH, HEIGHT) {
+	if !gfx.ez_gfx_window_create(
+		&app.window,
+		"ez_gfx_api triangle",
+		WIDTH,
+		HEIGHT,
+		hidden = true,
+	) {
 		return false
 	}
 	if !gfx.ez_gfx_ctx_create_instance(

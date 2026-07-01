@@ -231,6 +231,7 @@ ez_gfx_pipeline_record_create :: proc(
 		colorAttachmentCount    = u32(record.color_format_count),
 		pColorAttachmentFormats = &record.color_formats[0],
 		depthAttachmentFormat   = record.depth_format,
+		stencilAttachmentFormat = record.depth_format,
 	}
 
 	color_blend_attachments: [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.PipelineColorBlendAttachmentState

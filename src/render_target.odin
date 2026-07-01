@@ -11,6 +11,7 @@ Ez_Gfx_Render_Target_Texture :: struct {
 	image:               vk.Image,
 	memory:              vk.DeviceMemory,
 	image_view:          vk.ImageView,
+	attachment_view:     vk.ImageView,
 	sampler:             vk.Sampler,
 	format:              vk.Format,
 	extent:              vk.Extent2D,
@@ -184,7 +185,7 @@ ez_gfx_render_target_create :: proc(
 		viewType = .D2,
 		format = target.format,
 		subresourceRange = vk.ImageSubresourceRange {
-			aspectMask = ez_gfx_render_target_aspect(target.kind),
+			aspectMask = ez_gfx_render_target_sampled_aspect(target),
 			baseMipLevel = 0,
 			levelCount = 1,
 			baseArrayLayer = 0,
@@ -204,6 +205,26 @@ ez_gfx_render_target_create :: proc(
 		target.name[:],
 		target.name_len,
 	)
+	if target.kind == .Depth {
+		attachment_view_info := view_info
+		attachment_view_info.subresourceRange.aspectMask = ez_gfx_render_target_aspect(target)
+		if vk.CreateImageView(ctx.device, &attachment_view_info, nil, &target.attachment_view) !=
+		   .SUCCESS {
+			fmt.eprintln("failed to create render target attachment view")
+			ez_gfx_render_target_destroy(target)
+			return false
+		}
+		ez_gfx_debug_set_named_object(
+			ctx,
+			.IMAGE_VIEW,
+			ez_gfx_debug_handle(target.attachment_view),
+			"ez_gfx render target attachment view",
+			target.name[:],
+			target.name_len,
+		)
+	} else {
+		target.attachment_view = target.image_view
+	}
 
 	sampler_info := vk.SamplerCreateInfo {
 		sType        = .SAMPLER_CREATE_INFO,
@@ -239,13 +260,27 @@ ez_gfx_render_target_image_usage :: proc(kind: Ez_Gfx_Render_Target_Kind) -> vk.
 	return {.SAMPLED, .STORAGE, .COLOR_ATTACHMENT, .TRANSFER_DST}
 }
 
-ez_gfx_render_target_aspect :: proc(kind: Ez_Gfx_Render_Target_Kind) -> vk.ImageAspectFlags {
-	if kind == .Depth do return {.DEPTH}
+ez_gfx_render_target_aspect :: proc(target: ^Ez_Gfx_Render_Target_Texture) -> vk.ImageAspectFlags {
+	if target.kind == .Depth do return {.DEPTH, .STENCIL}
 	return {.COLOR}
 }
 
+ez_gfx_render_target_sampled_aspect :: proc(
+	target: ^Ez_Gfx_Render_Target_Texture,
+) -> vk.ImageAspectFlags {
+	if target.kind == .Depth do return {.DEPTH}
+	return {.COLOR}
+}
+
+ez_gfx_render_target_attachment_view :: proc(
+	target: ^Ez_Gfx_Render_Target_Texture,
+) -> vk.ImageView {
+	if target.attachment_view != vk.ImageView(0) do return target.attachment_view
+	return target.image_view
+}
+
 ez_gfx_render_target_descriptor_layout :: proc(kind: Ez_Gfx_Render_Target_Kind) -> vk.ImageLayout {
-	if kind == .Depth do return .DEPTH_READ_ONLY_OPTIMAL
+	if kind == .Depth do return .DEPTH_STENCIL_READ_ONLY_OPTIMAL
 	return .SHADER_READ_ONLY_OPTIMAL
 }
 
@@ -279,7 +314,7 @@ ez_gfx_render_target_transition_for_access :: proc(
 		dst_access,
 		src_stage,
 		dst_stage,
-		ez_gfx_render_target_aspect(target.kind),
+		ez_gfx_render_target_aspect(target),
 	)
 	target.layout = new_layout
 	if access == .Write || access == .Read_Write {
@@ -321,7 +356,7 @@ ez_gfx_render_target_transition_for_depth_attachment :: proc(
 	ez_gfx_render_target_transition(
 		target,
 		command_buffer,
-		.DEPTH_ATTACHMENT_OPTIMAL,
+		.DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 		{.DEPTH_STENCIL_ATTACHMENT_READ, .DEPTH_STENCIL_ATTACHMENT_WRITE},
 		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
 	)
@@ -344,7 +379,7 @@ ez_gfx_render_target_transition :: proc(
 		dst_access,
 		ez_gfx_image_layout_src_stage(target.layout),
 		dst_stage,
-		ez_gfx_render_target_aspect(target.kind),
+		ez_gfx_render_target_aspect(target),
 	)
 	target.layout = new_layout
 }
@@ -363,11 +398,11 @@ ez_gfx_render_target_clear_initial :: proc(
 		{.TRANSFER_WRITE},
 		ez_gfx_image_layout_src_stage(target.layout),
 		{.TRANSFER},
-		ez_gfx_render_target_aspect(target.kind),
+		ez_gfx_render_target_aspect(target),
 	)
 
 	range_info := vk.ImageSubresourceRange {
-		aspectMask     = ez_gfx_render_target_aspect(target.kind),
+		aspectMask     = ez_gfx_render_target_aspect(target),
 		baseMipLevel   = 0,
 		levelCount     = 1,
 		baseArrayLayer = 0,
@@ -482,6 +517,9 @@ ez_gfx_render_target_destroy :: proc(target: ^Ez_Gfx_Render_Target_Texture) {
 	}
 	if target.image_view != vk.ImageView(0) {
 		vk.DestroyImageView(ctx.device, target.image_view, nil)
+	}
+	if target.attachment_view != vk.ImageView(0) && target.attachment_view != target.image_view {
+		vk.DestroyImageView(ctx.device, target.attachment_view, nil)
 	}
 	if target.image != vk.Image(0) {
 		vk.DestroyImage(ctx.device, target.image, nil)

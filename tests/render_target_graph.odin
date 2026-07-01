@@ -81,7 +81,7 @@ render_target_graph_init_app :: proc(
 	if !gfx.ez_gfx_glfw_init() do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	if !gfx.ez_gfx_window_create(&app.window, title, WIDTH, HEIGHT) {
+	if !gfx.ez_gfx_window_create(&app.window, title, WIDTH, HEIGHT, hidden = true) {
 		return false
 	}
 	if !gfx.ez_gfx_ctx_create_instance(

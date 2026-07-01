@@ -53,9 +53,11 @@ ez_gfx_window_create :: proc(
 	window: ^Ez_Gfx_Window,
 	title: cstring,
 	width, height: c.int,
+	hidden: bool = false,
 ) -> bool {
 	glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
 	glfw.WindowHint(glfw.RESIZABLE, true)
+	glfw.WindowHint(glfw.VISIBLE, !hidden)
 	window.handle = glfw.CreateWindow(width, height, title, nil, nil)
 	if window.handle == nil {
 		fmt.eprintln("failed to create GLFW window")

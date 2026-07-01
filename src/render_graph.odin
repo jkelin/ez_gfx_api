@@ -503,8 +503,10 @@ ez_gfx_render_graph_begin_node_rendering :: proc(
 		color_attachments_ptr = &color_attachments[0]
 	}
 	depth_attachment_ptr: ^vk.RenderingAttachmentInfo
+	stencil_attachment_ptr: ^vk.RenderingAttachmentInfo
 	if has_depth_attachment {
 		depth_attachment_ptr = &depth_attachment
+		stencil_attachment_ptr = &depth_attachment
 	}
 
 	render_info := vk.RenderingInfo {
@@ -514,6 +516,7 @@ ez_gfx_render_graph_begin_node_rendering :: proc(
 		colorAttachmentCount = u32(color_attachment_count),
 		pColorAttachments = color_attachments_ptr,
 		pDepthAttachment = depth_attachment_ptr,
+		pStencilAttachment = stencil_attachment_ptr,
 	}
 	vk.CmdBeginRendering(command_buffer, &render_info)
 	ez_gfx_render_graph_set_viewport_and_scissor(render, command_buffer)
@@ -570,7 +573,7 @@ ez_gfx_render_graph_prepare_color_attachment :: proc(
 	}
 	attachment^ = vk.RenderingAttachmentInfo {
 		sType       = .RENDERING_ATTACHMENT_INFO,
-		imageView   = access.target.image_view,
+		imageView   = ez_gfx_render_target_attachment_view(access.target),
 		imageLayout = .COLOR_ATTACHMENT_OPTIMAL,
 		loadOp      = ez_gfx_render_graph_load_op(access.target.initialized),
 		storeOp     = .STORE,
@@ -592,8 +595,8 @@ ez_gfx_render_graph_prepare_depth_attachment :: proc(
 	ez_gfx_render_target_transition_for_depth_attachment(access.target, command_buffer)
 	attachment^ = vk.RenderingAttachmentInfo {
 		sType = .RENDERING_ATTACHMENT_INFO,
-		imageView = access.target.image_view,
-		imageLayout = .DEPTH_ATTACHMENT_OPTIMAL,
+		imageView = ez_gfx_render_target_attachment_view(access.target),
+		imageLayout = .DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 		loadOp = ez_gfx_render_graph_load_op(access.target.initialized),
 		storeOp = .STORE,
 		clearValue = vk.ClearValue{depthStencil = {depth = 1.0, stencil = 0}},
