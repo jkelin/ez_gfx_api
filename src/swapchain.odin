@@ -14,8 +14,9 @@ Ez_Gfx_Swapchain :: struct {
 	images:               [MAX_SWAPCHAIN_IMAGES]vk.Image,
 	image_views:          [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
 	image_layouts:        [MAX_SWAPCHAIN_IMAGES]vk.ImageLayout,
+	last_write_timeline:  [MAX_SWAPCHAIN_IMAGES]u64,
+	present_ready:        [MAX_SWAPCHAIN_IMAGES]vk.Semaphore,
 	image_count:          u32,
-	present_finished:     [MAX_SWAPCHAIN_IMAGES]vk.Semaphore,
 	last_presented_index: u32,
 	has_presented_image:  bool,
 }
@@ -84,6 +85,7 @@ ez_gfx_swapchain_recreate :: proc(
 	)
 	for i in 0 ..< swapchain.image_count {
 		swapchain.image_layouts[i] = .UNDEFINED
+		swapchain.last_write_timeline[i] = 0
 	}
 
 	return(
@@ -96,16 +98,17 @@ ez_gfx_swapchain_destroy :: proc(swapchain: ^Ez_Gfx_Swapchain) {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return
 	for i in 0 ..< swapchain.image_count {
-		if swapchain.present_finished[i] != vk.Semaphore(0) {
-			vk.DestroySemaphore(ctx.device, swapchain.present_finished[i], nil)
-		}
 		if swapchain.image_views[i] != vk.ImageView(0) {
 			vk.DestroyImageView(ctx.device, swapchain.image_views[i], nil)
 		}
-		swapchain.present_finished[i] = vk.Semaphore(0)
+		if swapchain.present_ready[i] != vk.Semaphore(0) {
+			vk.DestroySemaphore(ctx.device, swapchain.present_ready[i], nil)
+		}
 		swapchain.image_views[i] = vk.ImageView(0)
+		swapchain.present_ready[i] = vk.Semaphore(0)
 		swapchain.images[i] = vk.Image(0)
 		swapchain.image_layouts[i] = .UNDEFINED
+		swapchain.last_write_timeline[i] = 0
 	}
 	swapchain.image_count = 0
 	swapchain.last_presented_index = 0
@@ -191,12 +194,13 @@ ez_gfx_swapchain_create_image_views :: proc(swapchain: ^Ez_Gfx_Swapchain) -> boo
 ez_gfx_swapchain_create_present_semaphores :: proc(swapchain: ^Ez_Gfx_Swapchain) -> bool {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return false
+
 	info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,
 	}
 	for i in 0 ..< swapchain.image_count {
-		if vk.CreateSemaphore(ctx.device, &info, nil, &swapchain.present_finished[i]) != .SUCCESS {
-			fmt.eprintln("failed to create present semaphore")
+		if vk.CreateSemaphore(ctx.device, &info, nil, &swapchain.present_ready[i]) != .SUCCESS {
+			fmt.eprintln("failed to create swapchain present semaphore")
 			return false
 		}
 	}

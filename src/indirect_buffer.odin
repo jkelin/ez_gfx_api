@@ -6,10 +6,11 @@ import vk "vendor:vulkan"
 EZ_GFX_MAX_INDIRECT_BUFFERS :: 16
 
 Ez_Gfx_Multi_Draw_Indirect_Buffer :: struct {
-	buffer:   Ez_Gfx_Buffer,
-	stride:   vk.DeviceSize,
-	capacity: u32,
-	in_use:   bool,
+	buffer:             Ez_Gfx_Buffer,
+	stride:             vk.DeviceSize,
+	capacity:           u32,
+	in_use:             bool,
+	last_used_timeline: u64,
 }
 
 Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager :: struct {
@@ -46,9 +47,13 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 		return nil, false
 	}
 
+	completed_timeline := ez_gfx_indirect_completed_timeline()
 	for i in 0 ..< manager.count {
 		candidate := &manager.buffers[i]
-		if !candidate.in_use && candidate.stride == stride && candidate.capacity >= capacity {
+		if !candidate.in_use &&
+		   candidate.last_used_timeline <= completed_timeline &&
+		   candidate.stride == stride &&
+		   candidate.capacity >= capacity {
 			candidate.in_use = true
 			ez_gfx_vertex_pipeline_clear_buffer(candidate)
 			return candidate, true
@@ -80,17 +85,39 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 	return slot, true
 }
 
+ez_gfx_indirect_completed_timeline :: proc() -> u64 {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil || ctx.timeline_semaphore == vk.Semaphore(0) do return 0
+	value: u64
+	if vk.GetSemaphoreCounterValue(ctx.device, ctx.timeline_semaphore, &value) != .SUCCESS {
+		return 0
+	}
+	return value
+}
+
 ez_gfx_vertex_pipeline_clear_buffer :: proc(buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer) {
 	draw_count := [?]u32{0}
 	_ = ez_gfx_buffer_write_at(&buffer.buffer, 0, draw_count[:])
 }
 
-ez_gfx_indirect_buffer_manager_release_frame :: proc(
+ez_gfx_indirect_buffer_manager_release_completed :: proc(
 	manager: ^Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
 ) {
+	completed_timeline := ez_gfx_indirect_completed_timeline()
 	for i in 0 ..< manager.count {
-		manager.buffers[i].in_use = false
+		if manager.buffers[i].last_used_timeline <= completed_timeline {
+			manager.buffers[i].in_use = false
+		}
 	}
+}
+
+ez_gfx_indirect_buffer_mark_submitted :: proc(
+	buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
+	timeline_value: u64,
+) {
+	if buffer == nil do return
+	buffer.last_used_timeline = timeline_value
+	buffer.in_use = false
 }
 
 ez_gfx_indirect_buffer_manager_destroy :: proc(
@@ -101,6 +128,7 @@ ez_gfx_indirect_buffer_manager_destroy :: proc(
 		manager.buffers[i].stride = 0
 		manager.buffers[i].capacity = 0
 		manager.buffers[i].in_use = false
+		manager.buffers[i].last_used_timeline = 0
 	}
 	manager.count = 0
 }

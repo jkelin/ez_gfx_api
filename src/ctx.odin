@@ -1,10 +1,20 @@
 package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
+import intrinsics "base:intrinsics"
 import "core:c"
 import "core:fmt"
 import "vendor:glfw"
 import vk "vendor:vulkan"
+
+EZ_GFX_FRAMES_IN_FLIGHT :: 2
+EZ_GFX_FRAME_COMMAND_BUFFERS :: EZ_GFX_MAX_RENDER_PIPELINES + 1
+
+Ez_Gfx_Frame_Slot :: struct {
+	command_buffers:         [EZ_GFX_FRAME_COMMAND_BUFFERS]vk.CommandBuffer,
+	image_available:         vk.Semaphore,
+	last_submitted_timeline: u64,
+}
 
 Ez_Gfx_Ctx :: struct {
 	instance:              vk.Instance,
@@ -13,10 +23,10 @@ Ez_Gfx_Ctx :: struct {
 	queue_family_index:    u32,
 	graphics_queue:        vk.Queue,
 	command_pool:          vk.CommandPool,
-	command_buffer:        vk.CommandBuffer,
-	image_available:       vk.Semaphore,
-	image_acquired:        vk.Fence,
-	in_flight:             vk.Fence,
+	frame_slots:           [EZ_GFX_FRAMES_IN_FLIGHT]Ez_Gfx_Frame_Slot,
+	current_frame_slot:    u32,
+	timeline_semaphore:    vk.Semaphore,
+	timeline_counter:      u64,
 	slang_session:         ^sp.IGlobalSession,
 	vertex_manager:        Ez_Gfx_Vertex_Manager,
 	pipeline_manager:      Ez_Gfx_Pipeline_Manager,
@@ -110,18 +120,7 @@ ez_gfx_ctx_destroy :: proc() {
 		ez_gfx_pipeline_manager_destroy(&ctx.pipeline_manager)
 		ez_gfx_indirect_buffer_manager_destroy(&ctx.indirect_manager)
 		ez_gfx_render_target_manager_destroy(&ctx.render_target_manager)
-		if ctx.image_available != vk.Semaphore(0) {
-			vk.DestroySemaphore(ctx.device, ctx.image_available, nil)
-			ctx.image_available = vk.Semaphore(0)
-		}
-		if ctx.image_acquired != vk.Fence(0) {
-			vk.DestroyFence(ctx.device, ctx.image_acquired, nil)
-			ctx.image_acquired = vk.Fence(0)
-		}
-		if ctx.in_flight != vk.Fence(0) {
-			vk.DestroyFence(ctx.device, ctx.in_flight, nil)
-			ctx.in_flight = vk.Fence(0)
-		}
+		ez_gfx_ctx_destroy_sync_objects(ctx)
 		if ctx.command_pool != vk.CommandPool(0) {
 			vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
 			ctx.command_pool = vk.CommandPool(0)
@@ -233,6 +232,7 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		sType             = .PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		pNext             = &vulkan13_features,
 		drawIndirectCount = true,
+		timelineSemaphore = true,
 	}
 	vulkan11_features := vk.PhysicalDeviceVulkan11Features {
 		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
@@ -285,6 +285,7 @@ ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) 
 
 	if !features.features.multiDrawIndirect ||
 	   !vulkan12_features.drawIndirectCount ||
+	   !vulkan12_features.timelineSemaphore ||
 	   !vulkan13_features.dynamicRendering ||
 	   !vulkan13_features.synchronization2 ||
 	   !vulkan11_features.shaderDrawParameters {
@@ -309,38 +310,90 @@ ez_gfx_ctx_create_command_resources :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
 		commandPool        = ctx.command_pool,
 		level              = .PRIMARY,
-		commandBufferCount = 1,
+		commandBufferCount = EZ_GFX_FRAME_COMMAND_BUFFERS,
 	}
-	if vk.AllocateCommandBuffers(ctx.device, &alloc_info, &ctx.command_buffer) != .SUCCESS {
-		fmt.eprintln("failed to allocate command buffer")
-		return false
+	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
+		if vk.AllocateCommandBuffers(
+			   ctx.device,
+			   &alloc_info,
+			   &ctx.frame_slots[i].command_buffers[0],
+		   ) !=
+		   .SUCCESS {
+			fmt.eprintln("failed to allocate frame command buffers")
+			return false
+		}
 	}
 	return true
 }
 
 ez_gfx_ctx_create_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
-	semaphore_info := vk.SemaphoreCreateInfo {
+	binary_info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,
 	}
-	fence_info := vk.FenceCreateInfo {
-		sType = .FENCE_CREATE_INFO,
-		flags = {.SIGNALED},
+
+	timeline_type := vk.SemaphoreTypeCreateInfo {
+		sType         = .SEMAPHORE_TYPE_CREATE_INFO,
+		semaphoreType = .TIMELINE,
+		initialValue  = 0,
+	}
+	timeline_info := vk.SemaphoreCreateInfo {
+		sType = .SEMAPHORE_CREATE_INFO,
+		pNext = &timeline_type,
+	}
+	if vk.CreateSemaphore(ctx.device, &timeline_info, nil, &ctx.timeline_semaphore) != .SUCCESS {
+		fmt.eprintln("failed to create timeline semaphore")
+		return false
 	}
 
-	if vk.CreateSemaphore(ctx.device, &semaphore_info, nil, &ctx.image_available) != .SUCCESS {
-		fmt.eprintln("failed to create acquire semaphore")
-		return false
+	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
+		slot := &ctx.frame_slots[i]
+		if vk.CreateSemaphore(ctx.device, &binary_info, nil, &slot.image_available) != .SUCCESS {
+			fmt.eprintln("failed to create frame acquire semaphore")
+			return false
+		}
 	}
-	if vk.CreateFence(ctx.device, &{sType = .FENCE_CREATE_INFO}, nil, &ctx.image_acquired) !=
-	   .SUCCESS {
-		fmt.eprintln("failed to create acquire fence")
-		return false
+	return true
+}
+
+ez_gfx_ctx_destroy_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) {
+	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
+		slot := &ctx.frame_slots[i]
+		if slot.image_available != vk.Semaphore(0) {
+			vk.DestroySemaphore(ctx.device, slot.image_available, nil)
+			slot.image_available = vk.Semaphore(0)
+		}
+		slot.last_submitted_timeline = 0
 	}
-	if vk.CreateFence(ctx.device, &fence_info, nil, &ctx.in_flight) != .SUCCESS {
-		fmt.eprintln("failed to create fence")
+	if ctx.timeline_semaphore != vk.Semaphore(0) {
+		vk.DestroySemaphore(ctx.device, ctx.timeline_semaphore, nil)
+		ctx.timeline_semaphore = vk.Semaphore(0)
+	}
+	ctx.timeline_counter = 0
+}
+
+ez_gfx_ctx_next_timeline_value :: proc(ctx: ^Ez_Gfx_Ctx) -> u64 {
+	previous := intrinsics.atomic_add_explicit(&ctx.timeline_counter, u64(1), .Seq_Cst)
+	return previous + 1
+}
+
+ez_gfx_ctx_wait_timeline :: proc(ctx: ^Ez_Gfx_Ctx, value: u64) -> bool {
+	if value == 0 do return true
+	wait_value := value
+	wait_info := vk.SemaphoreWaitInfo {
+		sType          = .SEMAPHORE_WAIT_INFO,
+		semaphoreCount = 1,
+		pSemaphores    = &ctx.timeline_semaphore,
+		pValues        = &wait_value,
+	}
+	if vk.WaitSemaphores(ctx.device, &wait_info, UINT64_MAX) != .SUCCESS {
+		fmt.eprintln("failed to wait for timeline semaphore")
 		return false
 	}
 	return true
+}
+
+ez_gfx_ctx_current_frame_slot :: proc(ctx: ^Ez_Gfx_Ctx) -> ^Ez_Gfx_Frame_Slot {
+	return &ctx.frame_slots[ctx.current_frame_slot]
 }
 
 ez_gfx_ctx_cstring_equals_extension :: proc(

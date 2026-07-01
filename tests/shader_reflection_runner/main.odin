@@ -18,12 +18,14 @@ main :: proc() {
 	cases := [?]Shader_Case {
 		{"tests/shader_reflection/shaders/valid_targets.slang", true, 2, 1},
 		{"tests/shader_reflection/shaders/multiple_color_targets.slang", true, 3, 2},
+		{"tests/shader_reflection/shaders/color_history_read.slang", true, 1, 1},
 		{"tests/shader_reflection/shaders/missing_declaration.slang", false, 0, 0},
 		{"tests/shader_reflection/shaders/duplicate_declaration.slang", false, 0, 0},
 		{"tests/shader_reflection/shaders/invalid_access.slang", false, 0, 0},
 		{"tests/shader_reflection/shaders/invalid_scale.slang", false, 0, 0},
 		{"tests/shader_reflection/shaders/missing_scale.slang", false, 0, 0},
 		{"tests/shader_reflection/shaders/swapchain_read.slang", false, 0, 0},
+		{"tests/shader_reflection/shaders/color_feedback_loop.slang", false, 0, 0},
 		{"tests/shader_reflection/shaders/color_depth_mismatch.slang", false, 0, 0},
 		{"tests/shader_reflection/shaders/unsupported_set.slang", false, 0, 0},
 	}

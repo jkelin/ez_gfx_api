@@ -12,11 +12,14 @@ Ez_Gfx_Pipeline_Record :: struct {
 	shader:                ^Ez_Gfx_Shader_Program,
 	color_formats:         [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.Format,
 	color_format_count:    int,
+	depth_format:          vk.Format,
+	has_depth:             bool,
 	pipeline_layout:       vk.PipelineLayout,
 	pipeline:              vk.Pipeline,
 	descriptor_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool:       vk.DescriptorPool,
 	descriptor_set:        vk.DescriptorSet,
+	descriptor_version:    u64,
 	last_used:             u64,
 }
 
@@ -66,6 +69,32 @@ ez_gfx_pipeline_collect_color_formats :: proc(
 	return formats, count, true
 }
 
+ez_gfx_pipeline_collect_depth_format :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+) -> (
+	format: vk.Format,
+	has_depth: bool,
+	ok: bool,
+) {
+	for i in 0 ..< shader.target_usage_count {
+		usage := &shader.target_usages[i]
+		if usage.core do continue
+		if usage.access == .Read do continue
+		declaration := ez_gfx_shader_find_target_declaration(shader, usage.name[:], usage.name_len)
+		if declaration == nil || declaration.kind != .Depth {
+			fmt.eprintln("DepthTarget is missing a depth target declaration")
+			return format, false, false
+		}
+		if has_depth && format != declaration.format {
+			fmt.eprintln("multiple depth target formats are not supported")
+			return format, false, false
+		}
+		format = declaration.format
+		has_depth = true
+	}
+	return format, has_depth, true
+}
+
 ez_gfx_pipeline_color_formats_equal :: proc(
 	record: ^Ez_Gfx_Pipeline_Record,
 	formats: [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.Format,
@@ -78,7 +107,15 @@ ez_gfx_pipeline_color_formats_equal :: proc(
 	return true
 }
 
-// TODO: Add topology, blend, depth, and rasterization options to the cache key.
+ez_gfx_pipeline_depth_format_equal :: proc(
+	record: ^Ez_Gfx_Pipeline_Record,
+	format: vk.Format,
+	has_depth: bool,
+) -> bool {
+	return record.has_depth == has_depth && record.depth_format == format
+}
+
+// TODO: Add topology, blend, and rasterization options to the cache key.
 ez_gfx_pipeline_manager_get :: proc(
 	manager: ^Ez_Gfx_Pipeline_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
@@ -95,11 +132,14 @@ ez_gfx_pipeline_manager_get :: proc(
 		swapchain_format,
 	)
 	if !formats_ok do return nil, false
+	depth_format, has_depth, depth_ok := ez_gfx_pipeline_collect_depth_format(shader)
+	if !depth_ok do return nil, false
 
 	for i in 0 ..< manager.count {
 		candidate := &manager.records[i]
 		if candidate.shader_identity == shader.identity &&
-		   ez_gfx_pipeline_color_formats_equal(candidate, color_formats, color_format_count) {
+		   ez_gfx_pipeline_color_formats_equal(candidate, color_formats, color_format_count) &&
+		   ez_gfx_pipeline_depth_format_equal(candidate, depth_format, has_depth) {
 			candidate.last_used = manager.clock
 			return candidate, true
 		}
@@ -124,6 +164,8 @@ ez_gfx_pipeline_manager_get :: proc(
 	slot.shader = shader
 	slot.color_formats = color_formats
 	slot.color_format_count = color_format_count
+	slot.depth_format = depth_format
+	slot.has_depth = has_depth
 	slot.last_used = manager.clock
 	if !ez_gfx_pipeline_record_create(ctx, slot, shader) {
 		ez_gfx_pipeline_record_destroy(ctx, slot)
@@ -163,16 +205,6 @@ ez_gfx_pipeline_record_create :: proc(
 		pDynamicStates    = &dynamic_states[0],
 	}
 
-	color_blend_attachment := vk.PipelineColorBlendAttachmentState {
-		colorWriteMask = {.R, .G, .B, .A},
-		blendEnable    = false,
-	}
-	color_blend_state := vk.PipelineColorBlendStateCreateInfo {
-		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-		attachmentCount = 1,
-		pAttachments    = &color_blend_attachment,
-	}
-
 	stages := [2]vk.PipelineShaderStageCreateInfo {
 		{
 			sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -192,6 +224,35 @@ ez_gfx_pipeline_record_create :: proc(
 		sType                   = .PIPELINE_RENDERING_CREATE_INFO,
 		colorAttachmentCount    = u32(record.color_format_count),
 		pColorAttachmentFormats = &record.color_formats[0],
+		depthAttachmentFormat   = record.depth_format,
+	}
+
+	color_blend_attachments: [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.PipelineColorBlendAttachmentState
+	for i in 0 ..< record.color_format_count {
+		color_blend_attachments[i] = vk.PipelineColorBlendAttachmentState {
+			colorWriteMask = {.R, .G, .B, .A},
+			blendEnable    = false,
+		}
+	}
+	color_blend_state := vk.PipelineColorBlendStateCreateInfo {
+		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		attachmentCount = u32(record.color_format_count),
+		pAttachments    = &color_blend_attachments[0],
+	}
+
+	depth_stencil_state := vk.PipelineDepthStencilStateCreateInfo {
+		sType                 = .PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		depthTestEnable       = b32(record.has_depth),
+		depthWriteEnable      = b32(record.has_depth),
+		depthCompareOp        = .LESS_OR_EQUAL,
+		depthBoundsTestEnable = false,
+		stencilTestEnable     = false,
+		minDepthBounds        = 0.0,
+		maxDepthBounds        = 1.0,
+	}
+	depth_stencil_state_ptr: ^vk.PipelineDepthStencilStateCreateInfo
+	if record.has_depth {
+		depth_stencil_state_ptr = &depth_stencil_state
 	}
 
 	pipeline_info := vk.GraphicsPipelineCreateInfo {
@@ -219,6 +280,7 @@ ez_gfx_pipeline_record_create :: proc(
 			rasterizationSamples = {._1},
 		},
 		pColorBlendState    = &color_blend_state,
+		pDepthStencilState  = depth_stencil_state_ptr,
 		pDynamicState       = &dynamic_state,
 		layout              = record.pipeline_layout,
 	}
@@ -404,6 +466,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	if write_count > 0 {
 		vk.UpdateDescriptorSets(ctx.device, u32(write_count), &writes[0], 0, nil)
 	}
+	record.descriptor_version = ctx.render_target_manager.version
 	return true
 }
 
@@ -426,10 +489,13 @@ ez_gfx_pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipelin
 		record.descriptor_set_layout = vk.DescriptorSetLayout(0)
 	}
 	record.descriptor_set = vk.DescriptorSet(0)
+	record.descriptor_version = 0
 	record.shader_identity = 0
 	record.shader = nil
 	record.color_formats = {}
 	record.color_format_count = 0
+	record.depth_format = {}
+	record.has_depth = false
 	record.last_used = 0
 }
 

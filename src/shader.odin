@@ -885,6 +885,12 @@ ez_gfx_shader_validate_targets :: proc(program: ^Ez_Gfx_Shader_Program) -> bool 
 			fmt.eprintln("ColorTarget must reference a color target declaration")
 			return false
 		}
+		if usage.core && usage.access == .Read_Write {
+			fmt.eprintln(
+				"managed ColorTarget read_write would require an unsupported attachment feedback loop",
+			)
+			return false
+		}
 		if !usage.core && declaration.kind != .Depth {
 			fmt.eprintln("DepthTarget must reference a depth target declaration")
 			return false

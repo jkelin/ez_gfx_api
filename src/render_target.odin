@@ -6,22 +6,25 @@ import vk "vendor:vulkan"
 EZ_GFX_MAX_RENDER_TARGETS :: 16
 
 Ez_Gfx_Render_Target_Texture :: struct {
-	name:           [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:       int,
-	image:          vk.Image,
-	memory:         vk.DeviceMemory,
-	image_view:     vk.ImageView,
-	sampler:        vk.Sampler,
-	format:         vk.Format,
-	extent:         vk.Extent2D,
-	relative_scale: f32,
-	kind:           Ez_Gfx_Render_Target_Kind,
-	layout:         vk.ImageLayout,
+	name:                [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
+	name_len:            int,
+	image:               vk.Image,
+	memory:              vk.DeviceMemory,
+	image_view:          vk.ImageView,
+	sampler:             vk.Sampler,
+	format:              vk.Format,
+	extent:              vk.Extent2D,
+	relative_scale:      f32,
+	kind:                Ez_Gfx_Render_Target_Kind,
+	layout:              vk.ImageLayout,
+	initialized:         bool,
+	last_write_timeline: u64,
 }
 
 Ez_Gfx_Render_Target_Manager :: struct {
 	targets: [EZ_GFX_MAX_RENDER_TARGETS]Ez_Gfx_Render_Target_Texture,
 	count:   int,
+	version: u64,
 }
 
 ez_gfx_render_target_manager_acquire_shader_targets :: proc(
@@ -29,19 +32,8 @@ ez_gfx_render_target_manager_acquire_shader_targets :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	swapchain_extent: vk.Extent2D,
 ) -> bool {
-	for i in 0 ..< shader.target_usage_count {
-		usage := &shader.target_usages[i]
-		if usage.core do continue
-		if ez_gfx_shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {
-			continue
-		}
-
-		declaration := ez_gfx_shader_find_target_declaration(shader, usage.name[:], usage.name_len)
-		if declaration == nil {
-			fmt.eprintln("shader target usage is missing a matching declaration")
-			return false
-		}
-
+	for i in 0 ..< shader.target_declaration_count {
+		declaration := &shader.target_declarations[i]
 		_, ok := ez_gfx_render_target_manager_acquire(manager, declaration, swapchain_extent)
 		if !ok do return false
 	}
@@ -86,6 +78,7 @@ ez_gfx_render_target_manager_acquire :: proc(
 		slot^ = {}
 		return nil, false
 	}
+	manager.version += 1
 	return slot, true
 }
 
@@ -217,7 +210,7 @@ ez_gfx_render_target_transition_for_access :: proc(
 	access: Ez_Gfx_Target_Access,
 	command_buffer: vk.CommandBuffer,
 ) {
-	if access == .Read && target.layout == .UNDEFINED {
+	if access == .Read && !target.initialized {
 		ez_gfx_render_target_clear_initial(target, command_buffer)
 	}
 
@@ -249,31 +242,71 @@ ez_gfx_render_target_transition_for_access :: proc(
 		ez_gfx_render_target_aspect(target.kind),
 	)
 	target.layout = new_layout
+	if access == .Write || access == .Read_Write {
+		target.initialized = true
+	}
+}
+
+ez_gfx_render_target_transition_for_sampled_read :: proc(
+	target: ^Ez_Gfx_Render_Target_Texture,
+	command_buffer: vk.CommandBuffer,
+) {
+	new_layout := ez_gfx_render_target_descriptor_layout(target.kind)
+	ez_gfx_render_target_transition(
+		target,
+		command_buffer,
+		new_layout,
+		{.SHADER_SAMPLED_READ},
+		{.VERTEX_SHADER, .FRAGMENT_SHADER},
+	)
 }
 
 ez_gfx_render_target_transition_for_color_attachment :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 ) {
-	if target.layout == .COLOR_ATTACHMENT_OPTIMAL do return
-	src_access := vk.AccessFlags2{}
-	src_stage := vk.PipelineStageFlags2{.ALL_COMMANDS}
-	if target.layout == .TRANSFER_DST_OPTIMAL {
-		src_access = {.TRANSFER_WRITE}
-		src_stage = {.TRANSFER}
-	}
+	ez_gfx_render_target_transition(
+		target,
+		command_buffer,
+		.COLOR_ATTACHMENT_OPTIMAL,
+		{.COLOR_ATTACHMENT_WRITE},
+		{.COLOR_ATTACHMENT_OUTPUT},
+	)
+}
+
+ez_gfx_render_target_transition_for_depth_attachment :: proc(
+	target: ^Ez_Gfx_Render_Target_Texture,
+	command_buffer: vk.CommandBuffer,
+) {
+	ez_gfx_render_target_transition(
+		target,
+		command_buffer,
+		.DEPTH_ATTACHMENT_OPTIMAL,
+		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
+	)
+}
+
+ez_gfx_render_target_transition :: proc(
+	target: ^Ez_Gfx_Render_Target_Texture,
+	command_buffer: vk.CommandBuffer,
+	new_layout: vk.ImageLayout,
+	dst_access: vk.AccessFlags2,
+	dst_stage: vk.PipelineStageFlags2,
+) {
+	if target.layout == new_layout do return
 	ez_gfx_transition_image_with_aspect(
 		command_buffer,
 		target.image,
 		target.layout,
-		.COLOR_ATTACHMENT_OPTIMAL,
-		src_access,
-		{.COLOR_ATTACHMENT_WRITE},
-		src_stage,
-		{.COLOR_ATTACHMENT_OUTPUT},
-		{.COLOR},
+		new_layout,
+		ez_gfx_image_layout_src_access(target.layout),
+		dst_access,
+		ez_gfx_image_layout_src_stage(target.layout),
+		dst_stage,
+		ez_gfx_render_target_aspect(target.kind),
 	)
-	target.layout = .COLOR_ATTACHMENT_OPTIMAL
+	target.layout = new_layout
 }
 
 ez_gfx_render_target_clear_initial :: proc(
@@ -328,6 +361,7 @@ ez_gfx_render_target_clear_initial :: proc(
 		)
 	}
 	target.layout = .TRANSFER_DST_OPTIMAL
+	target.initialized = true
 }
 
 ez_gfx_render_target_manager_find :: proc(
@@ -392,6 +426,7 @@ ez_gfx_render_target_manager_clear :: proc(manager: ^Ez_Gfx_Render_Target_Manage
 		ez_gfx_render_target_destroy(&manager.targets[i])
 	}
 	manager.count = 0
+	manager.version += 1
 }
 
 ez_gfx_render_target_manager_destroy :: proc(manager: ^Ez_Gfx_Render_Target_Manager) {

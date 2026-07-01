@@ -60,9 +60,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 	row_stride := width * 4
 	buffer_size := vk.DeviceSize(row_stride * height)
 
-	image_index := swapchain.last_presented_index
-	image := swapchain.images[image_index]
-	old_layout := swapchain.image_layouts[image_index]
+	command_buffer := ctx.frame_slots[0].command_buffers[EZ_GFX_MAX_RENDER_PIPELINES]
 
 	staging, staging_ok := ez_gfx_buffer_create(
 		buffer_size,
@@ -72,27 +70,57 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 	if !staging_ok do return false
 	defer ez_gfx_buffer_destroy(&staging)
 
-	vk.DeviceWaitIdle(ctx.device)
-	vk.ResetFences(ctx.device, 1, &ctx.in_flight)
-	vk.ResetCommandBuffer(ctx.command_buffer, {})
+	if !ez_gfx_ctx_wait_timeline(ctx, ctx.frame_slots[0].last_submitted_timeline) {
+		return false
+	}
+
+	acquire_info := vk.SemaphoreCreateInfo {
+		sType = .SEMAPHORE_CREATE_INFO,
+	}
+	image_available: vk.Semaphore
+	if vk.CreateSemaphore(ctx.device, &acquire_info, nil, &image_available) != .SUCCESS {
+		fmt.eprintln("failed to create screenshot acquire semaphore")
+		return false
+	}
+	defer vk.DestroySemaphore(ctx.device, image_available, nil)
+
+	image_index: u32
+	acquire_result := vk.AcquireNextImageKHR(
+		ctx.device,
+		swapchain.handle,
+		UINT64_MAX,
+		image_available,
+		vk.Fence(0),
+		&image_index,
+	)
+	if acquire_result != .SUCCESS && acquire_result != .SUBOPTIMAL_KHR {
+		fmt.eprintf("failed to acquire swapchain image for screenshot: %v\n", acquire_result)
+		return false
+	}
+	if !ez_gfx_ctx_wait_timeline(ctx, swapchain.last_write_timeline[image_index]) {
+		return false
+	}
+	image := swapchain.images[image_index]
+	old_layout := swapchain.image_layouts[image_index]
+	vk.ResetCommandBuffer(command_buffer, {})
 
 	begin_info := vk.CommandBufferBeginInfo {
 		sType = .COMMAND_BUFFER_BEGIN_INFO,
 		flags = {.ONE_TIME_SUBMIT},
 	}
-	if vk.BeginCommandBuffer(ctx.command_buffer, &begin_info) != .SUCCESS {
+	if vk.BeginCommandBuffer(command_buffer, &begin_info) != .SUCCESS {
 		fmt.eprintln("failed to begin screenshot command buffer")
 		return false
 	}
 
 	ez_gfx_transition_image(
-		ctx.command_buffer,
+		command_buffer,
 		image,
 		old_layout,
 		.TRANSFER_SRC_OPTIMAL,
-		{},
+		ez_gfx_image_layout_src_access(old_layout),
 		{.TRANSFER_READ},
-		{.BOTTOM_OF_PIPE},
+		ez_gfx_image_layout_src_stage(old_layout),
 		{.TRANSFER},
 	)
 
@@ -114,7 +142,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		},
 	}
 	vk.CmdCopyImageToBuffer(
-		ctx.command_buffer,
+		command_buffer,
 		image,
 		.TRANSFER_SRC_OPTIMAL,
 		staging.handle,
@@ -123,7 +151,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 	)
 
 	ez_gfx_transition_image(
-		ctx.command_buffer,
+		command_buffer,
 		image,
 		.TRANSFER_SRC_OPTIMAL,
 		.PRESENT_SRC_KHR,
@@ -134,28 +162,45 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 	)
 	swapchain.image_layouts[image_index] = .PRESENT_SRC_KHR
 
-	if vk.EndCommandBuffer(ctx.command_buffer) != .SUCCESS {
+	if vk.EndCommandBuffer(command_buffer) != .SUCCESS {
 		fmt.eprintln("failed to end screenshot command buffer")
 		return false
 	}
 
 	command_submit := vk.CommandBufferSubmitInfo {
 		sType         = .COMMAND_BUFFER_SUBMIT_INFO,
-		commandBuffer = ctx.command_buffer,
+		commandBuffer = command_buffer,
+	}
+	wait_info := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = image_available,
+		stageMask = {.ALL_COMMANDS},
+	}
+	signal_value := ez_gfx_ctx_next_timeline_value(ctx)
+	signal_info := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = ctx.timeline_semaphore,
+		value     = signal_value,
+		stageMask = {.ALL_COMMANDS},
 	}
 	submit_info := vk.SubmitInfo2 {
-		sType                  = .SUBMIT_INFO_2,
-		commandBufferInfoCount = 1,
-		pCommandBufferInfos    = &command_submit,
+		sType                    = .SUBMIT_INFO_2,
+		waitSemaphoreInfoCount   = 1,
+		pWaitSemaphoreInfos      = &wait_info,
+		commandBufferInfoCount   = 1,
+		pCommandBufferInfos      = &command_submit,
+		signalSemaphoreInfoCount = 1,
+		pSignalSemaphoreInfos    = &signal_info,
 	}
-	if vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, ctx.in_flight) != .SUCCESS {
+	if vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0)) != .SUCCESS {
 		fmt.eprintln("failed to submit screenshot copy")
 		return false
 	}
-	if vk.WaitForFences(ctx.device, 1, &ctx.in_flight, true, ~u64(0)) != .SUCCESS {
+	if !ez_gfx_ctx_wait_timeline(ctx, signal_value) {
 		fmt.eprintln("failed to wait for screenshot copy")
 		return false
 	}
+	swapchain.last_write_timeline[image_index] = signal_value
 
 	pixel_data, alloc_err := make([]u8, row_stride * height)
 	if alloc_err != nil {
