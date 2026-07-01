@@ -30,3 +30,8 @@ struct TargetLayoutAttribute
     string kind;
     string format;
 };
+
+[__AttributeUsage(_AttributeTargets.Var)]
+struct LoadTargetAttribute
+{
+};

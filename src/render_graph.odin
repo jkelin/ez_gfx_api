@@ -265,12 +265,21 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 		return ez_gfx_render_graph_execute_empty_present(render)
 	}
 
-	wait_value: u64
+	first_swapchain_write := ez_gfx_render_graph_first_swapchain_write_index(graph)
 	for i in 0 ..< graph.node_count {
 		node := &graph.nodes[i]
 		command_buffer := render.frame.command_buffers[i]
 		if !ez_gfx_render_graph_begin_commands(command_buffer) {
 			return false
+		}
+		if i == 0 {
+			if !ez_gfx_render_target_manager_clear_frame_targets(
+				&render.ctx.render_target_manager,
+				render.ctx,
+				command_buffer,
+			) {
+				return false
+			}
 		}
 		if !ez_gfx_render_graph_prepare_sampled_reads(render, node, command_buffer) {
 			return false
@@ -278,6 +287,7 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 		if !ez_gfx_render_graph_execute_node(render, node, command_buffer) {
 			return false
 		}
+		ez_gfx_render_graph_transition_future_reads(render, i, command_buffer)
 		if i == graph.node_count - 1 {
 			if !ez_gfx_render_graph_transition_present(render, command_buffer) {
 				return false
@@ -289,24 +299,31 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 		}
 
 		signal_value := ez_gfx_ctx_next_timeline_value(render.ctx)
+		wait_value := ez_gfx_render_graph_node_wait_value(node)
 		if !ez_gfx_render_graph_submit_command(
 			render,
 			command_buffer,
 			wait_value,
 			signal_value,
-			i == 0,
+			i == first_swapchain_write,
 			i == graph.node_count - 1,
 		) {
 			return false
 		}
 		node.timeline_value = signal_value
+		if i == 0 {
+			ez_gfx_render_target_manager_mark_frame_clears_submitted(
+				&render.ctx.render_target_manager,
+				signal_value,
+			)
+		}
 		ez_gfx_indirect_buffer_mark_submitted(node.descriptor.indirect_buffer, signal_value)
 		ez_gfx_render_graph_mark_node_writes_submitted(render, node, signal_value)
-		wait_value = signal_value
 	}
 
-	render.timeline_end = wait_value
-	render.frame.last_submitted_timeline = wait_value
+	last_signal_value := graph.nodes[graph.node_count - 1].timeline_value
+	render.timeline_end = last_signal_value
+	render.frame.last_submitted_timeline = last_signal_value
 	return true
 }
 
@@ -322,15 +339,72 @@ ez_gfx_render_graph_prepare_sampled_reads :: proc(
 			fmt.eprintln("render graph sampled read is missing a target")
 			return false
 		}
-		if !ez_gfx_ctx_wait_timeline(render.ctx, access.target.last_write_timeline) {
-			return false
-		}
-		if !access.target.initialized {
-			ez_gfx_render_target_clear_initial(access.target, command_buffer)
-		}
 		ez_gfx_render_target_transition_for_sampled_read(access.target, command_buffer)
 	}
 	return true
+}
+
+ez_gfx_render_graph_node_wait_value :: proc(node: ^Ez_Gfx_Render_Graph_Node) -> u64 {
+	wait_value: u64
+	for i in 0 ..< node.access_count {
+		access := &node.accesses[i]
+		if access.resource_kind != .Managed || access.target == nil do continue
+		if access.target.last_write_timeline > wait_value {
+			wait_value = access.target.last_write_timeline
+		}
+	}
+	return wait_value
+}
+
+ez_gfx_render_graph_transition_future_reads :: proc(
+	render: ^Ez_Gfx_Render,
+	node_index: int,
+	command_buffer: vk.CommandBuffer,
+) {
+	node := &render.graph.nodes[node_index]
+	for i in 0 ..< node.access_count {
+		access := &node.accesses[i]
+		if access.resource_kind != .Managed || access.target == nil do continue
+		if !(access.color_write || access.depth_write) do continue
+		if ez_gfx_render_graph_has_future_sampled_read(
+			&render.graph,
+			node_index + 1,
+			access.target,
+		) {
+			ez_gfx_render_target_transition_for_sampled_read(access.target, command_buffer)
+		}
+	}
+}
+
+ez_gfx_render_graph_has_future_sampled_read :: proc(
+	graph: ^Ez_Gfx_Render_Graph,
+	start_index: int,
+	target: ^Ez_Gfx_Render_Target_Texture,
+) -> bool {
+	for node_index in start_index ..< graph.node_count {
+		node := &graph.nodes[node_index]
+		for access_index in 0 ..< node.access_count {
+			access := &node.accesses[access_index]
+			if !access.sampled_read do continue
+			if access.resource_kind == .Managed && access.target == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+ez_gfx_render_graph_first_swapchain_write_index :: proc(graph: ^Ez_Gfx_Render_Graph) -> int {
+	for node_index in 0 ..< graph.node_count {
+		node := &graph.nodes[node_index]
+		for access_index in 0 ..< node.access_count {
+			access := &node.accesses[access_index]
+			if access.resource_kind == .Swapchain && access.color_write {
+				return node_index
+			}
+		}
+	}
+	return 0
 }
 
 ez_gfx_render_graph_execute_node :: proc(
@@ -490,9 +564,6 @@ ez_gfx_render_graph_prepare_color_attachment :: proc(
 		fmt.eprintln("managed color attachment is missing a target")
 		return false
 	}
-	if !ez_gfx_ctx_wait_timeline(render.ctx, access.target.last_write_timeline) {
-		return false
-	}
 	ez_gfx_render_target_transition_for_color_attachment(access.target, command_buffer)
 	clear_value^ = vk.ClearValue {
 		color = vk.ClearColorValue{float32 = {0, 0, 0, 0}},
@@ -516,9 +587,6 @@ ez_gfx_render_graph_prepare_depth_attachment :: proc(
 ) -> bool {
 	if access.target == nil {
 		fmt.eprintln("managed depth attachment is missing a target")
-		return false
-	}
-	if !ez_gfx_ctx_wait_timeline(render.ctx, access.target.last_write_timeline) {
 		return false
 	}
 	ez_gfx_render_target_transition_for_depth_attachment(access.target, command_buffer)

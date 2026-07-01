@@ -17,6 +17,7 @@ SLANG_COLOR_TARGET_ATTRIBUTE :: "ColorTarget"
 SLANG_DEPTH_TARGET_ATTRIBUTE :: "DepthTarget"
 SLANG_RELATIVE_SCALE_ATTRIBUTE :: "RelativeScale"
 SLANG_TARGET_LAYOUT_ATTRIBUTE :: "TargetLayout"
+SLANG_LOAD_TARGET_ATTRIBUTE :: "LoadTarget"
 EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS :: 8
 EZ_GFX_MAX_SHADER_TARGET_USAGES :: 8
 EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS :: 8
@@ -55,13 +56,14 @@ Ez_Gfx_Shader_Target_Usage :: struct {
 }
 
 Ez_Gfx_Shader_Target_Declaration :: struct {
-	name:           [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:       int,
-	relative_scale: f32,
-	kind:           Ez_Gfx_Render_Target_Kind,
-	format:         vk.Format,
-	binding:        u32,
-	set:            u32,
+	name:                [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
+	name_len:            int,
+	relative_scale:      f32,
+	kind:                Ez_Gfx_Render_Target_Kind,
+	format:              vk.Format,
+	binding:             u32,
+	set:                 u32,
+	load_on_frame_begin: bool,
 }
 
 Ez_Gfx_Shader_Program :: struct {
@@ -582,6 +584,20 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 			return false
 		}
 
+		load_attribute := sp.variable_findAttributeByName(
+			field_variable,
+			ctx.slang_session,
+			SLANG_LOAD_TARGET_ATTRIBUTE,
+		)
+		load_on_frame_begin := false
+		if load_attribute != nil {
+			if sp.ReflectionUserAttribute_GetArgumentCount(load_attribute) != 0 {
+				fmt.eprintln("LoadTarget attribute does not take arguments")
+				return false
+			}
+			load_on_frame_begin = true
+		}
+
 		declaration := &program.target_declarations[program.target_declaration_count]
 		field_name := sp.variable_layout_getName(field_layout)
 		if field_name == nil {
@@ -617,6 +633,7 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 		}
 		declaration.binding = sp.variable_layout_getBindingIndex(field_layout)
 		declaration.set = u32(sp.variable_layout_getBindingSpace(field_layout, .ShaderResource))
+		declaration.load_on_frame_begin = load_on_frame_begin
 		if declaration.set != 0 {
 			fmt.eprintln("only descriptor set 0 is supported for render targets")
 			return false
@@ -964,12 +981,19 @@ ez_gfx_shader_find_target_declaration :: proc(
 	return nil
 }
 
-ez_gfx_shader_validate_unique_target_declarations :: proc(program: ^Ez_Gfx_Shader_Program) -> bool {
+ez_gfx_shader_validate_unique_target_declarations :: proc(
+	program: ^Ez_Gfx_Shader_Program,
+) -> bool {
 	for i in 0 ..< program.target_declaration_count {
 		a := &program.target_declarations[i]
 		for j in i + 1 ..< program.target_declaration_count {
 			b := &program.target_declarations[j]
-			if ez_gfx_shader_target_name_equals_bytes(a.name[:], a.name_len, b.name[:], b.name_len) {
+			if ez_gfx_shader_target_name_equals_bytes(
+				a.name[:],
+				a.name_len,
+				b.name[:],
+				b.name_len,
+			) {
 				fmt.eprintln("duplicate render target declaration")
 				return false
 			}

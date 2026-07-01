@@ -4,7 +4,7 @@ build: copy_slang_dll
   odin build examples/one_triangle -out:out\ez_gfx_api.exe
 
 test:
-  odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
+  odin test tests -out:out\ez_gfx_tests.exe -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
 
 copy_slang_dll:
   copy vendor\odin-slang\slang\bin\slang.dll out\slang.dll

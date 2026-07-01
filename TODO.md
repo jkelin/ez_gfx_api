@@ -33,3 +33,11 @@
 - Precompiled shader modules including reflection metadata to enable not shipping slang/original source code
 
 - Shader cache using precompiled shader modules
+
+- Dynamic state for pipeline invocations, such as viewport and scissor rectangles
+
+- Clear color for render target initialization each frame
+
+- Add render target pixel readback tests so multi-frame `LoadTarget` behavior can assert preserved contents, not only Vulkan validation cleanliness.
+
+- Investigate the Slang crash triggered by passing arguments to the zero-field `LoadTarget` attribute, then add a negative reflection fixture for that misuse.

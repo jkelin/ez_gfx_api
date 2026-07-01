@@ -29,6 +29,14 @@ color_history_read_reflects_metadata :: proc(t: ^testing.T) {
 }
 
 @(test)
+load_target_reflects_metadata :: proc(t: ^testing.T) {
+	program, ok := reflect_shader(t, "tests/load_target.slang")
+	if !ok do return
+	testing.expect_value(t, program.target_declaration_count, 1)
+	testing.expect(t, program.target_declarations[0].load_on_frame_begin)
+}
+
+@(test)
 missing_declaration_fails_reflection :: proc(t: ^testing.T) {
 	expect_shader_case(t, {"tests/missing_declaration.slang", false, 0, 0})
 }
@@ -99,7 +107,8 @@ shader_path_resolves_from_parent_directory :: proc(t: ^testing.T) {
 	}
 	defer delete(cwd)
 
-	if err := os.setwd("out"); !testing.expectf(t, err == nil, "failed to enter out directory: %v", err) {
+	if err := os.setwd("out");
+	   !testing.expectf(t, err == nil, "failed to enter out directory: %v", err) {
 		return
 	}
 	defer os.setwd(cwd)
@@ -108,17 +117,7 @@ shader_path_resolves_from_parent_directory :: proc(t: ^testing.T) {
 }
 
 expect_shader_case :: proc(t: ^testing.T, test_case: Shader_Case) {
-	gfx.ez_gfx_set_current_ctx(&shader_test_ctx)
-
-	program: gfx.Ez_Gfx_Shader_Program
-	ok := gfx.ez_gfx_shader_reflect(
-		{
-			path = test_case.path,
-			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
-			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
-		},
-		&program,
-	)
+	program, ok := reflect_shader(t, test_case.path)
 	if !testing.expectf(
 		t,
 		ok == test_case.should_pass,
@@ -137,4 +136,24 @@ expect_shader_case :: proc(t: ^testing.T, test_case: Shader_Case) {
 	if test_case.expected_declarations > 0 {
 		testing.expect_value(t, program.target_declaration_count, test_case.expected_declarations)
 	}
+}
+
+reflect_shader :: proc(
+	t: ^testing.T,
+	path: cstring,
+) -> (
+	program: gfx.Ez_Gfx_Shader_Program,
+	ok: bool,
+) {
+	_ = t
+	gfx.ez_gfx_set_current_ctx(&shader_test_ctx)
+	ok = gfx.ez_gfx_shader_reflect(
+		{
+			path = path,
+			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+		},
+		&program,
+	)
+	return
 }

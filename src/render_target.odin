@@ -18,6 +18,8 @@ Ez_Gfx_Render_Target_Texture :: struct {
 	kind:                Ez_Gfx_Render_Target_Kind,
 	layout:              vk.ImageLayout,
 	initialized:         bool,
+	load_on_frame_begin: bool,
+	frame_clear_pending: bool,
 	last_write_timeline: u64,
 }
 
@@ -62,6 +64,10 @@ ez_gfx_render_target_manager_acquire :: proc(
 		   candidate.relative_scale == declaration.relative_scale &&
 		   candidate.extent.width == extent.width &&
 		   candidate.extent.height == extent.height {
+			if candidate.load_on_frame_begin != declaration.load_on_frame_begin {
+				fmt.eprintln("render target LoadTarget declarations conflict")
+				return nil, false
+			}
 			return candidate, true
 		}
 	}
@@ -109,6 +115,7 @@ ez_gfx_render_target_create :: proc(
 	target.relative_scale = declaration.relative_scale
 	target.kind = declaration.kind
 	target.layout = .UNDEFINED
+	target.load_on_frame_begin = declaration.load_on_frame_begin
 
 	usage := ez_gfx_render_target_image_usage(declaration.kind)
 	create_info := vk.ImageCreateInfo {
@@ -247,10 +254,6 @@ ez_gfx_render_target_transition_for_access :: proc(
 	access: Ez_Gfx_Target_Access,
 	command_buffer: vk.CommandBuffer,
 ) {
-	if access == .Read && !target.initialized {
-		ez_gfx_render_target_clear_initial(target, command_buffer)
-	}
-
 	new_layout := ez_gfx_render_target_descriptor_layout(target.kind)
 	src_access := vk.AccessFlags2{}
 	src_stage := vk.PipelineStageFlags2{.ALL_COMMANDS}
@@ -306,7 +309,7 @@ ez_gfx_render_target_transition_for_color_attachment :: proc(
 		target,
 		command_buffer,
 		.COLOR_ATTACHMENT_OPTIMAL,
-		{.COLOR_ATTACHMENT_WRITE},
+		{.COLOR_ATTACHMENT_READ, .COLOR_ATTACHMENT_WRITE},
 		{.COLOR_ATTACHMENT_OUTPUT},
 	)
 }
@@ -319,7 +322,7 @@ ez_gfx_render_target_transition_for_depth_attachment :: proc(
 		target,
 		command_buffer,
 		.DEPTH_ATTACHMENT_OPTIMAL,
-		{.DEPTH_STENCIL_ATTACHMENT_WRITE},
+		{.DEPTH_STENCIL_ATTACHMENT_READ, .DEPTH_STENCIL_ATTACHMENT_WRITE},
 		{.EARLY_FRAGMENT_TESTS, .LATE_FRAGMENT_TESTS},
 	)
 }
@@ -350,16 +353,15 @@ ez_gfx_render_target_clear_initial :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 ) {
-	// Shader-declared targets may be read before a producer pass exists. Clear
-	// them once so the first descriptor read has defined contents.
+	// Frame-start clears give non-load targets deterministic contents before graph use.
 	ez_gfx_transition_image_with_aspect(
 		command_buffer,
 		target.image,
-		.UNDEFINED,
+		target.layout,
 		.TRANSFER_DST_OPTIMAL,
-		{},
+		ez_gfx_image_layout_src_access(target.layout),
 		{.TRANSFER_WRITE},
-		{.TOP_OF_PIPE},
+		ez_gfx_image_layout_src_stage(target.layout),
 		{.TRANSFER},
 		ez_gfx_render_target_aspect(target.kind),
 	)
@@ -418,6 +420,38 @@ ez_gfx_render_target_manager_find :: proc(
 		}
 	}
 	return nil
+}
+
+ez_gfx_render_target_manager_clear_frame_targets :: proc(
+	manager: ^Ez_Gfx_Render_Target_Manager,
+	ctx: ^Ez_Gfx_Ctx,
+	command_buffer: vk.CommandBuffer,
+) -> bool {
+	for i in 0 ..< manager.count {
+		target := &manager.targets[i]
+		if target.load_on_frame_begin && target.initialized {
+			target.frame_clear_pending = false
+			continue
+		}
+		if !ez_gfx_ctx_wait_timeline(ctx, target.last_write_timeline) {
+			return false
+		}
+		ez_gfx_render_target_clear_initial(target, command_buffer)
+		target.frame_clear_pending = true
+	}
+	return true
+}
+
+ez_gfx_render_target_manager_mark_frame_clears_submitted :: proc(
+	manager: ^Ez_Gfx_Render_Target_Manager,
+	timeline_value: u64,
+) {
+	for i in 0 ..< manager.count {
+		target := &manager.targets[i]
+		if !target.frame_clear_pending do continue
+		target.last_write_timeline = timeline_value
+		target.frame_clear_pending = false
+	}
 }
 
 ez_gfx_render_target_manager_transition_shader_targets :: proc(
