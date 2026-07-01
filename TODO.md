@@ -41,3 +41,13 @@
 - Add render target pixel readback tests so multi-frame `LoadTarget` behavior can assert preserved contents, not only Vulkan validation cleanliness.
 
 - Investigate the Slang crash triggered by passing arguments to the zero-field `LoadTarget` attribute, then add a negative reflection fixture for that misuse.
+
+- Render target aliasing based on the render graph node dependencies. You can safely reuse render target memory inside the same frame if it is no longer used by subsequent render graph nodes
+
+- Compute shader support
+
+- Arbitrary sample / write to render targets
+
+- Replace depth texture with depth + stencil to fix format warnings
+
+- Make test windows be hidden

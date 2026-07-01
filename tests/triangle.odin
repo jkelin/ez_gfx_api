@@ -53,6 +53,86 @@ triangle_renders_without_validation_errors :: proc(t: ^testing.T) {
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }
 
+@(test)
+present_modes_can_be_queried_and_changed :: proc(t: ^testing.T) {
+	app: Triangle_App
+	if !testing.expect(t, triangle_init_app(&app), "present mode test failed during init") {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	info: gfx.Ez_Gfx_Ctx_Info
+	if !testing.expect(
+		t,
+		gfx.ez_gfx_ctx_get_info(&info),
+		"present mode test failed to query context info",
+	) {
+		return
+	}
+	if !testing.expect(
+		t,
+		info.swapchain_present_mode_count > 0,
+		"present mode test found no surface modes",
+	) {
+		return
+	}
+	testing.expect_value(
+		t,
+		info.swapchain_present_mode_count,
+		app.ctx.swapchain_present_mode_count,
+	)
+
+	requested := info.swapchain_present_modes[info.swapchain_present_mode_count - 1]
+	testing.expect(
+		t,
+		gfx.ez_gfx_ctx_set_swapchain_present_mode(requested),
+		"present mode test failed to accept a supported mode",
+	)
+	if !testing.expect(t, gfx.ez_gfx_window_recreate_swapchain(&app.window)) {
+		return
+	}
+
+	testing.expect_value(t, app.ctx.swapchain_present_mode, requested)
+	testing.expect_value(t, app.window.swapchain.present_mode, requested)
+	gfx.ez_gfx_ctx_wait_idle()
+	testing.expect_value(t, app.validation_log.errors, u32(0))
+	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+}
+
+@(test)
+resize_after_screenshot_recreates_without_validation_errors :: proc(t: ^testing.T) {
+	app: Triangle_App
+	if !testing.expect(t, triangle_init_app(&app), "resize test failed during init") {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	if !testing.expect(t, triangle_draw_frame(&app), "resize test failed to draw initial frame") {
+		return
+	}
+
+	pixels: []u8
+	if !testing.expect(
+		t,
+		gfx.ez_gfx_screenshot_read_swapchain_bgra(&app.window.swapchain, &pixels),
+		"resize test failed to read a swapchain screenshot",
+	) {
+		return
+	}
+	defer delete(pixels)
+
+	app.window.framebuffer_resized = true
+	if !testing.expect(t, triangle_draw_frame(&app), "resize test failed to draw resized frame") {
+		return
+	}
+
+	gfx.ez_gfx_ctx_wait_idle()
+	testing.expect_value(t, app.validation_log.errors, u32(0))
+	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+}
+
 validation_callback :: proc(
 	ctx: ^gfx.Ez_Gfx_Ctx,
 	message: gfx.Ez_Gfx_Validation_Message,

@@ -11,6 +11,7 @@ Ez_Gfx_Swapchain :: struct {
 	handle:               vk.SwapchainKHR,
 	format:               vk.Format,
 	extent:               vk.Extent2D,
+	present_mode:         vk.PresentModeKHR,
 	images:               [MAX_SWAPCHAIN_IMAGES]vk.Image,
 	image_views:          [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
 	image_layouts:        [MAX_SWAPCHAIN_IMAGES]vk.ImageLayout,
@@ -28,15 +29,21 @@ ez_gfx_swapchain_recreate :: proc(
 ) -> bool {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return false
-	vk.DeviceWaitIdle(ctx.device)
-	ez_gfx_swapchain_destroy(swapchain)
+	old_handle := swapchain.handle
+	if old_handle != vk.SwapchainKHR(0) {
+		ez_gfx_swapchain_destroy_image_resources(swapchain)
+	}
 
 	capabilities: vk.SurfaceCapabilitiesKHR
 	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.physical_device, surface, &capabilities)
 
 	format := ez_gfx_swapchain_choose_surface_format(ctx.physical_device, surface)
 	extent := ez_gfx_swapchain_choose_extent(capabilities, width, height)
+	present_mode := ctx.swapchain_present_mode
 	image_count := capabilities.minImageCount + 1
+	if ez_gfx_swapchain_present_mode_is_shared(present_mode) {
+		image_count = 1
+	}
 	if capabilities.maxImageCount > 0 && image_count > capabilities.maxImageCount {
 		image_count = capabilities.maxImageCount
 	}
@@ -53,15 +60,21 @@ ez_gfx_swapchain_recreate :: proc(
 		imageSharingMode = .EXCLUSIVE,
 		preTransform     = capabilities.currentTransform,
 		compositeAlpha   = {.OPAQUE},
-		presentMode      = .FIFO,
+		presentMode      = present_mode,
 		clipped          = true,
+		oldSwapchain     = old_handle,
 	}
 
-	result := vk.CreateSwapchainKHR(ctx.device, &create_info, nil, &swapchain.handle)
+	new_handle: vk.SwapchainKHR
+	result := vk.CreateSwapchainKHR(ctx.device, &create_info, nil, &new_handle)
 	if result != .SUCCESS {
 		fmt.eprintf("failed to create swapchain: %v\n", result)
 		return false
 	}
+	if old_handle != vk.SwapchainKHR(0) {
+		vk.DestroySwapchainKHR(ctx.device, old_handle, nil)
+	}
+	swapchain.handle = new_handle
 	ez_gfx_debug_set_object_name(
 		ctx,
 		.SWAPCHAIN_KHR,
@@ -71,6 +84,7 @@ ez_gfx_swapchain_recreate :: proc(
 
 	swapchain.format = format.format
 	swapchain.extent = extent
+	swapchain.present_mode = present_mode
 
 	count: u32
 	vk.GetSwapchainImagesKHR(ctx.device, swapchain.handle, &count, nil)
@@ -110,6 +124,17 @@ ez_gfx_swapchain_recreate :: proc(
 ez_gfx_swapchain_destroy :: proc(swapchain: ^Ez_Gfx_Swapchain) {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return
+	ez_gfx_swapchain_destroy_image_resources(swapchain)
+
+	if swapchain.handle != vk.SwapchainKHR(0) {
+		vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
+	}
+	swapchain.handle = vk.SwapchainKHR(0)
+}
+
+ez_gfx_swapchain_destroy_image_resources :: proc(swapchain: ^Ez_Gfx_Swapchain) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return
 	for i in 0 ..< swapchain.image_count {
 		if swapchain.image_views[i] != vk.ImageView(0) {
 			vk.DestroyImageView(ctx.device, swapchain.image_views[i], nil)
@@ -126,11 +151,6 @@ ez_gfx_swapchain_destroy :: proc(swapchain: ^Ez_Gfx_Swapchain) {
 	swapchain.image_count = 0
 	swapchain.last_presented_index = 0
 	swapchain.has_presented_image = false
-
-	if swapchain.handle != vk.SwapchainKHR(0) {
-		vk.DestroySwapchainKHR(ctx.device, swapchain.handle, nil)
-	}
-	swapchain.handle = vk.SwapchainKHR(0)
 }
 
 ez_gfx_swapchain_choose_surface_format :: proc(
@@ -149,6 +169,46 @@ ez_gfx_swapchain_choose_surface_format :: proc(
 		}
 	}
 	return formats[0]
+}
+
+ez_gfx_swapchain_present_mode_supported :: proc(
+	available_present_modes: []vk.PresentModeKHR,
+	mode: vk.PresentModeKHR,
+) -> bool {
+	if !ez_gfx_swapchain_present_mode_usable(mode) do return false
+	for present_mode in available_present_modes {
+		if present_mode == mode do return true
+	}
+	return false
+}
+
+ez_gfx_swapchain_present_mode_usable :: proc(mode: vk.PresentModeKHR) -> bool {
+	switch mode {
+	case .IMMEDIATE,
+	     .MAILBOX,
+	     .FIFO,
+	     .FIFO_RELAXED,
+	     .SHARED_DEMAND_REFRESH,
+	     .SHARED_CONTINUOUS_REFRESH,
+	     .FIFO_LATEST_READY_EXT:
+		return true
+	}
+	return false
+}
+
+ez_gfx_swapchain_present_mode_is_shared :: proc(mode: vk.PresentModeKHR) -> bool {
+	return mode == .SHARED_DEMAND_REFRESH || mode == .SHARED_CONTINUOUS_REFRESH
+}
+
+ez_gfx_swapchain_choose_present_mode :: proc(
+	available_present_modes: []vk.PresentModeKHR,
+	requested: vk.PresentModeKHR,
+) -> vk.PresentModeKHR {
+	if ez_gfx_swapchain_present_mode_supported(available_present_modes, requested) {
+		return requested
+	}
+	// FIFO is guaranteed by Vulkan and is the stable fallback for user requests.
+	return .FIFO
 }
 
 ez_gfx_swapchain_choose_extent :: proc(

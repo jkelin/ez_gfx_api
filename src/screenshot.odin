@@ -210,6 +210,20 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 	}
 	swapchain.last_write_timeline[image_index] = signal_value
 
+	present_info := vk.PresentInfoKHR {
+		sType          = .PRESENT_INFO_KHR,
+		swapchainCount = 1,
+		pSwapchains    = &swapchain.handle,
+		pImageIndices  = &image_index,
+	}
+	present_result := vk.QueuePresentKHR(ctx.graphics_queue, &present_info)
+	if present_result != .SUCCESS && present_result != .SUBOPTIMAL_KHR {
+		fmt.eprintf("failed to present screenshot swapchain image: %v\n", present_result)
+		return false
+	}
+	swapchain.last_presented_index = image_index
+	swapchain.has_presented_image = true
+
 	pixel_data, alloc_err := make([]u8, row_stride * height)
 	if alloc_err != nil {
 		fmt.eprintf("failed to allocate screenshot pixels: %v\n", alloc_err)

@@ -10,6 +10,7 @@ import vk "vendor:vulkan"
 
 EZ_GFX_FRAMES_IN_FLIGHT :: 2
 EZ_GFX_FRAME_COMMAND_BUFFERS :: EZ_GFX_MAX_RENDER_PIPELINES + 1
+EZ_GFX_MAX_PRESENT_MODES :: 8
 
 Ez_Gfx_Frame_Slot :: struct {
 	command_buffers:         [EZ_GFX_FRAME_COMMAND_BUFFERS]vk.CommandBuffer,
@@ -44,6 +45,12 @@ Ez_Gfx_Validation_Counts :: struct {
 	error:   u32,
 }
 
+Ez_Gfx_Ctx_Info :: struct {
+	swapchain_present_modes:      [EZ_GFX_MAX_PRESENT_MODES]vk.PresentModeKHR,
+	swapchain_present_mode_count: u32,
+	swapchain_present_mode:       vk.PresentModeKHR,
+}
+
 Ez_Gfx_Ctx :: struct {
 	instance:                             vk.Instance,
 	debug_messenger:                      vk.DebugUtilsMessengerEXT,
@@ -66,6 +73,11 @@ Ez_Gfx_Ctx :: struct {
 	debug_utils_enabled:                  bool,
 	memory_priority_enabled:              bool,
 	pageable_device_local_memory_enabled: bool,
+	present_mode_fifo_latest_enabled:     bool,
+	shared_presentable_image_enabled:     bool,
+	swapchain_present_mode:               vk.PresentModeKHR,
+	swapchain_present_modes:              [EZ_GFX_MAX_PRESENT_MODES]vk.PresentModeKHR,
+	swapchain_present_mode_count:         u32,
 	validation_callback:                  Ez_Gfx_Validation_Callback,
 	validation_user_data:                 rawptr,
 	validation_counts:                    Ez_Gfx_Validation_Counts,
@@ -101,6 +113,7 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 	ctx.validation_user_data = desc.validation_user_data
 	ctx.validation_counts = {}
 	ctx.debug_utils_enabled = desc.enable_validation || desc.enable_debug
+	ctx.swapchain_present_mode = .FIFO
 
 	glfw_extensions := glfw.GetRequiredInstanceExtensions()
 	if len(glfw_extensions) == 0 {
@@ -196,6 +209,7 @@ ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return false
 	if !ez_gfx_ctx_pick_physical_device(ctx, surface) do return false
+	if !ez_gfx_ctx_cache_swapchain_present_modes(ctx, surface) do return false
 	ez_gfx_ctx_enable_optional_device_features(ctx)
 	if !ez_gfx_ctx_create_device(ctx) do return false
 	vk.load_proc_addresses(ctx.device)
@@ -212,6 +226,32 @@ ez_gfx_ctx_wait_idle :: proc() {
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
 	}
+}
+
+// Returns cached public context metadata without exposing internal ownership.
+ez_gfx_ctx_get_info :: proc(info: ^Ez_Gfx_Ctx_Info) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+
+	info^ = {}
+	info.swapchain_present_mode_count = ctx.swapchain_present_mode_count
+	info.swapchain_present_mode = ctx.swapchain_present_mode
+	for i in 0 ..< ctx.swapchain_present_mode_count {
+		info.swapchain_present_modes[i] = ctx.swapchain_present_modes[i]
+	}
+	return true
+}
+
+// Updates the presentation mode used by the next swapchain recreation.
+ez_gfx_ctx_set_swapchain_present_mode :: proc(mode: vk.PresentModeKHR) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+
+	ctx.swapchain_present_mode = ez_gfx_swapchain_choose_present_mode(
+		ctx.swapchain_present_modes[:ctx.swapchain_present_mode_count],
+		mode,
+	)
+	return ctx.swapchain_present_mode == mode
 }
 
 ez_gfx_ctx_destroy :: proc() {
@@ -325,6 +365,112 @@ ez_gfx_ctx_device_supports_extension :: proc(
 	return false
 }
 
+ez_gfx_ctx_cache_swapchain_present_modes :: proc(
+	ctx: ^Ez_Gfx_Ctx,
+	surface: vk.SurfaceKHR,
+) -> bool {
+	ctx.swapchain_present_mode_count = 0
+	ctx.present_mode_fifo_latest_enabled = false
+	ctx.shared_presentable_image_enabled = false
+
+	count: u32
+	result := vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.physical_device, surface, &count, nil)
+	if result != .SUCCESS {
+		fmt.eprintf("failed to count swapchain present modes: %v\n", result)
+		return false
+	}
+	if count == 0 {
+		fmt.eprintln("surface reported no swapchain present modes")
+		return false
+	}
+	if count > EZ_GFX_MAX_PRESENT_MODES {
+		count = EZ_GFX_MAX_PRESENT_MODES
+	}
+
+	modes: [EZ_GFX_MAX_PRESENT_MODES]vk.PresentModeKHR
+	result = vk.GetPhysicalDeviceSurfacePresentModesKHR(
+		ctx.physical_device,
+		surface,
+		&count,
+		&modes[0],
+	)
+	if result != .SUCCESS {
+		fmt.eprintf("failed to query swapchain present modes: %v\n", result)
+		return false
+	}
+
+	fifo_latest_available := ez_gfx_ctx_present_mode_fifo_latest_available(ctx.physical_device)
+	shared_present_available := ez_gfx_ctx_device_supports_extension(
+		ctx.physical_device,
+		vk.KHR_SHARED_PRESENTABLE_IMAGE_EXTENSION_NAME,
+	)
+
+	for mode in modes[:count] {
+		if ez_gfx_ctx_present_mode_requires_fifo_latest(mode) && !fifo_latest_available {
+			continue
+		}
+		if ez_gfx_ctx_present_mode_requires_shared_present(mode) && !shared_present_available {
+			continue
+		}
+		ez_gfx_ctx_append_swapchain_present_mode(ctx, mode)
+		if mode == .FIFO_LATEST_READY_EXT {
+			ctx.present_mode_fifo_latest_enabled = true
+		}
+		if ez_gfx_ctx_present_mode_requires_shared_present(mode) {
+			ctx.shared_presentable_image_enabled = true
+		}
+	}
+	if ctx.swapchain_present_mode_count == 0 {
+		ez_gfx_ctx_append_swapchain_present_mode(ctx, .FIFO)
+	}
+	ctx.swapchain_present_mode = ez_gfx_swapchain_choose_present_mode(
+		ctx.swapchain_present_modes[:ctx.swapchain_present_mode_count],
+		ctx.swapchain_present_mode,
+	)
+	return true
+}
+
+ez_gfx_ctx_append_swapchain_present_mode :: proc(ctx: ^Ez_Gfx_Ctx, mode: vk.PresentModeKHR) {
+	if ez_gfx_swapchain_present_mode_supported(
+		ctx.swapchain_present_modes[:ctx.swapchain_present_mode_count],
+		mode,
+	) {
+		return
+	}
+	if ctx.swapchain_present_mode_count >= EZ_GFX_MAX_PRESENT_MODES {
+		return
+	}
+	ctx.swapchain_present_modes[ctx.swapchain_present_mode_count] = mode
+	ctx.swapchain_present_mode_count += 1
+}
+
+ez_gfx_ctx_present_mode_fifo_latest_available :: proc(device: vk.PhysicalDevice) -> bool {
+	if !ez_gfx_ctx_device_supports_extension(
+		device,
+		vk.EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME,
+	) {
+		return false
+	}
+
+	fifo_latest_features := vk.PhysicalDevicePresentModeFifoLatestReadyFeaturesEXT {
+		sType = .PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_EXT,
+	}
+	features := vk.PhysicalDeviceFeatures2 {
+		sType = .PHYSICAL_DEVICE_FEATURES_2,
+		pNext = &fifo_latest_features,
+	}
+	vk.GetPhysicalDeviceFeatures2(device, &features)
+	return bool(fifo_latest_features.presentModeFifoLatestReady)
+}
+
+ez_gfx_ctx_present_mode_requires_fifo_latest :: proc(mode: vk.PresentModeKHR) -> bool {
+	return mode == .FIFO_LATEST_READY_EXT
+}
+
+ez_gfx_ctx_present_mode_requires_shared_present :: proc(mode: vk.PresentModeKHR) -> bool {
+	return mode == .SHARED_DEMAND_REFRESH || mode == .SHARED_CONTINUOUS_REFRESH
+}
+
 ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	priority: f32 = 1.0
 	queue_info := vk.DeviceQueueCreateInfo {
@@ -365,9 +511,19 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		pNext          = ctx.pageable_device_local_memory_enabled ? &pageable_features : &vulkan11_features,
 		memoryPriority = b32(ctx.memory_priority_enabled),
 	}
+	feature_chain: rawptr =
+		ctx.memory_priority_enabled ? &memory_priority_features : &vulkan11_features
+	fifo_latest_features := vk.PhysicalDevicePresentModeFifoLatestReadyFeaturesEXT {
+		sType                      = .PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_EXT,
+		pNext                      = feature_chain,
+		presentModeFifoLatestReady = b32(ctx.present_mode_fifo_latest_enabled),
+	}
+	if ctx.present_mode_fifo_latest_enabled {
+		feature_chain = &fifo_latest_features
+	}
 	features := vk.PhysicalDeviceFeatures2 {
 		sType = .PHYSICAL_DEVICE_FEATURES_2,
-		pNext = ctx.memory_priority_enabled ? &memory_priority_features : &vulkan11_features,
+		pNext = feature_chain,
 		features = {
 			multiDrawIndirect = true,
 			shaderInt64 = true,
@@ -384,6 +540,12 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	}
 	if ctx.pageable_device_local_memory_enabled {
 		append(&device_extensions, vk.EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME)
+	}
+	if ctx.present_mode_fifo_latest_enabled {
+		append(&device_extensions, vk.EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME)
+	}
+	if ctx.shared_presentable_image_enabled {
+		append(&device_extensions, vk.KHR_SHARED_PRESENTABLE_IMAGE_EXTENSION_NAME)
 	}
 	create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,

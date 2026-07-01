@@ -10,4 +10,7 @@ copy_slang_dll:
   copy vendor\odin-slang\slang\bin\slang.dll out\slang.dll
 
 run: build 
+  .\out\ez_gfx_api.exe
+
+run_agent: build 
   $env:EZ_GFX_MAX_SECONDS = "2"; $env:EZ_GFX_SCREENSHOT = "1"; .\out\ez_gfx_api.exe

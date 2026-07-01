@@ -95,6 +95,8 @@ ez_gfx_window_recreate_swapchain :: proc(window: ^Ez_Gfx_Window) -> bool {
 		if glfw.WindowShouldClose(window.handle) do return false
 	}
 
+	// Resize invalidates size-dependent resources, so wait here before destroying them.
+	vk.DeviceWaitIdle(ctx.device)
 	ez_gfx_render_target_manager_clear(&ctx.render_target_manager)
 	return ez_gfx_swapchain_recreate(&window.swapchain, window.surface, width, height)
 }
