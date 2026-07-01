@@ -1,6 +1,7 @@
 package ez_gfx
 
 import "core:fmt"
+import "core:sync"
 import vk "vendor:vulkan"
 
 EZ_GFX_MAX_RENDER_GRAPH_ACCESSES ::
@@ -300,6 +301,9 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 
 		signal_value := ez_gfx_ctx_next_timeline_value(render.ctx)
 		wait_value := ez_gfx_render_graph_node_wait_value(node)
+		if i == 0 && render.texture_upload_wait_timeline > wait_value {
+			wait_value = render.texture_upload_wait_timeline
+		}
 		if !ez_gfx_render_graph_submit_command(
 			render,
 			command_buffer,
@@ -430,6 +434,18 @@ ez_gfx_render_graph_execute_node :: proc(
 				0,
 				1,
 				&descriptor.pipeline.descriptor_set,
+				0,
+				nil,
+			)
+		}
+		if ctx.texture_manager.descriptor_set != vk.DescriptorSet(0) {
+			vk.CmdBindDescriptorSets(
+				command_buffer,
+				.GRAPHICS,
+				descriptor.pipeline.pipeline_layout,
+				1,
+				1,
+				&ctx.texture_manager.descriptor_set,
 				0,
 				nil,
 			)
@@ -704,7 +720,8 @@ ez_gfx_render_graph_execute_empty_present :: proc(render: ^Ez_Gfx_Render) -> boo
 	}
 
 	signal_value := ez_gfx_ctx_next_timeline_value(render.ctx)
-	if !ez_gfx_render_graph_submit_command(render, command_buffer, 0, signal_value, true, true) {
+	wait_value := render.texture_upload_wait_timeline
+	if !ez_gfx_render_graph_submit_command(render, command_buffer, wait_value, signal_value, true, true) {
 		return false
 	}
 	ez_gfx_render_graph_mark_node_writes_submitted(render, &node, signal_value)
@@ -808,7 +825,10 @@ ez_gfx_render_graph_submit_command :: proc(
 		signalSemaphoreInfoCount = u32(signal_count),
 		pSignalSemaphoreInfos    = &signal_infos[0],
 	}
-	if vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0)) != .SUCCESS {
+	sync.mutex_lock(&ctx.queue_mutex)
+	result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0))
+	sync.mutex_unlock(&ctx.queue_mutex)
+	if result != .SUCCESS {
 		fmt.eprintln("failed to submit render graph node")
 		ez_gfx_window_set_should_close(render.window, true)
 		return false

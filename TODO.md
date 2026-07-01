@@ -18,7 +18,7 @@
 
 - Add stronger Vertex manager allocation ownership checks if callers start freeing arbitrary user-provided ranges. The current free-list allocator merges and reuses released chunks, but it trusts handles returned by the allocation APIs rather than tracking every live allocation for double-free diagnostics.
 
-- Add a dedicated transfer-queue upload path for textures and vertex data, including proper synchronization. Device setup still selects a graphics/present queue and uploads through host-visible buffers on the graphics path, so there is no async staging/copy queue yet.
+- Add a dedicated transfer-queue upload path for textures and vertex data, including proper synchronization. Device setup still selects a graphics/present queue; the first async texture manager uses a texture upload thread and staging copies, but submits those copies on the graphics queue until transfer queue ownership is modeled.
 
 - Replace remaining host-side waits for managed render target timeline dependencies with queue-side timeline waits so independent frame work can overlap more effectively. Graph node dependencies use queue-side timeline waits, but frame-start target clears and begin-render synchronization still call `ez_gfx_ctx_wait_timeline` on the CPU.
 

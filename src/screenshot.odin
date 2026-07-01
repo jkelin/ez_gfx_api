@@ -4,6 +4,7 @@ import "core:c"
 import "core:fmt"
 import "core:path/filepath"
 import "core:strings"
+import "core:sync"
 import stbi "vendor:stb/image"
 import vk "vendor:vulkan"
 
@@ -199,7 +200,10 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		signalSemaphoreInfoCount = 1,
 		pSignalSemaphoreInfos    = &signal_info,
 	}
-	if vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0)) != .SUCCESS {
+	sync.mutex_lock(&ctx.queue_mutex)
+	submit_result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0))
+	sync.mutex_unlock(&ctx.queue_mutex)
+	if submit_result != .SUCCESS {
 		fmt.eprintln("failed to submit screenshot copy")
 		return false
 	}
@@ -215,7 +219,9 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		pSwapchains    = &swapchain.handle,
 		pImageIndices  = &image_index,
 	}
+	sync.mutex_lock(&ctx.queue_mutex)
 	present_result := vk.QueuePresentKHR(ctx.graphics_queue, &present_info)
+	sync.mutex_unlock(&ctx.queue_mutex)
 	if present_result != .SUCCESS && present_result != .SUBOPTIMAL_KHR {
 		fmt.eprintf("failed to present screenshot swapchain image: %v\n", present_result)
 		return false

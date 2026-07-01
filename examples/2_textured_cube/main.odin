@@ -10,11 +10,13 @@ import vk "vendor:vulkan"
 WIDTH :: 1280
 HEIGHT :: 720
 CUBE_SHADER_PATH :: cstring("examples/2_textured_cube/cube.slang")
+TEXTURE_BYTES :: #load("ez_graphics_api_texture.png")
 CUBE_POSITION_HEAP :: "position"
-CUBE_COLOR_HEAP :: "color"
 
 Cube_Push_Constants :: struct {
-	mvp: shared.Mat4,
+	mvp:        shared.Mat4,
+	texture_id: u32,
+	_padding:   [3]u32,
 }
 
 CUBE_INDICES :: [36]u32 {
@@ -35,21 +37,14 @@ CUBE_POSITIONS :: [24][4]f32 {
 	{-1, -1, -1, 1}, {1, -1, -1, 1}, {1, -1, 1, 1}, {-1, -1, 1, 1},
 }
 
-CUBE_COLORS :: [24][4]f32 {
-	{1.0, 0.2, 0.2, 1.0}, {1.0, 0.2, 0.2, 1.0}, {1.0, 0.2, 0.2, 1.0}, {1.0, 0.2, 0.2, 1.0},
-	{0.2, 1.0, 0.2, 1.0}, {0.2, 1.0, 0.2, 1.0}, {0.2, 1.0, 0.2, 1.0}, {0.2, 1.0, 0.2, 1.0},
-	{0.2, 0.4, 1.0, 1.0}, {0.2, 0.4, 1.0, 1.0}, {0.2, 0.4, 1.0, 1.0}, {0.2, 0.4, 1.0, 1.0},
-	{1.0, 0.9, 0.2, 1.0}, {1.0, 0.9, 0.2, 1.0}, {1.0, 0.9, 0.2, 1.0}, {1.0, 0.9, 0.2, 1.0},
-	{1.0, 0.2, 1.0, 1.0}, {1.0, 0.2, 1.0, 1.0}, {1.0, 0.2, 1.0, 1.0}, {1.0, 0.2, 1.0, 1.0},
-	{0.2, 1.0, 1.0, 1.0}, {0.2, 1.0, 1.0, 1.0}, {0.2, 1.0, 1.0, 1.0}, {0.2, 1.0, 1.0, 1.0},
-}
-
 App :: struct {
 	ctx:            gfx.Ez_Gfx_Ctx,
 	windows:        [gfx.MAX_WINDOWS]gfx.Ez_Gfx_Window,
 	window_count:   int,
 	shader:         gfx.Ez_Gfx_Shader_Program,
 	shader_loaded:  bool,
+	texture_id:     gfx.Ez_Gfx_Texture_ID,
+	texture_scheduled: bool,
 	cube_index:     u32,
 	cube_index_len: u32,
 	cube_vertex:    u32,
@@ -82,7 +77,14 @@ init_app :: proc(app: ^App) -> bool {
 	fmt.println("checkpoint: window create")
 	if !gfx.ez_gfx_window_create(main_window, "ez_gfx_api cube", WIDTH, HEIGHT) do return false
 	fmt.println("checkpoint: instance create")
-	if !gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}) do return false
+	if !gfx.ez_gfx_ctx_create_instance(
+		&app.ctx,
+		{
+			enable_debug = true,
+		},
+	) {
+		return false
+	}
 	fmt.println("checkpoint: surface create")
 	if !gfx.ez_gfx_window_create_surface(main_window) do return false
 	fmt.println("checkpoint: device init")
@@ -109,7 +111,7 @@ cube_init :: proc(app: ^App) -> bool {
 	}
 	app.shader_loaded = true
 
-	vertex_heap_names := [?]string{CUBE_POSITION_HEAP, CUBE_COLOR_HEAP}
+	vertex_heap_names := [?]string{CUBE_POSITION_HEAP}
 	if !gfx.ez_gfx_vertex_manager_create(
 		&app.ctx.vertex_manager,
 		vertex_heap_names[:],
@@ -136,13 +138,29 @@ cube_init :: proc(app: ^App) -> bool {
 	if !vertex_ok do return false
 	app.cube_vertex = vertex_start
 
-	colors := CUBE_COLORS
-	_, color_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
-		&app.ctx.vertex_manager,
-		CUBE_COLOR_HEAP,
-		colors[:],
+	return cube_load_texture(app)
+}
+
+cube_load_texture :: proc(app: ^App) -> bool {
+	region := gfx.Ez_Gfx_Texture_Memory_Region{data = TEXTURE_BYTES}
+	texture_id, texture_err := gfx.ez_gfx_load_texture(
+		[]gfx.Ez_Gfx_Texture_Memory_Region{region},
+		{
+			source_format = .PNG,
+			destination_format = .R8G8B8A8_UNORM,
+			generate_mips = true,
+			min_filter = .Linear,
+			mag_filter = .Linear,
+			debug_label = "example cube texture",
+		},
 	)
-	return color_ok
+	if texture_err != .None {
+		fmt.eprintf("failed to schedule cube texture load: %v\n", texture_err)
+		return false
+	}
+	app.texture_id = texture_id
+	app.texture_scheduled = true
+	return true
 }
 
 run :: proc(app: ^App) {
@@ -191,6 +209,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window, time_seconds: f32) {
 	)
 	push_constants := Cube_Push_Constants {
 		mvp = shared.mat4_mul(projection, shared.mat4_mul(view, model)),
+		texture_id = u32(app.texture_id),
 	}
 
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
@@ -228,6 +247,10 @@ cleanup :: proc(app: ^App) {
 	if app.shader_loaded {
 		gfx.ez_gfx_shader_destroy(&app.shader)
 		app.shader_loaded = false
+	}
+	if app.texture_scheduled {
+		_ = gfx.ez_gfx_unload_texture(app.texture_id)
+		app.texture_scheduled = false
 	}
 	for i in 0 ..< app.window_count {
 		gfx.ez_gfx_window_destroy(&app.windows[i])

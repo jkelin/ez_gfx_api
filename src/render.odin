@@ -2,6 +2,7 @@ package ez_gfx
 
 import "core:fmt"
 import "core:mem"
+import "core:sync"
 import vk "vendor:vulkan"
 
 EZ_GFX_MAX_RENDER_PIPELINES :: 16
@@ -14,6 +15,7 @@ Ez_Gfx_Render :: struct {
 	frame_slot:     u32,
 	image_index:    u32,
 	timeline_end:   u64,
+	texture_upload_wait_timeline: u64,
 	graph:          Ez_Gfx_Render_Graph,
 	pipelines:      [EZ_GFX_MAX_RENDER_PIPELINES]Ez_Gfx_Vertex_Pipeline_Descriptor,
 	pipeline_count: int,
@@ -52,6 +54,16 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 		render.active = false
 		return false
 	}
+	render.texture_upload_wait_timeline =
+		ez_gfx_texture_manager_latest_scheduled_timeline(&ctx.texture_manager)
+	if !ez_gfx_texture_manager_wait_submitted_timeline(
+		&ctx.texture_manager,
+		render.texture_upload_wait_timeline,
+	) {
+		render.active = false
+		return false
+	}
+	ez_gfx_texture_manager_collect_destroyed(&ctx.texture_manager, ctx)
 	ez_gfx_indirect_buffer_manager_release_completed(&ctx.indirect_manager)
 
 	acquire_result := vk.AcquireNextImageKHR(
@@ -218,7 +230,9 @@ ez_gfx_render_submit_and_present :: proc(render: ^Ez_Gfx_Render) -> bool {
 		pSwapchains        = &swapchain.handle,
 		pImageIndices      = &render.image_index,
 	}
+	sync.mutex_lock(&render.ctx.queue_mutex)
 	present_result := vk.QueuePresentKHR(render.ctx.graphics_queue, &present_info)
+	sync.mutex_unlock(&render.ctx.queue_mutex)
 	if present_result == .ERROR_OUT_OF_DATE_KHR ||
 	   present_result == .SUBOPTIMAL_KHR ||
 	   window.framebuffer_resized {

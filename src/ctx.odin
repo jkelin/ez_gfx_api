@@ -6,6 +6,7 @@ import intrinsics "base:intrinsics"
 import "base:runtime"
 import "core:c"
 import "core:fmt"
+import "core:sync"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
@@ -37,6 +38,8 @@ Ez_Gfx_Ctx_Desc :: struct {
 	validation_callback:  Ez_Gfx_Validation_Callback,
 	validation_user_data: rawptr,
 	enable_debug:         bool,
+	texture_loaded_callback:  Ez_Gfx_Texture_Loaded_Callback,
+	texture_loaded_user_data: rawptr,
 }
 
 Ez_Gfx_Validation_Counts :: struct {
@@ -59,6 +62,7 @@ Ez_Gfx_Ctx :: struct {
 	device:                               vk.Device,
 	queue_family_index:                   u32,
 	graphics_queue:                       vk.Queue,
+	queue_mutex:                          sync.Mutex,
 	command_pool:                         vk.CommandPool,
 	frame_slots:                          [EZ_GFX_FRAMES_IN_FLIGHT]Ez_Gfx_Frame_Slot,
 	current_frame_slot:                   u32,
@@ -68,6 +72,7 @@ Ez_Gfx_Ctx :: struct {
 	vma_allocator:                        vma.Allocator,
 	slang_session:                        ^sp.IGlobalSession,
 	vertex_manager:                       Ez_Gfx_Vertex_Manager,
+	texture_manager:                      Ez_Gfx_Texture_Manager,
 	pipeline_manager:                     Ez_Gfx_Pipeline_Manager,
 	indirect_manager:                     Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
 	render_target_manager:                Ez_Gfx_Render_Target_Manager,
@@ -83,6 +88,8 @@ Ez_Gfx_Ctx :: struct {
 	swapchain_present_mode_count:         u32,
 	validation_callback:                  Ez_Gfx_Validation_Callback,
 	validation_user_data:                 rawptr,
+	texture_loaded_callback:              Ez_Gfx_Texture_Loaded_Callback,
+	texture_loaded_user_data:             rawptr,
 	validation_counts:                    Ez_Gfx_Validation_Counts,
 }
 
@@ -114,6 +121,8 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 	ctx.enable_debug = desc.enable_debug
 	ctx.validation_callback = desc.validation_callback
 	ctx.validation_user_data = desc.validation_user_data
+	ctx.texture_loaded_callback = desc.texture_loaded_callback
+	ctx.texture_loaded_user_data = desc.texture_loaded_user_data
 	ctx.validation_counts = {}
 	ctx.debug_utils_enabled = desc.enable_validation || desc.enable_debug
 	ctx.swapchain_present_mode = .FIFO
@@ -221,6 +230,7 @@ ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
 	ez_gfx_ctx_name_device_objects(ctx)
 	if !ez_gfx_ctx_create_command_resources(ctx) do return false
 	if !ez_gfx_ctx_create_sync_objects(ctx) do return false
+	if !ez_gfx_texture_manager_create(&ctx.texture_manager, ctx) do return false
 	return true
 }
 
@@ -263,6 +273,7 @@ ez_gfx_ctx_destroy :: proc() {
 	if ctx == nil do return
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
+		ez_gfx_texture_manager_destroy(&ctx.texture_manager, ctx)
 		ez_gfx_vertex_manager_destroy(&ctx.vertex_manager)
 		ez_gfx_pipeline_manager_destroy(&ctx.pipeline_manager)
 		ez_gfx_indirect_buffer_manager_destroy(&ctx.indirect_manager)
@@ -500,6 +511,12 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		bufferDeviceAddress          = true,
 		vulkanMemoryModel            = true,
 		vulkanMemoryModelDeviceScope = true,
+		descriptorIndexing           = true,
+		shaderSampledImageArrayNonUniformIndexing = true,
+		descriptorBindingSampledImageUpdateAfterBind = true,
+		descriptorBindingUpdateUnusedWhilePending = true,
+		descriptorBindingPartiallyBound = true,
+		runtimeDescriptorArray       = true,
 	}
 	vulkan11_features := vk.PhysicalDeviceVulkan11Features {
 		sType                = .PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
@@ -652,10 +669,18 @@ ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) 
 	   !vulkan12_features.bufferDeviceAddress ||
 	   !vulkan12_features.vulkanMemoryModel ||
 	   !vulkan12_features.vulkanMemoryModelDeviceScope ||
+	   !vulkan12_features.descriptorIndexing ||
+	   !vulkan12_features.shaderSampledImageArrayNonUniformIndexing ||
+	   !vulkan12_features.descriptorBindingSampledImageUpdateAfterBind ||
+	   !vulkan12_features.descriptorBindingUpdateUnusedWhilePending ||
+	   !vulkan12_features.descriptorBindingPartiallyBound ||
+	   !vulkan12_features.runtimeDescriptorArray ||
 	   !vulkan13_features.dynamicRendering ||
 	   !vulkan13_features.synchronization2 ||
 	   !vulkan11_features.shaderDrawParameters {
-		fmt.eprintln("Vulkan device is missing required EasyGraphics rendering features")
+		fmt.eprintln(
+			"Vulkan device is missing required EasyGraphics rendering or bindless texture features",
+		)
 		return false
 	}
 	return true

@@ -11,9 +11,12 @@ CUBE_TEST_FRAMES :: 2
 CUBE_TEST_SHADER_PATH :: cstring("examples/2_textured_cube/cube.slang")
 CUBE_TEST_POSITION_HEAP :: "position"
 CUBE_TEST_COLOR_HEAP :: "color"
+CUBE_TEST_TEXTURE_BYTES: [4]u8 = {255, 255, 255, 255}
 
 Cube_Test_Push_Constants :: struct {
-	mvp: shared.Mat4,
+	mvp:        shared.Mat4,
+	texture_id: u32,
+	_padding:   [3]u32,
 }
 
 Cube_Test_Bad_Push_Constants :: struct {
@@ -52,6 +55,8 @@ Cube_Test_App :: struct {
 	window:         gfx.Ez_Gfx_Window,
 	shader:         gfx.Ez_Gfx_Shader_Program,
 	shader_loaded:  bool,
+	texture_id:     gfx.Ez_Gfx_Texture_ID,
+	texture_scheduled: bool,
 	cube_index:     u32,
 	cube_index_len: u32,
 	cube_vertex:    u32,
@@ -202,7 +207,24 @@ cube_test_init_resources :: proc(app: ^Cube_Test_App) -> bool {
 		CUBE_TEST_COLOR_HEAP,
 		colors[:],
 	)
-	return color_ok
+	if !color_ok do return false
+
+	region := gfx.Ez_Gfx_Texture_Memory_Region{data = CUBE_TEST_TEXTURE_BYTES[:]}
+	texture_id, texture_err := gfx.ez_gfx_load_texture(
+		[]gfx.Ez_Gfx_Texture_Memory_Region{region},
+		{
+			source_format = .RGBA,
+			destination_format = .R8G8B8A8_UNORM,
+			width = 1,
+			height = 1,
+			mip_count = 1,
+			debug_label = "cube test texture",
+		},
+	)
+	if texture_err != .None do return false
+	app.texture_id = texture_id
+	app.texture_scheduled = true
+	return true
 }
 
 cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
@@ -221,6 +243,7 @@ cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
 	)
 	push_constants := Cube_Test_Push_Constants {
 		mvp = shared.mat4_mul(projection, shared.mat4_mul(view, model)),
+		texture_id = u32(app.texture_id),
 	}
 
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
@@ -258,6 +281,10 @@ cube_test_cleanup :: proc(app: ^Cube_Test_App) {
 	if app.shader_loaded {
 		gfx.ez_gfx_shader_destroy(&app.shader)
 		app.shader_loaded = false
+	}
+	if app.texture_scheduled {
+		_ = gfx.ez_gfx_unload_texture(app.texture_id)
+		app.texture_scheduled = false
 	}
 	gfx.ez_gfx_window_destroy(&app.window)
 	gfx.ez_gfx_ctx_destroy()

@@ -181,10 +181,13 @@ ez_gfx_pipeline_record_create :: proc(
 ) -> bool {
 	if !ez_gfx_pipeline_create_descriptors(ctx, record, shader) do return false
 
-	set_layout_count: u32
-	set_layouts := [?]vk.DescriptorSetLayout{record.descriptor_set_layout}
-	if record.descriptor_set_layout != vk.DescriptorSetLayout(0) {
-		set_layout_count = 1
+	set_layouts := [?]vk.DescriptorSetLayout {
+		record.descriptor_set_layout,
+		ctx.texture_manager.descriptor_set_layout,
+	}
+	set_layout_count: u32 = 1
+	if ctx.texture_manager.descriptor_set_layout != vk.DescriptorSetLayout(0) {
+		set_layout_count = 2
 	}
 
 	push_constant_range := vk.PushConstantRange {
@@ -327,9 +330,6 @@ ez_gfx_pipeline_create_descriptors :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 ) -> bool {
 	binding_count := shader.vertex_heap_binding_count + shader.target_declaration_count
-	if binding_count == 0 {
-		return true
-	}
 
 	layout_bindings: [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_BINDINGS]vk.DescriptorSetLayoutBinding
 	binding_index := 0
@@ -387,6 +387,9 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		ez_gfx_debug_handle(record.descriptor_set_layout),
 		"ez_gfx descriptor set layout",
 	)
+	if binding_count == 0 {
+		return true
+	}
 
 	pool_sizes: [2]vk.DescriptorPoolSize
 	pool_size_count := 0
