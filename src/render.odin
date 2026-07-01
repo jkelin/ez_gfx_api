@@ -1,6 +1,7 @@
 package ez_gfx
 
 import "core:fmt"
+import "core:mem"
 import vk "vendor:vulkan"
 
 EZ_GFX_MAX_RENDER_PIPELINES :: 16
@@ -81,10 +82,41 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 	return true
 }
 
-ez_gfx_render_add_vertex_pipeline :: proc(
+ez_gfx_render_add_vertex_pipeline :: proc {
+	ez_gfx_render_add_vertex_pipeline_without_push_constants,
+	ez_gfx_render_add_vertex_pipeline_with_push_constants,
+}
+
+ez_gfx_render_add_vertex_pipeline_without_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect_stride: vk.DeviceSize,
 	indirect_capacity: u32,
+) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
+	return ez_gfx_render_add_vertex_pipeline_impl(shader, indirect_stride, indirect_capacity, nil, 0)
+}
+
+ez_gfx_render_add_vertex_pipeline_with_push_constants :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	indirect_stride: vk.DeviceSize,
+	indirect_capacity: u32,
+	push_constants: $T,
+) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
+	data := push_constants
+	return ez_gfx_render_add_vertex_pipeline_impl(
+		shader,
+		indirect_stride,
+		indirect_capacity,
+		rawptr(&data),
+		u32(size_of(T)),
+	)
+}
+
+ez_gfx_render_add_vertex_pipeline_impl :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	indirect_stride: vk.DeviceSize,
+	indirect_capacity: u32,
+	push_constant_data: rawptr,
+	push_constant_size: u32,
 ) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
 	render := &ez_gfx_current_render
 	if !render.active || !render.ready {
@@ -93,6 +125,18 @@ ez_gfx_render_add_vertex_pipeline :: proc(
 	}
 	if render.pipeline_count >= EZ_GFX_MAX_RENDER_PIPELINES {
 		fmt.eprintln("too many vertex pipelines in one render")
+		return {}
+	}
+	if shader.push_constant_size != push_constant_size {
+		fmt.eprintf(
+			"push constant size mismatch: shader expects %v bytes, caller passed %v bytes\n",
+			shader.push_constant_size,
+			push_constant_size,
+		)
+		return {}
+	}
+	if push_constant_size > EZ_GFX_MAX_PUSH_CONSTANT_BYTES {
+		fmt.eprintln("push constant data exceeds ez_gfx limit")
 		return {}
 	}
 
@@ -122,11 +166,16 @@ ez_gfx_render_add_vertex_pipeline :: proc(
 	if !indirect_ok do return {}
 
 	descriptor := Ez_Gfx_Vertex_Pipeline_Descriptor {
-		pipeline        = pipeline,
-		indirect_buffer = indirect,
-		indirect_stride = indirect_stride,
-		indirect_count  = 0,
-		ok              = true,
+		pipeline           = pipeline,
+		indirect_buffer    = indirect,
+		indirect_stride    = indirect_stride,
+		indirect_count     = 0,
+		push_constant_size = push_constant_size,
+		ok                 = true,
+	}
+	if push_constant_size > 0 {
+		// Push constants are copied here so callers can pass frame-local structs safely.
+		mem.copy(&descriptor.push_constant_data[0], push_constant_data, int(push_constant_size))
 	}
 	render.pipelines[render.pipeline_count] = descriptor
 	render.pipeline_count += 1

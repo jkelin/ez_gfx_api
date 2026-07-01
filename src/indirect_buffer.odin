@@ -19,11 +19,13 @@ Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager :: struct {
 }
 
 Ez_Gfx_Vertex_Pipeline_Descriptor :: struct {
-	pipeline:        ^Ez_Gfx_Pipeline_Record,
-	indirect_buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
-	indirect_stride: vk.DeviceSize,
-	indirect_count:  u32,
-	ok:              bool,
+	pipeline:           ^Ez_Gfx_Pipeline_Record,
+	indirect_buffer:    ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
+	indirect_stride:    vk.DeviceSize,
+	indirect_count:     u32,
+	push_constant_size: u32,
+	push_constant_data: [EZ_GFX_MAX_PUSH_CONSTANT_BYTES]byte,
+	ok:                 bool,
 }
 
 ez_gfx_indirect_buffer_manager_acquire :: proc(

@@ -118,7 +118,7 @@ shader_path_resolves_from_parent_directory :: proc(t: ^testing.T) {
 	}
 	defer os.setwd(cwd)
 
-	expect_shader_case(t, {"examples/one_triangle/triangle.slang", true, 0, 0})
+	expect_shader_case(t, {"examples/1_triangle/triangle.slang", true, 0, 0})
 }
 
 expect_shader_case :: proc(t: ^testing.T, test_case: Shader_Case) {

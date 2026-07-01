@@ -187,10 +187,24 @@ ez_gfx_pipeline_record_create :: proc(
 		set_layout_count = 1
 	}
 
+	push_constant_range := vk.PushConstantRange {
+		stageFlags = {.VERTEX, .FRAGMENT},
+		offset     = 0,
+		size       = shader.push_constant_size,
+	}
+	push_constant_range_count: u32
+	push_constant_ranges: ^vk.PushConstantRange
+	if shader.push_constant_size > 0 {
+		push_constant_range_count = 1
+		push_constant_ranges = &push_constant_range
+	}
+
 	layout_info := vk.PipelineLayoutCreateInfo {
-		sType          = .PIPELINE_LAYOUT_CREATE_INFO,
-		setLayoutCount = set_layout_count,
-		pSetLayouts    = &set_layouts[0],
+		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+		setLayoutCount         = set_layout_count,
+		pSetLayouts            = &set_layouts[0],
+		pushConstantRangeCount = push_constant_range_count,
+		pPushConstantRanges    = push_constant_ranges,
 	}
 	if vk.CreatePipelineLayout(ctx.device, &layout_info, nil, &record.pipeline_layout) !=
 	   .SUCCESS {

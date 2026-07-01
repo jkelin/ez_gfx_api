@@ -7,7 +7,7 @@ import vk "vendor:vulkan"
 
 WIDTH :: 1280
 HEIGHT :: 720
-TRIANGLE_SHADER_PATH :: cstring("examples/one_triangle/triangle.slang")
+TRIANGLE_SHADER_PATH :: cstring("examples/1_triangle/triangle.slang")
 TRIANGLE_POSITION_HEAP :: "position"
 
 TRIANGLE_INDICES :: [3]u32{0, 1, 2}

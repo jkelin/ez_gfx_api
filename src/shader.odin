@@ -22,6 +22,7 @@ EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS :: 8
 EZ_GFX_MAX_SHADER_TARGET_USAGES :: 8
 EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS :: 8
 EZ_GFX_SHADER_TARGET_NAME_MAX :: 32
+EZ_GFX_MAX_PUSH_CONSTANT_BYTES :: 128
 
 Ez_Gfx_Shader_Stage :: enum u8 {
 	Vertex,
@@ -76,6 +77,7 @@ Ez_Gfx_Shader_Program :: struct {
 	target_usage_count:        int,
 	target_declarations:       [EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS]Ez_Gfx_Shader_Target_Declaration,
 	target_declaration_count:  int,
+	push_constant_size:        u32,
 }
 
 Ez_Gfx_Shader_Desc :: struct {
@@ -583,6 +585,9 @@ ez_gfx_shader_reflect_metadata :: proc(
 	if !ez_gfx_shader_reflect_vertex_heap_bindings_from_layout(program_layout, program) {
 		return false
 	}
+	if !ez_gfx_shader_reflect_push_constants_from_layout(program_layout, program) {
+		return false
+	}
 	if !ez_gfx_shader_reflect_target_declarations_from_layout(program_layout, program) {
 		return false
 	}
@@ -590,6 +595,89 @@ ez_gfx_shader_reflect_metadata :: proc(
 		return false
 	}
 	return ez_gfx_shader_validate_targets(program)
+}
+
+ez_gfx_shader_reflect_push_constants_from_layout :: proc(
+	program_layout: ^sp.ProgramLayout,
+	program: ^Ez_Gfx_Shader_Program,
+) -> bool {
+	global_params := sp.program_layout_getGlobalParamsVarLayout(program_layout)
+	if global_params == nil do return true
+
+	global_type_layout := sp.variable_layout_getTypeLayout(global_params)
+	if global_type_layout == nil do return true
+
+	field_count := sp.type_layout_getFieldCount(global_type_layout)
+	for i in 0 ..< field_count {
+		field_layout := sp.type_layout_getFieldByIndex(global_type_layout, i)
+		if field_layout == nil do continue
+		if !ez_gfx_shader_variable_layout_has_category(field_layout, .PushConstantBuffer) {
+			continue
+		}
+
+		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
+		if field_type_layout == nil do continue
+		data_layout := sp.type_layout_getElementTypeLayout(field_type_layout)
+		if data_layout == nil do continue
+
+		size := sp.type_layout_getSize(data_layout, .Uniform)
+		if size == 0 {
+			size = sp.type_layout_getSize(data_layout)
+		}
+		if !ez_gfx_shader_set_push_constant_size(program, size) {
+			return false
+		}
+	}
+
+	range_count := sp.type_layout_getBindingRangeCount(global_type_layout)
+	for i in 0 ..< range_count {
+		if sp.type_layout_getBindingRangeType(global_type_layout, i) != .PUSH_CONSTANT {
+			continue
+		}
+
+		constant_buffer_layout := sp.type_layout_getBindingRangeLeafTypeLayout(global_type_layout, i)
+		if constant_buffer_layout == nil do continue
+		data_layout := sp.type_layout_getElementTypeLayout(constant_buffer_layout)
+		if data_layout == nil do continue
+
+		size := sp.type_layout_getSize(data_layout)
+		if size == 0 do continue
+		if !ez_gfx_shader_set_push_constant_size(program, size) {
+			return false
+		}
+	}
+
+	return true
+}
+
+ez_gfx_shader_variable_layout_has_category :: proc(
+	layout: ^sp.VariableLayoutReflection,
+	category: sp.ParameterCategory,
+) -> bool {
+	category_count := sp.variable_layout_getCategoryCount(layout)
+	for i in 0 ..< category_count {
+		if sp.variable_layout_getCategoryByIndex(layout, i) == category {
+			return true
+		}
+	}
+	return sp.variable_layout_getCategory(layout) == category
+}
+
+ez_gfx_shader_set_push_constant_size :: proc(
+	program: ^Ez_Gfx_Shader_Program,
+	size: uint,
+) -> bool {
+	if size == 0 do return true
+	if program.push_constant_size != 0 {
+		fmt.eprintln("only one shader push constant range is supported")
+		return false
+	}
+	if size > EZ_GFX_MAX_PUSH_CONSTANT_BYTES {
+		fmt.eprintln("shader push constant range exceeds ez_gfx limit")
+		return false
+	}
+	program.push_constant_size = u32(size)
+	return true
 }
 
 ez_gfx_shader_reflect_vertex_heap_bindings :: proc(

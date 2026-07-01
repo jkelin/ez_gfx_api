@@ -1,0 +1,238 @@
+package main
+
+import gfx "../../src"
+import shared "../shared"
+import "core:fmt"
+import "core:math"
+import "vendor:glfw"
+import vk "vendor:vulkan"
+
+WIDTH :: 1280
+HEIGHT :: 720
+CUBE_SHADER_PATH :: cstring("examples/2_textured_cube/cube.slang")
+CUBE_POSITION_HEAP :: "position"
+CUBE_COLOR_HEAP :: "color"
+
+Cube_Push_Constants :: struct {
+	mvp: shared.Mat4,
+}
+
+CUBE_INDICES :: [36]u32 {
+	0, 1, 2, 2, 3, 0,
+	4, 5, 6, 6, 7, 4,
+	8, 9, 10, 10, 11, 8,
+	12, 13, 14, 14, 15, 12,
+	16, 17, 18, 18, 19, 16,
+	20, 21, 22, 22, 23, 20,
+}
+
+CUBE_POSITIONS :: [24][4]f32 {
+	{-1, -1, 1, 1}, {1, -1, 1, 1}, {1, 1, 1, 1}, {-1, 1, 1, 1},
+	{1, -1, -1, 1}, {-1, -1, -1, 1}, {-1, 1, -1, 1}, {1, 1, -1, 1},
+	{-1, -1, -1, 1}, {-1, -1, 1, 1}, {-1, 1, 1, 1}, {-1, 1, -1, 1},
+	{1, -1, 1, 1}, {1, -1, -1, 1}, {1, 1, -1, 1}, {1, 1, 1, 1},
+	{-1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, -1, 1}, {-1, 1, -1, 1},
+	{-1, -1, -1, 1}, {1, -1, -1, 1}, {1, -1, 1, 1}, {-1, -1, 1, 1},
+}
+
+CUBE_COLORS :: [24][4]f32 {
+	{1.0, 0.2, 0.2, 1.0}, {1.0, 0.2, 0.2, 1.0}, {1.0, 0.2, 0.2, 1.0}, {1.0, 0.2, 0.2, 1.0},
+	{0.2, 1.0, 0.2, 1.0}, {0.2, 1.0, 0.2, 1.0}, {0.2, 1.0, 0.2, 1.0}, {0.2, 1.0, 0.2, 1.0},
+	{0.2, 0.4, 1.0, 1.0}, {0.2, 0.4, 1.0, 1.0}, {0.2, 0.4, 1.0, 1.0}, {0.2, 0.4, 1.0, 1.0},
+	{1.0, 0.9, 0.2, 1.0}, {1.0, 0.9, 0.2, 1.0}, {1.0, 0.9, 0.2, 1.0}, {1.0, 0.9, 0.2, 1.0},
+	{1.0, 0.2, 1.0, 1.0}, {1.0, 0.2, 1.0, 1.0}, {1.0, 0.2, 1.0, 1.0}, {1.0, 0.2, 1.0, 1.0},
+	{0.2, 1.0, 1.0, 1.0}, {0.2, 1.0, 1.0, 1.0}, {0.2, 1.0, 1.0, 1.0}, {0.2, 1.0, 1.0, 1.0},
+}
+
+App :: struct {
+	ctx:            gfx.Ez_Gfx_Ctx,
+	windows:        [gfx.MAX_WINDOWS]gfx.Ez_Gfx_Window,
+	window_count:   int,
+	shader:         gfx.Ez_Gfx_Shader_Program,
+	shader_loaded:  bool,
+	cube_index:     u32,
+	cube_index_len: u32,
+	cube_vertex:    u32,
+	camera:         shared.Orbit_Camera,
+	input:          shared.Example_Input,
+}
+
+main :: proc() {
+	app: App
+
+	ok := init_app(&app)
+	if !ok {
+		cleanup(&app)
+		return
+	}
+
+	run(&app)
+	cleanup(&app)
+}
+
+init_app :: proc(app: ^App) -> bool {
+	fmt.println("checkpoint: glfw init")
+	if !gfx.ez_gfx_glfw_init() do return false
+
+	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	app.window_count = 1
+	app.camera = shared.orbit_camera_default()
+	main_window := &app.windows[0]
+
+	fmt.println("checkpoint: window create")
+	if !gfx.ez_gfx_window_create(main_window, "ez_gfx_api cube", WIDTH, HEIGHT) do return false
+	fmt.println("checkpoint: instance create")
+	if !gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}) do return false
+	fmt.println("checkpoint: surface create")
+	if !gfx.ez_gfx_window_create_surface(main_window) do return false
+	fmt.println("checkpoint: device init")
+	if !gfx.ez_gfx_ctx_init_device(main_window.surface) do return false
+	fmt.println("checkpoint: swapchain recreate")
+	if !gfx.ez_gfx_window_recreate_swapchain(main_window) do return false
+	fmt.println("checkpoint: cube data init")
+	if !cube_init(app) do return false
+
+	fmt.println("checkpoint: init done")
+	return true
+}
+
+cube_init :: proc(app: ^App) -> bool {
+	if !gfx.ez_gfx_shader_compile(
+		{
+			path = CUBE_SHADER_PATH,
+			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+		},
+		&app.shader,
+	) {
+		return false
+	}
+	app.shader_loaded = true
+
+	vertex_heap_names := [?]string{CUBE_POSITION_HEAP, CUBE_COLOR_HEAP}
+	if !gfx.ez_gfx_vertex_manager_create(
+		&app.ctx.vertex_manager,
+		vertex_heap_names[:],
+		vk.DeviceSize(size_of(CUBE_POSITIONS[0])),
+	) {
+		return false
+	}
+
+	indices := CUBE_INDICES
+	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
+		&app.ctx.vertex_manager,
+		indices[:],
+	)
+	if !index_ok do return false
+	app.cube_index = index_start
+	app.cube_index_len = u32(len(indices))
+
+	positions := CUBE_POSITIONS
+	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
+		&app.ctx.vertex_manager,
+		CUBE_POSITION_HEAP,
+		positions[:],
+	)
+	if !vertex_ok do return false
+	app.cube_vertex = vertex_start
+
+	colors := CUBE_COLORS
+	_, color_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
+		&app.ctx.vertex_manager,
+		CUBE_COLOR_HEAP,
+		colors[:],
+	)
+	return color_ok
+}
+
+run :: proc(app: ^App) {
+	main_window := &app.windows[0]
+	run_seconds := gfx.ez_gfx_config_run_seconds()
+	screenshot_enabled := gfx.ez_gfx_config_screenshot_enabled()
+	start_time := glfw.GetTime()
+	previous_time := start_time
+
+	for !gfx.ez_gfx_window_should_close(main_window) {
+		gfx.ez_gfx_window_poll_events()
+		shared.example_input_begin_frame(&app.input, main_window)
+
+		now := glfw.GetTime()
+		delta_time := f32(now - previous_time)
+		previous_time = now
+		shared.orbit_camera_update(&app.camera, &app.input, delta_time)
+
+		if run_seconds > 0 && now - start_time >= run_seconds do break
+		draw_frame(app, main_window, f32(now - start_time))
+	}
+
+	gfx.ez_gfx_ctx_wait_idle()
+	glfw.PollEvents()
+
+	if screenshot_enabled {
+		if !gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) {
+			fmt.eprintln("failed to save screenshot")
+		}
+	}
+}
+
+draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window, time_seconds: f32) {
+	if !gfx.ez_gfx_begin_render(window) do return
+
+	model := shared.mat4_mul(
+		shared.mat4_rotation_y(time_seconds),
+		shared.mat4_rotation_x(time_seconds * 0.65),
+	)
+	view := shared.orbit_camera_view(&app.camera)
+	projection := shared.perspective_vk(
+		math.to_radians_f32(60),
+		shared.window_aspect(window),
+		0.1,
+		100.0,
+	)
+	push_constants := Cube_Push_Constants {
+		mvp = shared.mat4_mul(projection, shared.mat4_mul(view, model)),
+	}
+
+	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
+		&app.shader,
+		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
+		1,
+		push_constants,
+	)
+	if !pipeline.ok {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+
+	draw := vk.DrawIndexedIndirectCommand {
+		indexCount    = app.cube_index_len,
+		instanceCount = 1,
+		firstIndex    = app.cube_index,
+		vertexOffset  = i32(app.cube_vertex),
+		firstInstance = 0,
+	}
+	if !gfx.ez_gfx_vertex_pipeline_write_draw(&pipeline, 0, draw) {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	if !gfx.ez_gfx_vertex_pipeline_set_draw_count(&pipeline, 1) {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+
+	_ = gfx.ez_gfx_finish_render()
+}
+
+cleanup :: proc(app: ^App) {
+	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	if app.shader_loaded {
+		gfx.ez_gfx_shader_destroy(&app.shader)
+		app.shader_loaded = false
+	}
+	for i in 0 ..< app.window_count {
+		gfx.ez_gfx_window_destroy(&app.windows[i])
+	}
+	app.window_count = 0
+	gfx.ez_gfx_ctx_destroy()
+	gfx.ez_gfx_glfw_terminate()
+}

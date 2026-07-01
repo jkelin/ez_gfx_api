@@ -1,7 +1,12 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
-build: copy_slang_dll
-  odin build examples/one_triangle -out:out\ez_gfx_api.exe
+build: build_example_1
+
+build_example_1: copy_slang_dll
+  odin build examples/1_triangle -out:out\example_1.exe
+
+build_example_2: copy_slang_dll
+  odin build examples/2_textured_cube -out:out\example_2.exe
 
 test:
   odin test tests -out:out\ez_gfx_tests_$PID.exe -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
@@ -19,10 +24,17 @@ premake dir args mode='':
     ./build.bat {{ mode }}
 
 copy_slang_dll:
+  New-Item -ItemType Directory -Force out | Out-Null
   if (!(Test-Path "out\slang.dll")) { copy vendor\odin-slang\slang\bin\slang.dll out\slang.dll | Out-Null }
 
-run: build 
-  .\out\ez_gfx_api.exe
+example_1: build_example_1
+  .\out\example_1.exe
 
-run_agent: build 
-  $env:EZ_GFX_MAX_SECONDS = "2"; $env:EZ_GFX_SCREENSHOT = "1"; .\out\ez_gfx_api.exe
+example_2: build_example_2
+  .\out\example_2.exe
+
+example_1_agent: build_example_1
+  $env:EZ_GFX_MAX_SECONDS = "2"; $env:EZ_GFX_SCREENSHOT = "1"; .\out\example_1.exe
+
+example_2_agent: build_example_2
+  $env:EZ_GFX_MAX_SECONDS = "2"; $env:EZ_GFX_SCREENSHOT = "1"; .\out\example_2.exe

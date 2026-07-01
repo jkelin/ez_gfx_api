@@ -434,6 +434,16 @@ ez_gfx_render_graph_execute_node :: proc(
 				nil,
 			)
 		}
+		if descriptor.push_constant_size > 0 {
+			vk.CmdPushConstants(
+				command_buffer,
+				descriptor.pipeline.pipeline_layout,
+				{.VERTEX, .FRAGMENT},
+				0,
+				descriptor.push_constant_size,
+				&descriptor.push_constant_data[0],
+			)
+		}
 		vk.CmdDrawIndexedIndirectCount(
 			command_buffer,
 			descriptor.indirect_buffer.buffer.handle,
