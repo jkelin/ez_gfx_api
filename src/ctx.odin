@@ -1,6 +1,7 @@
 package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
+import vma "../vendor/odin-vma"
 import intrinsics "base:intrinsics"
 import "base:runtime"
 import "core:c"
@@ -63,6 +64,8 @@ Ez_Gfx_Ctx :: struct {
 	current_frame_slot:                   u32,
 	timeline_semaphore:                   vk.Semaphore,
 	timeline_counter:                     u64,
+	vma_vulkan_functions:                 vma.Vulkan_Functions,
+	vma_allocator:                        vma.Allocator,
 	slang_session:                        ^sp.IGlobalSession,
 	vertex_manager:                       Ez_Gfx_Vertex_Manager,
 	pipeline_manager:                     Ez_Gfx_Pipeline_Manager,
@@ -213,6 +216,7 @@ ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
 	ez_gfx_ctx_enable_optional_device_features(ctx)
 	if !ez_gfx_ctx_create_device(ctx) do return false
 	vk.load_proc_addresses(ctx.device)
+	if !ez_gfx_ctx_create_vma_allocator(ctx) do return false
 
 	ez_gfx_ctx_name_device_objects(ctx)
 	if !ez_gfx_ctx_create_command_resources(ctx) do return false
@@ -268,6 +272,7 @@ ez_gfx_ctx_destroy :: proc() {
 			vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
 			ctx.command_pool = vk.CommandPool(0)
 		}
+		ez_gfx_ctx_destroy_vma_allocator(ctx)
 		vk.DestroyDevice(ctx.device, nil)
 		ctx.device = nil
 	}
@@ -564,6 +569,37 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 
 	vk.GetDeviceQueue(ctx.device, ctx.queue_family_index, 0, &ctx.graphics_queue)
 	return true
+}
+
+ez_gfx_ctx_create_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+	ctx.vma_vulkan_functions = vma.create_vulkan_functions()
+	flags := vma.Allocator_Create_Flags{.Buffer_Device_Address}
+	if ctx.memory_priority_enabled {
+		flags |= {.Ext_Memory_Priority}
+	}
+	create_info := vma.Allocator_Create_Info {
+		flags              = flags,
+		physical_device    = ctx.physical_device,
+		device             = ctx.device,
+		vulkan_functions   = &ctx.vma_vulkan_functions,
+		instance           = ctx.instance,
+		vulkan_api_version = vma.VK_API_VERSION_TO_DECIMAL(vk.API_VERSION_1_3),
+	}
+	result := vma.create_allocator(create_info, &ctx.vma_allocator)
+	if result != .SUCCESS {
+		fmt.eprintf("failed to create Vulkan memory allocator: %v\n", result)
+		ctx.vma_allocator = vma.Allocator(nil)
+		return false
+	}
+	return true
+}
+
+ez_gfx_ctx_destroy_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) {
+	if ctx.vma_allocator != vma.Allocator(nil) {
+		vma.destroy_allocator(ctx.vma_allocator)
+		ctx.vma_allocator = vma.Allocator(nil)
+	}
+	ctx.vma_vulkan_functions = {}
 }
 
 ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) -> bool {

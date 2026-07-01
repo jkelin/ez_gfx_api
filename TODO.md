@@ -20,9 +20,7 @@
 
 - Choose depth/stencil formats from device-supported candidates and prefer D24/D16 where the extra D32 precision is not required. Depth target parsing currently maps `d32_float` to a hardcoded `D24_UNORM_S8_UINT`, and the renderer still does not query `vkGetPhysicalDeviceFormatProperties` before choosing depth formats.
 
-- Add a Vulkan memory allocator/suballocator so small buffers and images do not each consume a dedicated allocation. Buffer and render-target creation still call `vkAllocateMemory` per resource, which will scale poorly and can hit allocation-count limits.
-
-- Update the vertex manager heap allocator so it reuses freed memory instead of acting as a bump allocator that only appends new allocations. `Ez_Gfx_Gpu_Heap` still advances `used` in `ez_gfx_gpu_heap_upload` and fails on capacity overflow; add free-list, ring, or frame-retired range reuse before long-lived vertex/index workloads can recycle GPU heap space.
+- Add stronger Vertex manager allocation ownership checks if callers start freeing arbitrary user-provided ranges. The current free-list allocator merges and reuses released chunks, but it trusts handles returned by the allocation APIs rather than tracking every live allocation for double-free diagnostics.
 
 - Add a dedicated transfer-queue upload path for textures and vertex data, including proper synchronization. Device setup still selects a graphics/present queue and uploads through host-visible buffers on the graphics path, so there is no async staging/copy queue yet.
 

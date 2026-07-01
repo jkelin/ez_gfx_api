@@ -1,5 +1,6 @@
 package ez_gfx
 
+import vma "../vendor/odin-vma"
 import "core:fmt"
 import vk "vendor:vulkan"
 
@@ -9,7 +10,8 @@ Ez_Gfx_Render_Target_Texture :: struct {
 	name:                [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
 	name_len:            int,
 	image:               vk.Image,
-	memory:              vk.DeviceMemory,
+	allocation:          vma.Allocation,
+	allocation_info:     vma.Allocation_Info,
 	image_view:          vk.ImageView,
 	attachment_view:     vk.ImageView,
 	sampler:             vk.Sampler,
@@ -131,10 +133,25 @@ ez_gfx_render_target_create :: proc(
 		usage = usage,
 		sharingMode = .EXCLUSIVE,
 	}
-	if vk.CreateImage(ctx.device, &create_info, nil, &target.image) != .SUCCESS {
+	alloc_info := vma.Allocation_Create_Info {
+		usage           = .Auto_Prefer_Device,
+		required_flags  = {.DEVICE_LOCAL},
+		preferred_flags = {.DEVICE_LOCAL},
+		priority        = 0.8,
+	}
+	if vma.create_image(
+		   ctx.vma_allocator,
+		   create_info,
+		   alloc_info,
+		   &target.image,
+		   &target.allocation,
+		   &target.allocation_info,
+	   ) !=
+	   .SUCCESS {
 		fmt.eprintln("failed to create render target image")
 		return false
 	}
+	vma.set_allocation_name(ctx.vma_allocator, target.allocation, "ez_gfx render target memory")
 	ez_gfx_debug_set_named_object(
 		ctx,
 		.IMAGE,
@@ -143,41 +160,14 @@ ez_gfx_render_target_create :: proc(
 		target.name[:],
 		target.name_len,
 	)
-
-	mem_requirements: vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(ctx.device, target.image, &mem_requirements)
-	priority_info := vk.MemoryPriorityAllocateInfoEXT {
-		sType    = .MEMORY_PRIORITY_ALLOCATE_INFO_EXT,
-		priority = 0.8,
-	}
-	alloc_info := vk.MemoryAllocateInfo {
-		sType           = .MEMORY_ALLOCATE_INFO,
-		pNext           = ctx.memory_priority_enabled ? &priority_info : nil,
-		allocationSize  = mem_requirements.size,
-		memoryTypeIndex = ez_gfx_find_memory_type(
-			ctx.physical_device,
-			mem_requirements.memoryTypeBits,
-			{.DEVICE_LOCAL},
-		),
-	}
-	if vk.AllocateMemory(ctx.device, &alloc_info, nil, &target.memory) != .SUCCESS {
-		fmt.eprintln("failed to allocate render target memory")
-		ez_gfx_render_target_destroy(target)
-		return false
-	}
 	ez_gfx_debug_set_named_object(
 		ctx,
 		.DEVICE_MEMORY,
-		ez_gfx_debug_handle(target.memory),
+		ez_gfx_debug_handle(target.allocation_info.device_memory),
 		"ez_gfx render target memory",
 		target.name[:],
 		target.name_len,
 	)
-	if vk.BindImageMemory(ctx.device, target.image, target.memory, 0) != .SUCCESS {
-		fmt.eprintln("failed to bind render target memory")
-		ez_gfx_render_target_destroy(target)
-		return false
-	}
 
 	view_info := vk.ImageViewCreateInfo {
 		sType = .IMAGE_VIEW_CREATE_INFO,
@@ -521,11 +511,10 @@ ez_gfx_render_target_destroy :: proc(target: ^Ez_Gfx_Render_Target_Texture) {
 	if target.attachment_view != vk.ImageView(0) && target.attachment_view != target.image_view {
 		vk.DestroyImageView(ctx.device, target.attachment_view, nil)
 	}
-	if target.image != vk.Image(0) {
-		vk.DestroyImage(ctx.device, target.image, nil)
-	}
-	if target.memory != vk.DeviceMemory(0) {
-		vk.FreeMemory(ctx.device, target.memory, nil)
+	if target.image != vk.Image(0) || target.allocation != vma.Allocation(nil) {
+		if ctx.vma_allocator != vma.Allocator(nil) {
+			vma.destroy_image(ctx.vma_allocator, target.image, target.allocation)
+		}
 	}
 	target^ = {}
 }

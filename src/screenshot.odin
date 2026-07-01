@@ -2,7 +2,6 @@ package ez_gfx
 
 import "core:c"
 import "core:fmt"
-import "core:mem"
 import "core:path/filepath"
 import "core:strings"
 import stbi "vendor:stb/image"
@@ -230,14 +229,11 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		return false
 	}
 
-	mapped: rawptr
-	if vk.MapMemory(ctx.device, staging.memory, 0, buffer_size, {}, &mapped) != .SUCCESS {
+	if !ez_gfx_buffer_read_at(&staging, 0, pixel_data) {
 		delete(pixel_data)
 		fmt.eprintln("failed to map screenshot staging buffer")
 		return false
 	}
-	mem.copy(raw_data(pixel_data), mapped, row_stride * height)
-	vk.UnmapMemory(ctx.device, staging.memory)
 
 	pixels^ = pixel_data
 	return true

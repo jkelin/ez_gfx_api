@@ -1,32 +1,15 @@
 package ez_gfx
 
+import vma "../vendor/odin-vma"
 import "core:fmt"
 import "core:mem"
 import vk "vendor:vulkan"
 
 Ez_Gfx_Buffer :: struct {
-	handle: vk.Buffer,
-	memory: vk.DeviceMemory,
-	size:   vk.DeviceSize,
-}
-
-ez_gfx_find_memory_type :: proc(
-	physical_device: vk.PhysicalDevice,
-	type_filter: u32,
-	properties: vk.MemoryPropertyFlags,
-) -> u32 {
-	mem_properties: vk.PhysicalDeviceMemoryProperties
-	vk.GetPhysicalDeviceMemoryProperties(physical_device, &mem_properties)
-
-	for i in 0 ..< mem_properties.memoryTypeCount {
-		if type_filter & (1 << u32(i)) != 0 &&
-		   (mem_properties.memoryTypes[i].propertyFlags & properties) == properties {
-			return u32(i)
-		}
-	}
-
-	fmt.eprintln("failed to find suitable memory type")
-	return 0
+	handle:          vk.Buffer,
+	allocation:      vma.Allocation,
+	allocation_info: vma.Allocation_Info,
+	size:            vk.DeviceSize,
 }
 
 ez_gfx_buffer_create :: proc(
@@ -41,55 +24,47 @@ ez_gfx_buffer_create :: proc(
 ) {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return buffer, false
+	if ctx.vma_allocator == vma.Allocator(nil) {
+		fmt.eprintln("Vulkan memory allocator is not initialized")
+		return buffer, false
+	}
 	buffer_info := vk.BufferCreateInfo {
 		sType       = .BUFFER_CREATE_INFO,
 		size        = size,
 		usage       = usage,
 		sharingMode = .EXCLUSIVE,
 	}
-	if vk.CreateBuffer(ctx.device, &buffer_info, nil, &buffer.handle) != .SUCCESS {
+	alloc_info := vma.Allocation_Create_Info {
+		flags           = {.Host_Access_Sequential_Write},
+		usage           = .Auto,
+		required_flags  = properties,
+		preferred_flags = properties,
+		priority        = memory_priority,
+	}
+	if (properties & {.HOST_VISIBLE}) == {} {
+		alloc_info.flags = {}
+	}
+	result := vma.create_buffer(
+		ctx.vma_allocator,
+		buffer_info,
+		alloc_info,
+		&buffer.handle,
+		&buffer.allocation,
+		&buffer.allocation_info,
+	)
+	if result != .SUCCESS {
 		fmt.eprintln("failed to create buffer")
 		return buffer, false
 	}
 	if debug_name != nil {
 		ez_gfx_debug_set_object_name(ctx, .BUFFER, ez_gfx_debug_handle(buffer.handle), debug_name)
-	}
-
-	mem_requirements: vk.MemoryRequirements
-	vk.GetBufferMemoryRequirements(ctx.device, buffer.handle, &mem_requirements)
-
-	priority_info := vk.MemoryPriorityAllocateInfoEXT {
-		sType    = .MEMORY_PRIORITY_ALLOCATE_INFO_EXT,
-		priority = memory_priority,
-	}
-	alloc_info := vk.MemoryAllocateInfo {
-		sType           = .MEMORY_ALLOCATE_INFO,
-		pNext           = ctx.memory_priority_enabled ? &priority_info : nil,
-		allocationSize  = mem_requirements.size,
-		memoryTypeIndex = ez_gfx_find_memory_type(
-			ctx.physical_device,
-			mem_requirements.memoryTypeBits,
-			properties,
-		),
-	}
-	if vk.AllocateMemory(ctx.device, &alloc_info, nil, &buffer.memory) != .SUCCESS {
-		fmt.eprintln("failed to allocate buffer memory")
-		ez_gfx_buffer_destroy(&buffer)
-		return buffer, false
-	}
-	if debug_name != nil {
+		vma.set_allocation_name(ctx.vma_allocator, buffer.allocation, debug_name)
 		ez_gfx_debug_set_object_name(
 			ctx,
 			.DEVICE_MEMORY,
-			ez_gfx_debug_handle(buffer.memory),
+			ez_gfx_debug_handle(buffer.allocation_info.device_memory),
 			debug_name,
 		)
-	}
-
-	if vk.BindBufferMemory(ctx.device, buffer.handle, buffer.memory, 0) != .SUCCESS {
-		fmt.eprintln("failed to bind buffer memory")
-		ez_gfx_buffer_destroy(&buffer)
-		return buffer, false
 	}
 
 	buffer.size = size
@@ -112,13 +87,36 @@ ez_gfx_buffer_write_at :: proc(buffer: ^Ez_Gfx_Buffer, offset: vk.DeviceSize, da
 	}
 
 	mapped: rawptr
-	if vk.MapMemory(ctx.device, buffer.memory, offset, vk.DeviceSize(byte_size), {}, &mapped) !=
-	   .SUCCESS {
+	if vma.map_memory(ctx.vma_allocator, buffer.allocation, &mapped) != .SUCCESS {
 		fmt.eprintln("failed to map buffer memory")
 		return false
 	}
-	mem.copy(mapped, raw_data(data), byte_size)
-	vk.UnmapMemory(ctx.device, buffer.memory)
+	defer vma.unmap_memory(ctx.vma_allocator, buffer.allocation)
+
+	mapped_bytes := ([^]u8)(mapped)
+	mem.copy(&mapped_bytes[int(offset)], raw_data(data), byte_size)
+	return true
+}
+
+// Maps host-visible memory and copies a byte range from the buffer into dst.
+ez_gfx_buffer_read_at :: proc(buffer: ^Ez_Gfx_Buffer, offset: vk.DeviceSize, dst: []u8) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+	byte_size := vk.DeviceSize(len(dst))
+	if offset + byte_size > buffer.size {
+		fmt.eprintln("buffer read exceeds allocation size")
+		return false
+	}
+
+	mapped: rawptr
+	if vma.map_memory(ctx.vma_allocator, buffer.allocation, &mapped) != .SUCCESS {
+		fmt.eprintln("failed to map buffer memory")
+		return false
+	}
+	defer vma.unmap_memory(ctx.vma_allocator, buffer.allocation)
+
+	mapped_bytes := ([^]u8)(mapped)
+	mem.copy(raw_data(dst), &mapped_bytes[int(offset)], len(dst))
 	return true
 }
 
@@ -126,13 +124,13 @@ ez_gfx_buffer_destroy :: proc(buffer: ^Ez_Gfx_Buffer) {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return
 	if ctx.device == nil do return
-	if buffer.handle != vk.Buffer(0) {
-		vk.DestroyBuffer(ctx.device, buffer.handle, nil)
+	if buffer.handle != vk.Buffer(0) || buffer.allocation != vma.Allocation(nil) {
+		if ctx.vma_allocator != vma.Allocator(nil) {
+			vma.destroy_buffer(ctx.vma_allocator, buffer.handle, buffer.allocation)
+		}
 		buffer.handle = vk.Buffer(0)
+		buffer.allocation = vma.Allocation(nil)
 	}
-	if buffer.memory != vk.DeviceMemory(0) {
-		vk.FreeMemory(ctx.device, buffer.memory, nil)
-		buffer.memory = vk.DeviceMemory(0)
-	}
+	buffer.allocation_info = {}
 	buffer.size = 0
 }
