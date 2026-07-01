@@ -32,8 +32,15 @@ ez_gfx_gpu_heap_create :: proc(
 	capacity: vk.DeviceSize,
 	stride: vk.DeviceSize,
 	usage: vk.BufferUsageFlags,
+	debug_name: cstring = nil,
 ) -> bool {
-	buffer, ok := ez_gfx_buffer_create(capacity, usage, {.HOST_VISIBLE, .HOST_COHERENT})
+	buffer, ok := ez_gfx_buffer_create(
+		capacity,
+		usage,
+		{.HOST_VISIBLE, .HOST_COHERENT},
+		debug_name,
+		0.4,
+	)
 	if !ok do return false
 
 	heap.buffer = buffer
@@ -90,6 +97,7 @@ ez_gfx_vertex_manager_create :: proc(
 		EZ_GFX_DEFAULT_INDEX_HEAP_BYTES,
 		vk.DeviceSize(size_of(u32)),
 		{.INDEX_BUFFER},
+		"ez_gfx index heap",
 	) {
 		return false
 	}
@@ -126,6 +134,25 @@ ez_gfx_vertex_manager_add_heap :: proc(
 	}
 	if !ez_gfx_gpu_heap_create(&slot.heap, capacity, stride, {.STORAGE_BUFFER}) {
 		return false
+	}
+	ctx := ez_gfx_get_current_ctx()
+	if ctx != nil {
+		ez_gfx_debug_set_named_object(
+			ctx,
+			.BUFFER,
+			ez_gfx_debug_handle(slot.heap.buffer.handle),
+			"ez_gfx vertex heap",
+			slot.name[:],
+			slot.name_len,
+		)
+		ez_gfx_debug_set_named_object(
+			ctx,
+			.DEVICE_MEMORY,
+			ez_gfx_debug_handle(slot.heap.buffer.memory),
+			"ez_gfx vertex heap memory",
+			slot.name[:],
+			slot.name_len,
+		)
 	}
 
 	manager.vertex_heap_count += 1

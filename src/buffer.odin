@@ -33,6 +33,8 @@ ez_gfx_buffer_create :: proc(
 	size: vk.DeviceSize,
 	usage: vk.BufferUsageFlags,
 	properties: vk.MemoryPropertyFlags,
+	debug_name: cstring = nil,
+	memory_priority: f32 = 0.5,
 ) -> (
 	buffer: Ez_Gfx_Buffer,
 	ok: bool,
@@ -49,12 +51,20 @@ ez_gfx_buffer_create :: proc(
 		fmt.eprintln("failed to create buffer")
 		return buffer, false
 	}
+	if debug_name != nil {
+		ez_gfx_debug_set_object_name(ctx, .BUFFER, ez_gfx_debug_handle(buffer.handle), debug_name)
+	}
 
 	mem_requirements: vk.MemoryRequirements
 	vk.GetBufferMemoryRequirements(ctx.device, buffer.handle, &mem_requirements)
 
+	priority_info := vk.MemoryPriorityAllocateInfoEXT {
+		sType    = .MEMORY_PRIORITY_ALLOCATE_INFO_EXT,
+		priority = memory_priority,
+	}
 	alloc_info := vk.MemoryAllocateInfo {
 		sType           = .MEMORY_ALLOCATE_INFO,
+		pNext           = ctx.memory_priority_enabled ? &priority_info : nil,
 		allocationSize  = mem_requirements.size,
 		memoryTypeIndex = ez_gfx_find_memory_type(
 			ctx.physical_device,
@@ -66,6 +76,14 @@ ez_gfx_buffer_create :: proc(
 		fmt.eprintln("failed to allocate buffer memory")
 		ez_gfx_buffer_destroy(&buffer)
 		return buffer, false
+	}
+	if debug_name != nil {
+		ez_gfx_debug_set_object_name(
+			ctx,
+			.DEVICE_MEMORY,
+			ez_gfx_debug_handle(buffer.memory),
+			debug_name,
+		)
 	}
 
 	if vk.BindBufferMemory(ctx.device, buffer.handle, buffer.memory, 0) != .SUCCESS {

@@ -2,7 +2,10 @@ package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
 import "core:fmt"
+import "core:os"
+import "core:path/filepath"
 import "core:slice"
+import "core:strings"
 import vk "vendor:vulkan"
 
 EZ_GFX_DEFAULT_VERTEX_ENTRY :: cstring("vertexmain")
@@ -184,6 +187,12 @@ ez_gfx_shader_compile :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_
 		fmt.eprintln("failed to create Vulkan shader module")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.SHADER_MODULE,
+		ez_gfx_debug_handle(program.module),
+		program.desc.path,
+	)
 
 	return true
 }
@@ -216,13 +225,25 @@ ez_gfx_shader_create_linked_program :: proc(
 			value = {kind = .Int, intValue0 = preserve_parameters ? 1 : 0},
 		},
 	}
-	slang_search_paths := [1]cstring{EZ_GFX_SLANG_MODULE_SEARCH_PATH}
+	shader_path := shader_desc.path
+	slang_search_paths: [2]cstring
+	slang_search_paths[0] = EZ_GFX_SLANG_MODULE_SEARCH_PATH
+	search_path_count := 1
+	if resolved_path, resolved_search_path, resolved := ez_gfx_shader_resolve_load_path(
+		shader_desc.path,
+	); resolved {
+		shader_path = resolved_path
+		if resolved_search_path != nil {
+			slang_search_paths[search_path_count] = resolved_search_path
+			search_path_count += 1
+		}
+	}
 	session_desc := sp.SessionDesc {
 		structureSize            = size_of(sp.SessionDesc),
 		targets                  = &target_desc,
 		targetCount              = 1,
 		searchPaths              = &slang_search_paths[0],
-		searchPathCount          = len(slang_search_paths),
+		searchPathCount          = search_path_count,
 		compilerOptionEntries    = &compiler_option_entries[0],
 		compilerOptionEntryCount = len(compiler_option_entries),
 	}
@@ -234,7 +255,7 @@ ez_gfx_shader_create_linked_program :: proc(
 	// TODO: Audit odin-slang ownership before releasing session/module/component objects here.
 
 	diagnostics^ = nil
-	slang_module := session->loadModule(shader_desc.path, diagnostics)
+	slang_module := session->loadModule(shader_path, diagnostics)
 	if slang_module == nil {
 		_ = ez_gfx_slang_diagnostics_check(diagnostics^)
 		fmt.eprintln("failed to load Slang shader module")
@@ -279,6 +300,88 @@ ez_gfx_shader_create_linked_program :: proc(
 	}
 	if !ez_gfx_slang_diagnostics_check(diagnostics^) do return nil
 	return linked_program
+}
+
+ez_gfx_shader_resolve_load_path :: proc(
+	path: cstring,
+) -> (
+	resolved_path: cstring,
+	resolved_search_path: cstring,
+	ok: bool,
+) {
+	path_string := ez_gfx_shader_cstring_to_string(path)
+	if len(path_string) == 0 || filepath.is_abs(path_string) {
+		return nil, nil, false
+	}
+
+	working_dir, cwd_err := os.getwd(context.temp_allocator)
+	if cwd_err != nil {
+		return nil, nil, false
+	}
+
+	dir := working_dir
+	for {
+		candidate, join_err := filepath.join([]string{dir, path_string}, context.temp_allocator)
+		if join_err == nil && os.exists(candidate) {
+			candidate_c, path_err := strings.clone_to_cstring(candidate, context.temp_allocator)
+			if path_err != nil do return nil, nil, false
+
+			search_path, search_err := filepath.join(
+				[]string{dir, ez_gfx_shader_cstring_to_string(EZ_GFX_SLANG_MODULE_SEARCH_PATH)},
+				context.temp_allocator,
+			)
+			if search_err != nil do return candidate_c, nil, true
+			search_c, search_c_err := strings.clone_to_cstring(search_path, context.temp_allocator)
+			if search_c_err != nil do return candidate_c, nil, true
+			return candidate_c, search_c, true
+		}
+
+		parent, has_parent := ez_gfx_shader_parent_dir(dir)
+		if !has_parent do break
+		dir = parent
+	}
+
+	return nil, nil, false
+}
+
+ez_gfx_shader_cstring_to_string :: proc(value: cstring) -> string {
+	if value == nil do return ""
+	bytes := cast([^]byte)value
+	count := 0
+	for bytes[count] != 0 {
+		count += 1
+	}
+	return string(bytes[:count])
+}
+
+ez_gfx_shader_parent_dir :: proc(path: string) -> (parent: string, ok: bool) {
+	if len(path) == 0 do return "", false
+
+	root_len := 0
+	if len(path) >= 2 && path[1] == ':' {
+		root_len = 2
+	}
+	if len(path) > root_len && os.is_path_separator(path[root_len]) {
+		root_len += 1
+	}
+
+	end := len(path)
+	for end > root_len && os.is_path_separator(path[end - 1]) {
+		end -= 1
+	}
+	if end <= root_len {
+		return "", false
+	}
+
+	for i := end - 1; i >= root_len; i -= 1 {
+		if os.is_path_separator(path[i]) {
+			return path[:i], true
+		}
+	}
+	if root_len > 0 && end > root_len {
+		return path[:root_len], true
+	}
+	return "", false
 }
 
 ez_gfx_shader_destroy :: proc(program: ^Ez_Gfx_Shader_Program) {
@@ -861,7 +964,24 @@ ez_gfx_shader_find_target_declaration :: proc(
 	return nil
 }
 
+ez_gfx_shader_validate_unique_target_declarations :: proc(program: ^Ez_Gfx_Shader_Program) -> bool {
+	for i in 0 ..< program.target_declaration_count {
+		a := &program.target_declarations[i]
+		for j in i + 1 ..< program.target_declaration_count {
+			b := &program.target_declarations[j]
+			if ez_gfx_shader_target_name_equals_bytes(a.name[:], a.name_len, b.name[:], b.name_len) {
+				fmt.eprintln("duplicate render target declaration")
+				return false
+			}
+		}
+	}
+	return true
+}
+
 ez_gfx_shader_validate_targets :: proc(program: ^Ez_Gfx_Shader_Program) -> bool {
+	if !ez_gfx_shader_validate_unique_target_declarations(program) {
+		return false
+	}
 	for i in 0 ..< program.target_usage_count {
 		usage := &program.target_usages[i]
 		if ez_gfx_shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {

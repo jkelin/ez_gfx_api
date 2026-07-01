@@ -62,6 +62,12 @@ ez_gfx_swapchain_recreate :: proc(
 		fmt.eprintf("failed to create swapchain: %v\n", result)
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.SWAPCHAIN_KHR,
+		ez_gfx_debug_handle(swapchain.handle),
+		"ez_gfx swapchain",
+	)
 
 	swapchain.format = format.format
 	swapchain.extent = extent
@@ -86,6 +92,13 @@ ez_gfx_swapchain_recreate :: proc(
 	for i in 0 ..< swapchain.image_count {
 		swapchain.image_layouts[i] = .UNDEFINED
 		swapchain.last_write_timeline[i] = 0
+		ez_gfx_debug_set_indexed_name(
+			ctx,
+			.IMAGE,
+			ez_gfx_debug_handle(swapchain.images[i]),
+			"ez_gfx swapchain image",
+			int(i),
+		)
 	}
 
 	return(
@@ -187,6 +200,13 @@ ez_gfx_swapchain_create_image_views :: proc(swapchain: ^Ez_Gfx_Swapchain) -> boo
 			fmt.eprintln("failed to create swapchain image view")
 			return false
 		}
+		ez_gfx_debug_set_indexed_name(
+			ctx,
+			.IMAGE_VIEW,
+			ez_gfx_debug_handle(swapchain.image_views[i]),
+			"ez_gfx swapchain image view",
+			int(i),
+		)
 	}
 	return true
 }
@@ -203,6 +223,13 @@ ez_gfx_swapchain_create_present_semaphores :: proc(swapchain: ^Ez_Gfx_Swapchain)
 			fmt.eprintln("failed to create swapchain present semaphore")
 			return false
 		}
+		ez_gfx_debug_set_indexed_name(
+			ctx,
+			.SEMAPHORE,
+			ez_gfx_debug_handle(swapchain.present_ready[i]),
+			"ez_gfx present ready semaphore",
+			int(i),
+		)
 	}
 	return true
 }

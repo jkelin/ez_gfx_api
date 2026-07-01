@@ -66,6 +66,8 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		buffer_size,
 		{.TRANSFER_DST},
 		{.HOST_VISIBLE, .HOST_COHERENT},
+		"ez_gfx screenshot staging buffer",
+		0.3,
 	)
 	if !staging_ok do return false
 	defer ez_gfx_buffer_destroy(&staging)
@@ -82,6 +84,12 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		fmt.eprintln("failed to create screenshot acquire semaphore")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.SEMAPHORE,
+		ez_gfx_debug_handle(image_available),
+		"ez_gfx screenshot acquire semaphore",
+	)
 	defer vk.DestroySemaphore(ctx.device, image_available, nil)
 
 	image_index: u32

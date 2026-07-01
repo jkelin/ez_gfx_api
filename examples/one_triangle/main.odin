@@ -52,7 +52,7 @@ init_app :: proc(app: ^App) -> bool {
 	fmt.println("checkpoint: window create")
 	if !gfx.ez_gfx_window_create(main_window, "ez_gfx_api Vulkan", WIDTH, HEIGHT) do return false
 	fmt.println("checkpoint: instance create")
-	if !gfx.ez_gfx_ctx_create_instance(&app.ctx) do return false
+	if !gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}) do return false
 	fmt.println("checkpoint: surface create")
 	if !gfx.ez_gfx_window_create_surface(main_window) do return false
 	fmt.println("checkpoint: device init")
@@ -116,7 +116,7 @@ run :: proc(app: ^App) {
 
 	for !gfx.ez_gfx_window_should_close(main_window) {
 		gfx.ez_gfx_window_poll_events()
-		if glfw.GetTime() - start_time >= run_seconds do break
+		if run_seconds > 0 && glfw.GetTime() - start_time >= run_seconds do break
 		draw_frame(app, main_window)
 	}
 

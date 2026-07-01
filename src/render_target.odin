@@ -127,11 +127,24 @@ ez_gfx_render_target_create :: proc(
 		fmt.eprintln("failed to create render target image")
 		return false
 	}
+	ez_gfx_debug_set_named_object(
+		ctx,
+		.IMAGE,
+		ez_gfx_debug_handle(target.image),
+		"ez_gfx render target image",
+		target.name[:],
+		target.name_len,
+	)
 
 	mem_requirements: vk.MemoryRequirements
 	vk.GetImageMemoryRequirements(ctx.device, target.image, &mem_requirements)
+	priority_info := vk.MemoryPriorityAllocateInfoEXT {
+		sType    = .MEMORY_PRIORITY_ALLOCATE_INFO_EXT,
+		priority = 0.8,
+	}
 	alloc_info := vk.MemoryAllocateInfo {
 		sType           = .MEMORY_ALLOCATE_INFO,
+		pNext           = ctx.memory_priority_enabled ? &priority_info : nil,
 		allocationSize  = mem_requirements.size,
 		memoryTypeIndex = ez_gfx_find_memory_type(
 			ctx.physical_device,
@@ -144,6 +157,14 @@ ez_gfx_render_target_create :: proc(
 		ez_gfx_render_target_destroy(target)
 		return false
 	}
+	ez_gfx_debug_set_named_object(
+		ctx,
+		.DEVICE_MEMORY,
+		ez_gfx_debug_handle(target.memory),
+		"ez_gfx render target memory",
+		target.name[:],
+		target.name_len,
+	)
 	if vk.BindImageMemory(ctx.device, target.image, target.memory, 0) != .SUCCESS {
 		fmt.eprintln("failed to bind render target memory")
 		ez_gfx_render_target_destroy(target)
@@ -168,6 +189,14 @@ ez_gfx_render_target_create :: proc(
 		ez_gfx_render_target_destroy(target)
 		return false
 	}
+	ez_gfx_debug_set_named_object(
+		ctx,
+		.IMAGE_VIEW,
+		ez_gfx_debug_handle(target.image_view),
+		"ez_gfx render target view",
+		target.name[:],
+		target.name_len,
+	)
 
 	sampler_info := vk.SamplerCreateInfo {
 		sType        = .SAMPLER_CREATE_INFO,
@@ -184,6 +213,14 @@ ez_gfx_render_target_create :: proc(
 		ez_gfx_render_target_destroy(target)
 		return false
 	}
+	ez_gfx_debug_set_named_object(
+		ctx,
+		.SAMPLER,
+		ez_gfx_debug_handle(target.sampler),
+		"ez_gfx render target sampler",
+		target.name[:],
+		target.name_len,
+	)
 
 	return true
 }

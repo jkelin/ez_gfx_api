@@ -20,6 +20,10 @@
 
 - Keep explicit target attributes as the source of truth for engine render target intent, even when shader resource reflection changes due to compiler optimization.
 
+- Add a Vulkan memory allocator/suballocator so small buffers and images do not each consume a dedicated allocation.
+
+- Choose depth formats from device-supported candidates and prefer D24/D16 where the extra D32 precision is not required.
+
 - Transfer queue for uploading textures and vertex data, including proper synchronization
 
 - Streamed texture upload

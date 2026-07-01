@@ -197,6 +197,12 @@ ez_gfx_pipeline_record_create :: proc(
 		fmt.eprintln("failed to create pipeline layout")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.PIPELINE_LAYOUT,
+		ez_gfx_debug_handle(record.pipeline_layout),
+		"ez_gfx pipeline layout",
+	)
 
 	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo {
@@ -290,6 +296,12 @@ ez_gfx_pipeline_record_create :: proc(
 		fmt.eprintln("failed to create graphics pipeline")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.PIPELINE,
+		ez_gfx_debug_handle(record.pipeline),
+		"ez_gfx graphics pipeline",
+	)
 
 	return true
 }
@@ -354,6 +366,12 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		fmt.eprintln("failed to create descriptor set layout")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.DESCRIPTOR_SET_LAYOUT,
+		ez_gfx_debug_handle(record.descriptor_set_layout),
+		"ez_gfx descriptor set layout",
+	)
 
 	pool_sizes: [2]vk.DescriptorPoolSize
 	pool_size_count := 0
@@ -381,6 +399,12 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		fmt.eprintln("failed to create descriptor pool")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.DESCRIPTOR_POOL,
+		ez_gfx_debug_handle(record.descriptor_pool),
+		"ez_gfx descriptor pool",
+	)
 
 	allocate_info := vk.DescriptorSetAllocateInfo {
 		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -392,6 +416,12 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		fmt.eprintln("failed to allocate descriptor set")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.DESCRIPTOR_SET,
+		ez_gfx_debug_handle(record.descriptor_set),
+		"ez_gfx descriptor set",
+	)
 
 	return ez_gfx_pipeline_update_descriptors(ctx, record, shader)
 }

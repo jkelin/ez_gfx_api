@@ -75,6 +75,12 @@ ez_gfx_window_create_surface :: proc(window: ^Ez_Gfx_Window) -> bool {
 		fmt.eprintln("failed to create Vulkan surface")
 		return false
 	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.SURFACE_KHR,
+		ez_gfx_debug_handle(window.surface),
+		"ez_gfx window surface",
+	)
 	return true
 }
 

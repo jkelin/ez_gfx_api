@@ -75,6 +75,8 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 		size,
 		{.INDIRECT_BUFFER},
 		{.HOST_VISIBLE, .HOST_COHERENT},
+		"ez_gfx multi-draw indirect buffer",
+		0.4,
 	)
 	if !create_ok {
 		slot.in_use = false
