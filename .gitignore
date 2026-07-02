@@ -7,4 +7,7 @@ screenshot.jpg
 screenshot.jpeg
 ez_gfx_test.exe
 *screenshot.png
+
+# Agent worktree checkouts live under .agents/workspaces/<name>/.
+.agents/workspaces/*/
 tests/snapshots/*.current.png
