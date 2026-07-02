@@ -23,7 +23,7 @@ Cube_Test_Bad_Push_Constants :: struct {
 	value: [4]f32,
 }
 
-CUBE_TEST_INDICES: [36]u32 = {
+CUBE_TEST_INDICES :: [36]u32 {
 	0, 1, 2, 2, 3, 0,
 	4, 5, 6, 6, 7, 4,
 	8, 9, 10, 10, 11, 8,
@@ -32,7 +32,7 @@ CUBE_TEST_INDICES: [36]u32 = {
 	20, 21, 22, 22, 23, 20,
 }
 
-CUBE_TEST_POSITIONS: [24][4]f32 = {
+CUBE_TEST_POSITIONS :: [24][4]f32 {
 	{-1, -1, 1, 1}, {1, -1, 1, 1}, {1, 1, 1, 1}, {-1, 1, 1, 1},
 	{1, -1, -1, 1}, {-1, -1, -1, 1}, {-1, 1, -1, 1}, {1, 1, -1, 1},
 	{-1, -1, -1, 1}, {-1, -1, 1, 1}, {-1, 1, 1, 1}, {-1, 1, -1, 1},
@@ -41,7 +41,7 @@ CUBE_TEST_POSITIONS: [24][4]f32 = {
 	{-1, -1, -1, 1}, {1, -1, -1, 1}, {1, -1, 1, 1}, {-1, -1, 1, 1},
 }
 
-CUBE_TEST_COLORS: [24][4]f32 = {
+CUBE_TEST_COLORS :: [24][4]f32 {
 	{1, 0, 0, 1}, {1, 0, 0, 1}, {1, 0, 0, 1}, {1, 0, 0, 1},
 	{0, 1, 0, 1}, {0, 1, 0, 1}, {0, 1, 0, 1}, {0, 1, 0, 1},
 	{0, 0, 1, 1}, {0, 0, 1, 1}, {0, 0, 1, 1}, {0, 0, 1, 1},
@@ -192,26 +192,29 @@ cube_test_init_resources :: proc(app: ^Cube_Test_App) -> bool {
 		return false
 	}
 
+	indices := CUBE_TEST_INDICES
 	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
-		CUBE_TEST_INDICES[:],
+		indices[:],
 	)
 	if !index_ok do return false
 	app.cube_index = index_start
-	app.cube_index_len = u32(len(CUBE_TEST_INDICES))
+	app.cube_index_len = u32(len(indices))
 
+	positions := CUBE_TEST_POSITIONS
 	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		CUBE_TEST_POSITION_HEAP,
-		CUBE_TEST_POSITIONS[:],
+		positions[:],
 	)
 	if !vertex_ok do return false
 	app.cube_vertex = vertex_start
 
+	colors := CUBE_TEST_COLORS
 	_, color_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		CUBE_TEST_COLOR_HEAP,
-		CUBE_TEST_COLORS[:],
+		colors[:],
 	)
 	if !color_ok do return false
 
