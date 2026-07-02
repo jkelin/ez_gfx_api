@@ -184,6 +184,81 @@ structured_buffer_acquires_per_frame_and_reuses_pool :: proc(t: ^testing.T) {
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }
 
+@(test)
+structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
+	app: Triangle_App
+	if !testing.expect(
+		t,
+		triangle_init_app(&app),
+		"structured buffer trim test failed during init",
+	) {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	large_size := vk.DeviceSize(1 << 20)
+	small_size := vk.DeviceSize(64)
+
+	if !testing.expect(
+		t,
+		gfx.ez_gfx_begin_render(&app.window),
+		"structured buffer trim test failed to begin large-buffer render",
+	) {
+		return
+	}
+	large_ptr := gfx.ez_gfx_render_acquire_structured_buffer("large_buffer", large_size)
+	if !testing.expect(t, large_ptr != nil, "structured buffer trim test failed to acquire large buffer") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	if !testing.expect(
+		t,
+		gfx.ez_gfx_finish_render(),
+		"structured buffer trim test failed to finish large-buffer render",
+	) {
+		return
+	}
+	gfx.ez_gfx_ctx_wait_idle()
+	testing.expect_value(t, app.ctx.structured_buffer_manager.count, 1)
+
+	for frame in 0 ..< 2 {
+		if !testing.expect(
+			t,
+			gfx.ez_gfx_begin_render(&app.window),
+			"structured buffer trim test failed to begin small-buffer render",
+		) {
+			return
+		}
+		small_ptr := gfx.ez_gfx_render_acquire_structured_buffer("small_buffer", small_size)
+		if !testing.expect(
+			t,
+			small_ptr != nil,
+			"structured buffer trim test failed to acquire small buffer",
+		) {
+			_ = gfx.ez_gfx_finish_render()
+			return
+		}
+		values := cast([^]u32)small_ptr
+		values[0] = u32(frame)
+		if !testing.expect(
+			t,
+			gfx.ez_gfx_finish_render(),
+			"structured buffer trim test failed to finish small-buffer render",
+		) {
+			return
+		}
+		gfx.ez_gfx_ctx_wait_idle()
+	}
+
+	testing.expect_value(t, app.ctx.structured_buffer_manager.count, 1)
+	if app.ctx.structured_buffer_manager.count == 1 {
+		testing.expect_value(t, app.ctx.structured_buffer_manager.buffers[0].capacity, small_size)
+	}
+	testing.expect_value(t, app.validation_log.errors, u32(0))
+	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+}
+
 validation_callback :: proc(
 	ctx: ^gfx.Ez_Gfx_Ctx,
 	message: gfx.Ez_Gfx_Validation_Message,

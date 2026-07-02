@@ -25,9 +25,10 @@ Ez_Gfx_Structured_Buffer :: struct {
 }
 
 Ez_Gfx_Structured_Buffer_Manager :: struct {
-	buffers: [EZ_GFX_MAX_STRUCTURED_BUFFERS]Ez_Gfx_Structured_Buffer,
-	count:   int,
-	version: u64,
+	buffers:           [EZ_GFX_MAX_STRUCTURED_BUFFERS]Ez_Gfx_Structured_Buffer,
+	count:             int,
+	version:           u64,
+	peak_acquire_size: vk.DeviceSize,
 }
 
 Ez_Gfx_Render_Structured_Binding :: struct {
@@ -93,19 +94,29 @@ ez_gfx_structured_buffer_manager_acquire :: proc(
 		return nil, false
 	}
 
+	if size > manager.peak_acquire_size {
+		manager.peak_acquire_size = size
+	}
+
 	completed_timeline := ez_gfx_structured_buffer_completed_timeline()
+	best_index := -1
 	for i in 0 ..< manager.count {
 		candidate := &manager.buffers[i]
 		if !candidate.in_use &&
 		   candidate.last_used_timeline <= completed_timeline &&
-		   candidate.capacity >= size {
-			candidate.in_use = true
-			candidate.size = size
-			candidate.last_write_timeline = 0
-			candidate.debug_name = debug_name
-			manager.version += 1
-			return candidate, true
+		   candidate.capacity >= size &&
+		   (best_index < 0 || candidate.capacity < manager.buffers[best_index].capacity) {
+			best_index = i
 		}
+	}
+	if best_index >= 0 {
+		candidate := &manager.buffers[best_index]
+		candidate.in_use = true
+		candidate.size = size
+		candidate.last_write_timeline = 0
+		candidate.debug_name = debug_name
+		manager.version += 1
+		return candidate, true
 	}
 
 	if manager.count >= EZ_GFX_MAX_STRUCTURED_BUFFERS {
@@ -328,6 +339,40 @@ ez_gfx_structured_buffer_manager_release_completed :: proc(
 			manager.buffers[i].in_use = false
 		}
 	}
+	ez_gfx_structured_buffer_manager_trim_idle(manager, completed_timeline)
+	manager.peak_acquire_size = 0
+}
+
+ez_gfx_structured_buffer_manager_trim_idle :: proc(
+	manager: ^Ez_Gfx_Structured_Buffer_Manager,
+	completed_timeline: u64,
+) {
+	peak_size := manager.peak_acquire_size
+	i := 0
+	for i < manager.count {
+		buffer := &manager.buffers[i]
+		if buffer.in_use ||
+		   buffer.last_used_timeline > completed_timeline ||
+		   buffer.capacity <= peak_size {
+			i += 1
+			continue
+		}
+		ez_gfx_structured_buffer_manager_remove_at(manager, i)
+	}
+}
+
+ez_gfx_structured_buffer_manager_remove_at :: proc(
+	manager: ^Ez_Gfx_Structured_Buffer_Manager,
+	index: int,
+) {
+	if index < 0 || index >= manager.count do return
+	ez_gfx_structured_buffer_destroy(&manager.buffers[index])
+	manager.count -= 1
+	if index < manager.count {
+		manager.buffers[index] = manager.buffers[manager.count]
+	}
+	manager.buffers[manager.count] = {}
+	manager.version += 1
 }
 
 ez_gfx_structured_buffer_manager_destroy :: proc(manager: ^Ez_Gfx_Structured_Buffer_Manager) {
@@ -336,6 +381,7 @@ ez_gfx_structured_buffer_manager_destroy :: proc(manager: ^Ez_Gfx_Structured_Buf
 	}
 	manager.count = 0
 	manager.version = 0
+	manager.peak_acquire_size = 0
 }
 
 ez_gfx_structured_buffer_mark_submitted :: proc(

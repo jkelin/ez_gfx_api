@@ -62,8 +62,6 @@
 
 - Refactor structured-buffer and indirect-buffer binding to pipelines. Split buffer lifetime from pipeline binding: introduce a shared acquire API for structured buffers and indirect buffers so the same acquired buffer can be reused across different pipelines in one frame. When adding a pipeline to a render, require explicit per-name binding parameters for every structured buffer and indirect buffer the shader expects; do not infer bindings from earlier render calls. Validate at render submit that every required buffer is bound and that each binding matches the expected size/capacity. Add a parallel render-target API: a describe call that takes a debug label and size and returns a render-target ID, plus explicit per-pipeline binding of those IDs with the same submit-time validation.
 
-- Add eviction or bucket trimming for the structured-buffer pool. Per-frame structured buffers are reused safely by timeline, but a one-off large acquire keeps its allocation until context destroy.
-
 - Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
 
 - `examples/shared/assets/sponza.glb` is a 52 MB binary committed directly to the repo. Replace it with a much smaller asset or move it to Git LFS.
