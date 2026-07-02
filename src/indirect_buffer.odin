@@ -8,6 +8,7 @@ EZ_GFX_MAX_INDIRECT_BUFFERS :: 16
 Ez_Gfx_Multi_Draw_Indirect_Buffer :: struct {
 	buffer:             Ez_Gfx_Buffer,
 	stride:             vk.DeviceSize,
+	draw_offset:        vk.DeviceSize,
 	capacity:           u32,
 	in_use:             bool,
 	last_used_timeline: u64,
@@ -58,6 +59,13 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 		fmt.eprintln("indirect buffer capacity must be greater than zero")
 		return nil, false
 	}
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return nil, false
+	properties: vk.PhysicalDeviceProperties
+	vk.GetPhysicalDeviceProperties(ctx.physical_device, &properties)
+	alignment := vk.DeviceSize(properties.limits.minStorageBufferOffsetAlignment)
+	if alignment == 0 do alignment = vk.DeviceSize(size_of(u32))
+	draw_offset := ez_gfx_align_device_size(vk.DeviceSize(size_of(u32)), alignment)
 
 	completed_timeline := ez_gfx_indirect_completed_timeline()
 	for i in 0 ..< manager.count {
@@ -65,6 +73,7 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 		if !candidate.in_use &&
 		   candidate.last_used_timeline <= completed_timeline &&
 		   candidate.stride == stride &&
+		   candidate.draw_offset == draw_offset &&
 		   candidate.capacity >= capacity {
 			candidate.in_use = true
 			ez_gfx_vertex_pipeline_clear_buffer(candidate)
@@ -80,9 +89,10 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 	slot := &manager.buffers[manager.count]
 	manager.count += 1
 	slot.stride = stride
+	slot.draw_offset = draw_offset
 	slot.capacity = capacity
 	slot.in_use = true
-	size := stride * vk.DeviceSize(capacity + 1)
+	size := draw_offset + stride * vk.DeviceSize(capacity)
 	created, create_ok := ez_gfx_buffer_create(
 		size,
 		{.INDIRECT_BUFFER, .STORAGE_BUFFER, .TRANSFER_SRC, .TRANSFER_DST},
@@ -140,6 +150,7 @@ ez_gfx_indirect_buffer_manager_destroy :: proc(
 	for i in 0 ..< manager.count {
 		ez_gfx_buffer_destroy(&manager.buffers[i].buffer)
 		manager.buffers[i].stride = 0
+		manager.buffers[i].draw_offset = 0
 		manager.buffers[i].capacity = 0
 		manager.buffers[i].in_use = false
 		manager.buffers[i].last_used_timeline = 0
@@ -175,7 +186,7 @@ ez_gfx_vertex_pipeline_write_draw :: proc(
 		return false
 	}
 	commands := [?]vk.DrawIndexedIndirectCommand{command}
-	offset := descriptor.indirect_stride * vk.DeviceSize(index + 1)
+	offset := descriptor.indirect_buffer.draw_offset + descriptor.indirect_stride * vk.DeviceSize(index)
 	return ez_gfx_buffer_write_at(&descriptor.indirect_buffer.buffer, offset, commands[:])
 }
 
@@ -195,6 +206,15 @@ ez_gfx_vertex_pipeline_write_draw_payload :: proc(
 		fmt.eprintln("draw payload exceeds per-draw indirect stride")
 		return false
 	}
-	offset := descriptor.indirect_stride * vk.DeviceSize(index + 1) + command_bytes
+	offset := descriptor.indirect_buffer.draw_offset +
+		descriptor.indirect_stride * vk.DeviceSize(index) +
+		command_bytes
 	return ez_gfx_buffer_write_at(&descriptor.indirect_buffer.buffer, offset, payload)
+}
+
+ez_gfx_align_device_size :: proc(value, alignment: vk.DeviceSize) -> vk.DeviceSize {
+	if alignment == 0 do return value
+	remainder := value % alignment
+	if remainder == 0 do return value
+	return value + alignment - remainder
 }

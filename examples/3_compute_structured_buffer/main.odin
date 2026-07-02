@@ -11,8 +11,8 @@ import vk "vendor:vulkan"
 
 WIDTH :: 1280
 HEIGHT :: 720
-COMPUTE_SHADER_PATH :: cstring("examples/3_compute_Structured_Buffer/compute.slang")
-DRAW_SHADER_PATH :: cstring("examples/3_compute_Structured_Buffer/draw.slang")
+COMPUTE_SHADER_PATH :: cstring("examples/3_compute_structured_buffer/compute.slang")
+DRAW_SHADER_PATH :: cstring("examples/3_compute_structured_buffer/draw.slang")
 GLTF_PATH :: "examples/shared/assets/sponza.glb"
 POSITION_HEAP :: "position"
 NORMAL_HEAP :: "normal"
@@ -33,8 +33,7 @@ Mesh_Instance :: struct {
 }
 
 Compute_Push_Constants :: struct {
-	draw_stride_words: u32,
-	instance_count:    u32,
+	instance_count: u32,
 }
 
 Draw_Push_Constants :: struct {
@@ -515,8 +514,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	}
 
 	compute_push := Compute_Push_Constants {
-		draw_stride_words = u32(size_of(vk.DrawIndexedIndirectCommand) / size_of(u32)),
-		instance_count    = app.mesh_count,
+		instance_count = app.mesh_count,
 	}
 	compute := gfx.ez_gfx_render_add_compute_pipeline(
 		&app.compute_shader,

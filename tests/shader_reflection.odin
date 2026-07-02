@@ -109,6 +109,38 @@ compute_structured_reflects_metadata :: proc(t: ^testing.T) {
 }
 
 @(test)
+compute_indirect_reflects_count_and_elements :: proc(t: ^testing.T) {
+	program, ok := reflect_compute_shader(t, "tests/compute_indirect.slang")
+	if !ok do return
+
+	testing.expect_value(t, program.structured_buffer_binding_count, 2)
+	count_binding := &program.structured_buffer_bindings[0]
+	element_binding := &program.structured_buffer_bindings[1]
+	testing.expect(
+		t,
+		gfx.ez_gfx_shader_target_name_equals_cstring(
+			count_binding.name[:],
+			count_binding.name_len,
+			"draws.count",
+		),
+	)
+	testing.expect(
+		t,
+		gfx.ez_gfx_shader_target_name_equals_cstring(
+			element_binding.name[:],
+			element_binding.name_len,
+			"draws.elements",
+		),
+	)
+	testing.expect_value(t, count_binding.access, gfx.Ez_Gfx_Buffer_Access.Read_Write)
+	testing.expect_value(t, element_binding.access, gfx.Ez_Gfx_Buffer_Access.Read_Write)
+	testing.expect_value(t, count_binding.binding, u32(0))
+	testing.expect_value(t, element_binding.binding, u32(1))
+	testing.expect(t, count_binding.stages == {.COMPUTE})
+	testing.expect(t, element_binding.stages == {.COMPUTE})
+}
+
+@(test)
 graphics_structured_reflects_metadata :: proc(t: ^testing.T) {
 	program, ok := reflect_shader(t, "tests/graphics_structured.slang")
 	if !ok do return

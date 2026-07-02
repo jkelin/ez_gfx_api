@@ -656,7 +656,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		info_index := structured_info_base + i
 		buffer_infos[info_index] = vk.DescriptorBufferInfo {
 			buffer = render_binding.buffer.handle,
-			offset = 0,
+			offset = render_binding.offset,
 			range  = render_binding.size,
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
@@ -738,6 +738,7 @@ ez_gfx_pipeline_descriptor_version :: proc(
 			version = ez_gfx_pipeline_hash_u64(version, u64(binding_info.access))
 			if render_binding != nil && render_binding.buffer != nil {
 				version = ez_gfx_pipeline_hash_u64(version, u64(uintptr(render_binding.buffer.handle)))
+				version = ez_gfx_pipeline_hash_u64(version, u64(render_binding.offset))
 				version = ez_gfx_pipeline_hash_u64(version, u64(render_binding.size))
 			}
 		}

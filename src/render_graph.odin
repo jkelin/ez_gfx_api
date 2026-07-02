@@ -518,7 +518,7 @@ ez_gfx_render_graph_prepare_Structured_Buffers :: proc(
 			srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 			dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
 			buffer              = access.structured_binding.buffer.handle,
-			offset              = 0,
+			offset              = access.structured_binding.offset,
 			size                = access.structured_binding.size,
 		}
 		barrier_count += 1
@@ -695,7 +695,7 @@ ez_gfx_render_graph_execute_node :: proc(
 		vk.CmdDrawIndexedIndirectCount(
 			command_buffer,
 			descriptor.indirect_buffer.buffer.handle,
-			descriptor.indirect_stride,
+			descriptor.indirect_buffer.draw_offset,
 			descriptor.indirect_buffer.buffer.handle,
 			0,
 			descriptor.indirect_buffer.capacity,

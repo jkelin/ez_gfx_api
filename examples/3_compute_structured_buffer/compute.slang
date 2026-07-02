@@ -19,8 +19,16 @@ struct MeshInstance
 
 struct ComputePushConstants
 {
-    uint draw_stride_words;
     uint instance_count;
+};
+
+struct DrawIndexedIndirectCommand
+{
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int vertex_offset;
+    uint first_instance;
 };
 
 [[vk::push_constant]]
@@ -36,7 +44,7 @@ StructuredBuffer<MeshInstance> mesh_instances;
 
 [StructuredBuffer("draw_commands")]
 [[vk::binding(2, 0)]]
-RWStructuredBuffer<uint> draw_commands;
+RWIndirectBuffer<DrawIndexedIndirectCommand> draw_commands;
 
 [shader("compute")]
 [numthreads(1, 1, 1)]
@@ -51,14 +59,11 @@ void computemain(uint3 dispatch_id: SV_DispatchThreadID)
     MeshInstance instance = mesh_instances[instance_index];
     MeshDescriptor mesh = mesh_descriptors[instance.mesh_index];
 
-    if (instance_index == 0)
-    {
-        draw_commands[0] = push_constants.instance_count;
-    }
-    uint base = push_constants.draw_stride_words * (instance_index + 1);
-    draw_commands[base + 0] = mesh.index_count;
-    draw_commands[base + 1] = 1;
-    draw_commands[base + 2] = mesh.first_index;
-    draw_commands[base + 3] = mesh.vertex_offset;
-    draw_commands[base + 4] = instance_index;
+    DrawIndexedIndirectCommand command;
+    command.index_count = mesh.index_count;
+    command.instance_count = 1;
+    command.first_index = mesh.first_index;
+    command.vertex_offset = int(mesh.vertex_offset);
+    command.first_instance = instance_index;
+    draw_commands.Append(command);
 }

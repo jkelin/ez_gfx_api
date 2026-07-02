@@ -112,6 +112,7 @@ Ez_Gfx_Shader_Desc :: struct {
 @(private)
 Ez_Gfx_Slang_Linked_Program :: struct {
 	session:        ^sp.ISession,
+	shared_module: ^sp.IModule,
 	slang_module:   ^sp.IModule,
 	vertex_entry:   ^sp.IEntryPoint,
 	fragment_entry: ^sp.IEntryPoint,
@@ -162,6 +163,7 @@ ez_gfx_slang_linked_program_release :: proc(program: ^Ez_Gfx_Slang_Linked_Progra
 	program.fragment_entry = nil
 	program.vertex_entry = nil
 	program.slang_module = nil
+	program.shared_module = nil
 }
 
 // Creates the long-lived Slang global session used for shader compilation.
@@ -349,8 +351,19 @@ ez_gfx_shader_create_linked_program :: proc(
 	}
 	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
 
-	components: [3]^sp.IComponentType
+	diagnostics^ = nil
+	program.shared_module = program.session->loadModule("ez_gfx", diagnostics)
+	if program.shared_module == nil {
+		_ = ez_gfx_slang_diagnostics_check(diagnostics)
+		fmt.eprintln("failed to load shared ez_gfx Slang module")
+		return
+	}
+	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
+
+	components: [4]^sp.IComponentType
 	component_count := 0
+	components[component_count] = program.shared_module
+	component_count += 1
 	components[component_count] = program.slang_module
 	component_count += 1
 
@@ -845,39 +858,181 @@ ez_gfx_shader_reflect_structured_buffer_bindings_from_layout :: proc(
 			return false
 		}
 
-		binding := &program.structured_buffer_bindings[program.structured_buffer_binding_count]
-		if !ez_gfx_copy_shader_target_name(binding.name[:], &binding.name_len, name, int(name_len)) {
-			return false
-		}
 		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
-		if !ez_gfx_shader_reflect_structured_buffer_access(field_type_layout, &binding.access) {
+		access: Ez_Gfx_Buffer_Access
+		if ez_gfx_shader_try_reflect_structured_buffer_access(field_type_layout, &access) {
+			if !ez_gfx_shader_add_structured_buffer_binding(
+				program,
+				name,
+				int(name_len),
+				field_layout,
+				field_type_layout,
+				access,
+			) {
+				return false
+			}
+		} else if !ez_gfx_shader_reflect_structured_buffer_fields(
+			      program,
+			      name,
+			      int(name_len),
+			      sp.variable_layout_getBindingIndex(field_layout),
+			      field_type_layout,
+		      ) {
 			return false
 		}
-		binding.binding = sp.variable_layout_getBindingIndex(field_layout)
-		binding_space_category := sp.ParameterCategory.ShaderResource
-		if binding.access == .Write || binding.access == .Read_Write {
-			binding_space_category = .UnorderedAccess
-		}
-		binding.set = u32(sp.variable_layout_getBindingSpace(field_layout, binding_space_category))
-		if binding.set != 0 {
-			fmt.eprintln("only descriptor set 0 is supported for structured buffers")
-			return false
-		}
-		binding.stages = ez_gfx_shader_desc_stage_flags(program)
-		program.structured_buffer_binding_count += 1
 	}
 
 	return true
 }
 
-ez_gfx_shader_reflect_structured_buffer_access :: proc(
+ez_gfx_shader_reflect_structured_buffer_fields :: proc(
+	program: ^Ez_Gfx_Shader_Program,
+	base_name: cstring,
+	base_name_len: int,
+	base_binding: u32,
+	type_layout: ^sp.TypeLayoutReflection,
+) -> bool {
+	if type_layout == nil {
+		fmt.eprintln("StructuredBuffer wrapper is missing type layout")
+		return false
+	}
+	field_count := sp.type_layout_getFieldCount(type_layout)
+	if field_count == 0 {
+		fmt.eprintln("StructuredBuffer must reflect as a buffer or wrapper with buffer fields")
+		return false
+	}
+
+	reflected_field_count := 0
+	for i in 0 ..< field_count {
+		field_layout := sp.type_layout_getFieldByIndex(type_layout, i)
+		if field_layout == nil do continue
+		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
+		access: Ez_Gfx_Buffer_Access
+		if !ez_gfx_shader_try_reflect_structured_buffer_access(field_type_layout, &access) {
+			continue
+		}
+		field_name := sp.variable_layout_getName(field_layout)
+		if field_name == nil {
+			fmt.eprintln("StructuredBuffer wrapper field is missing a reflected name")
+			return false
+		}
+		field_name_len := ez_gfx_cstring_len(field_name)
+		combined_name: [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte
+		combined_name_len: int
+		if !ez_gfx_copy_shader_target_name_with_suffix(
+			combined_name[:],
+			&combined_name_len,
+			base_name,
+			base_name_len,
+			field_name,
+			field_name_len,
+		) {
+			return false
+		}
+		if !ez_gfx_shader_add_structured_buffer_binding_bytes(
+			program,
+			combined_name[:],
+			combined_name_len,
+			field_layout,
+			field_type_layout,
+			access,
+			base_binding,
+		) {
+			return false
+		}
+		reflected_field_count += 1
+	}
+	if reflected_field_count == 0 {
+		fmt.eprintln("StructuredBuffer wrapper does not contain reflected buffer fields")
+		return false
+	}
+	return true
+}
+
+ez_gfx_shader_add_structured_buffer_binding :: proc(
+	program: ^Ez_Gfx_Shader_Program,
+	name: cstring,
+	name_len: int,
+	layout: ^sp.VariableLayoutReflection,
+	type_layout: ^sp.TypeLayoutReflection,
+	access: Ez_Gfx_Buffer_Access,
+	binding_offset: u32 = 0,
+) -> bool {
+	if program.structured_buffer_binding_count >= EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS {
+		fmt.eprintln("too many shader structured buffer bindings")
+		return false
+	}
+	binding := &program.structured_buffer_bindings[program.structured_buffer_binding_count]
+	if !ez_gfx_copy_shader_target_name(binding.name[:], &binding.name_len, name, name_len) {
+		return false
+	}
+	return ez_gfx_shader_finish_structured_buffer_binding(
+		program,
+		binding,
+		layout,
+		type_layout,
+		access,
+		binding_offset,
+	)
+}
+
+ez_gfx_shader_add_structured_buffer_binding_bytes :: proc(
+	program: ^Ez_Gfx_Shader_Program,
+	name: []byte,
+	name_len: int,
+	layout: ^sp.VariableLayoutReflection,
+	type_layout: ^sp.TypeLayoutReflection,
+	access: Ez_Gfx_Buffer_Access,
+	binding_offset: u32 = 0,
+) -> bool {
+	if program.structured_buffer_binding_count >= EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS {
+		fmt.eprintln("too many shader structured buffer bindings")
+		return false
+	}
+	binding := &program.structured_buffer_bindings[program.structured_buffer_binding_count]
+	if !ez_gfx_copy_shader_target_name(binding.name[:], &binding.name_len, cast(cstring)raw_data(name), name_len) {
+		return false
+	}
+	return ez_gfx_shader_finish_structured_buffer_binding(
+		program,
+		binding,
+		layout,
+		type_layout,
+		access,
+		binding_offset,
+	)
+}
+
+ez_gfx_shader_finish_structured_buffer_binding :: proc(
+	program: ^Ez_Gfx_Shader_Program,
+	binding: ^Ez_Gfx_Structured_Buffer_Binding,
+	layout: ^sp.VariableLayoutReflection,
+	type_layout: ^sp.TypeLayoutReflection,
+	access: Ez_Gfx_Buffer_Access,
+	binding_offset: u32,
+) -> bool {
+	_ = type_layout
+	binding.access = access
+	binding.binding = binding_offset + sp.variable_layout_getBindingIndex(layout)
+	binding_space_category := sp.ParameterCategory.ShaderResource
+	if binding.access == .Write || binding.access == .Read_Write {
+		binding_space_category = .UnorderedAccess
+	}
+	binding.set = u32(sp.variable_layout_getBindingSpace(layout, binding_space_category))
+	if binding.set != 0 {
+		fmt.eprintln("only descriptor set 0 is supported for structured buffers")
+		return false
+	}
+	binding.stages = ez_gfx_shader_desc_stage_flags(program)
+	program.structured_buffer_binding_count += 1
+	return true
+}
+
+ez_gfx_shader_try_reflect_structured_buffer_access :: proc(
 	type_layout: ^sp.TypeLayoutReflection,
 	access: ^Ez_Gfx_Buffer_Access,
 ) -> bool {
-	if type_layout == nil {
-		fmt.eprintln("StructuredBuffer reflection is missing type layout")
-		return false
-	}
+	if type_layout == nil do return false
 	#partial switch sp.type_layout_getResourceAccess(type_layout) {
 	case .READ:
 		access^ = .Read
@@ -889,6 +1044,18 @@ ez_gfx_shader_reflect_structured_buffer_access :: proc(
 		access^ = .Write
 		return true
 	}
+	return false
+}
+
+ez_gfx_shader_reflect_structured_buffer_access :: proc(
+	type_layout: ^sp.TypeLayoutReflection,
+	access: ^Ez_Gfx_Buffer_Access,
+) -> bool {
+	if type_layout == nil {
+		fmt.eprintln("StructuredBuffer reflection is missing type layout")
+		return false
+	}
+	if ez_gfx_shader_try_reflect_structured_buffer_access(type_layout, access) do return true
 	fmt.eprintln("StructuredBuffer must reflect as StructuredBuffer or RWStructuredBuffer")
 	return false
 }
@@ -1268,6 +1435,36 @@ ez_gfx_copy_shader_target_name_cstring :: proc(dst: []byte, dst_len: ^int, name:
 		name_len += 1
 	}
 	return ez_gfx_copy_shader_target_name(dst, dst_len, name, name_len)
+}
+
+ez_gfx_copy_shader_target_name_with_suffix :: proc(
+	dst: []byte,
+	dst_len: ^int,
+	base: cstring,
+	base_len: int,
+	suffix: cstring,
+	suffix_len: int,
+) -> bool {
+	name_len := base_len + 1 + suffix_len
+	if name_len > EZ_GFX_SHADER_TARGET_NAME_MAX {
+		fmt.eprintln("shader target name is too long")
+		return false
+	}
+
+	for i in 0 ..< len(dst) {
+		dst[i] = 0
+	}
+	base_bytes := cast([^]byte)base
+	for i in 0 ..< base_len {
+		dst[i] = base_bytes[i]
+	}
+	dst[base_len] = '.'
+	suffix_bytes := cast([^]byte)suffix
+	for i in 0 ..< suffix_len {
+		dst[base_len + 1 + i] = suffix_bytes[i]
+	}
+	dst_len^ = name_len
+	return true
 }
 
 ez_gfx_shader_target_name_equals_cstring :: proc(
