@@ -29,16 +29,6 @@ Ez_Gfx_Vertex_Pipeline_Descriptor :: struct {
 	ok:                 bool,
 }
 
-Ez_Gfx_Compute_Pipeline_Descriptor :: struct {
-	pipeline:           ^Ez_Gfx_Pipeline_Record,
-	dispatch_x:         u32,
-	dispatch_y:         u32,
-	dispatch_z:         u32,
-	push_constant_size: u32,
-	push_constant_data: [EZ_GFX_MAX_PUSH_CONSTANT_BYTES]byte,
-	ok:                 bool,
-}
-
 ez_gfx_indirect_buffer_manager_acquire :: proc(
 	manager: ^Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
 	stride: vk.DeviceSize,
@@ -61,9 +51,7 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 	}
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return nil, false
-	properties: vk.PhysicalDeviceProperties
-	vk.GetPhysicalDeviceProperties(ctx.physical_device, &properties)
-	alignment := vk.DeviceSize(properties.limits.minStorageBufferOffsetAlignment)
+	alignment := ctx.min_storage_buffer_offset_alignment
 	if alignment == 0 do alignment = vk.DeviceSize(size_of(u32))
 	draw_offset := ez_gfx_align_device_size(vk.DeviceSize(size_of(u32)), alignment)
 

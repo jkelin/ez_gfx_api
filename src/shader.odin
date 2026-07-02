@@ -1412,7 +1412,7 @@ ez_gfx_copy_shader_target_name :: proc(
 	name: cstring,
 	name_len: int,
 ) -> bool {
-	if name_len > EZ_GFX_SHADER_TARGET_NAME_MAX {
+	if name_len >= EZ_GFX_SHADER_TARGET_NAME_MAX {
 		fmt.eprintln("shader target name is too long")
 		return false
 	}
@@ -1446,7 +1446,7 @@ ez_gfx_copy_shader_target_name_with_suffix :: proc(
 	suffix_len: int,
 ) -> bool {
 	name_len := base_len + 1 + suffix_len
-	if name_len > EZ_GFX_SHADER_TARGET_NAME_MAX {
+	if name_len >= EZ_GFX_SHADER_TARGET_NAME_MAX {
 		fmt.eprintln("shader target name is too long")
 		return false
 	}

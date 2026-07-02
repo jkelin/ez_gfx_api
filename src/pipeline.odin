@@ -32,6 +32,16 @@ Ez_Gfx_Pipeline_Manager :: struct {
 	clock:   u64,
 }
 
+Ez_Gfx_Compute_Pipeline_Descriptor :: struct {
+	pipeline:           ^Ez_Gfx_Pipeline_Record,
+	dispatch_x:         u32,
+	dispatch_y:         u32,
+	dispatch_z:         u32,
+	push_constant_size: u32,
+	push_constant_data: [EZ_GFX_MAX_PUSH_CONSTANT_BYTES]byte,
+	ok:                 bool,
+}
+
 ez_gfx_pipeline_collect_color_formats :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	swapchain_format: vk.Format,
@@ -449,10 +459,6 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		shader.vertex_heap_binding_count +
 		shader.structured_buffer_binding_count +
 		shader.target_declaration_count
-	if binding_count == 0 {
-		return true
-	}
-
 	layout_bindings: [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_BINDINGS]vk.DescriptorSetLayoutBinding
 	binding_index := 0
 

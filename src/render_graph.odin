@@ -27,12 +27,12 @@ Ez_Gfx_Render_Graph_Access :: struct {
 	resource_kind:          Ez_Gfx_Render_Graph_Resource_Kind,
 	target_kind:            Ez_Gfx_Render_Target_Kind,
 	target:                 ^Ez_Gfx_Render_Target_Texture,
-	structured_binding:        ^Ez_Gfx_Render_Structured_Binding,
-	sampled_read:           bool,
-	storage_read:           bool,
-	storage_write:          bool,
-	structured_read:           bool,
-	structured_write:          bool,
+	structured_binding:         ^Ez_Gfx_Render_Structured_Binding,
+	sampled_read:               bool,
+	storage_read:               bool,
+	storage_write:              bool,
+	structured_read:            bool,
+	structured_write:           bool,
 	color_write:            bool,
 	depth_write:            bool,
 	color_attachment_index: u32,
@@ -164,7 +164,7 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 		}
 	}
 
-	if !ez_gfx_render_graph_node_add_Structured_Buffers(node, shader, render) {
+	if !ez_gfx_render_graph_node_add_structured_buffers(node, shader, render) {
 		return false
 	}
 
@@ -193,14 +193,14 @@ ez_gfx_render_graph_add_compute_pipeline :: proc(
 	node^ = {}
 	node.kind = .Compute
 	node.compute = descriptor
-	if !ez_gfx_render_graph_node_add_Structured_Buffers(node, shader, render) {
+	if !ez_gfx_render_graph_node_add_structured_buffers(node, shader, render) {
 		return false
 	}
 	graph.node_count += 1
 	return true
 }
 
-ez_gfx_render_graph_node_add_Structured_Buffers :: proc(
+ez_gfx_render_graph_node_add_structured_buffers :: proc(
 	node: ^Ez_Gfx_Render_Graph_Node,
 	shader: ^Ez_Gfx_Shader_Program,
 	render: ^Ez_Gfx_Render,
@@ -405,7 +405,7 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 		if !ez_gfx_render_graph_prepare_storage_accesses(render, node, command_buffer) {
 			return false
 		}
-		ez_gfx_render_graph_prepare_Structured_Buffers(node, command_buffer)
+		ez_gfx_render_graph_prepare_structured_buffers(node, command_buffer)
 		ez_gfx_render_graph_prepare_indirect_buffer(node, command_buffer)
 		if !ez_gfx_render_graph_execute_node(render, node, command_buffer) {
 			return false
@@ -493,7 +493,7 @@ ez_gfx_render_graph_prepare_sampled_reads :: proc(
 	return true
 }
 
-ez_gfx_render_graph_prepare_Structured_Buffers :: proc(
+ez_gfx_render_graph_prepare_structured_buffers :: proc(
 	node: ^Ez_Gfx_Render_Graph_Node,
 	command_buffer: vk.CommandBuffer,
 ) {

@@ -8,3 +8,4 @@ screenshot.jpeg
 ez_gfx_test.exe
 *screenshot.png
 tests/snapshots/*.current.png
+REVIEW.md

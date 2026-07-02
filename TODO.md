@@ -59,3 +59,13 @@
 - Support compressed texture formats. Color target parsing is still limited to uncompressed formats such as `rgba8` and `rgba16f`, with no BC/ASTC/block-compressed texture handling.
 
 - Add compute shader support. The public render API, linked Slang program creation, pipeline creation, and command recording paths are still graphics-only and bind `.GRAPHICS` pipelines.
+
+- Structured-buffer manager compaction (`ez_gfx_structured_buffer_manager_compact`) shifts array entries, invalidating `^Ez_Gfx_Structured_Buffer` pointers held by an active render's bindings and render-graph accesses. Calling `ez_gfx_allocate_structured_buffer` or `ez_gfx_deallocate_structured_buffer` between `ez_gfx_begin_render` and `ez_gfx_finish_render` can corrupt `last_write_timeline` tracking. Replace raw pointers with stable handles (slot indices plus generation counters).
+
+- Descriptor sets are per frame slot, not per graph node: adding the same shader twice in one render with different structured-buffer bindings silently makes all nodes use the last-written bindings because updates happen at add-time while recording happens at finish. Add per-node descriptor sets or fail loudly when duplicate shader nodes reuse the same frame slot.
+
+- No CPU/GPU synchronization for persistently mapped structured buffers: a single mapped pointer lets CPU writes race in-flight GPU reads from previous frames. Add per-frame-in-flight buffering or document and enforce an explicit sync contract.
+
+- Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
+
+- `examples/shared/assets/sponza.glb` is a 52 MB binary committed directly to the repo. Replace it with a much smaller asset or move it to Git LFS.

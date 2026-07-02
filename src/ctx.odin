@@ -81,8 +81,9 @@ Ez_Gfx_Ctx :: struct {
 	texture_manager:                      Ez_Gfx_Texture_Manager,
 	pipeline_manager:                     Ez_Gfx_Pipeline_Manager,
 	indirect_manager:                     Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
-	structured_buffer_manager:               Ez_Gfx_Structured_Buffer_Manager,
+	structured_buffer_manager:            Ez_Gfx_Structured_Buffer_Manager,
 	render_target_manager:                Ez_Gfx_Render_Target_Manager,
+	min_storage_buffer_offset_alignment:  vk.DeviceSize,
 	enable_validation:                    bool,
 	enable_debug:                         bool,
 	debug_utils_enabled:                  bool,
@@ -250,6 +251,7 @@ ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return false
 	if !ez_gfx_ctx_pick_physical_device(ctx, surface) do return false
+	if !ez_gfx_ctx_cache_device_limits(ctx) do return false
 	if !ez_gfx_ctx_cache_swapchain_present_modes(ctx, surface) do return false
 	ez_gfx_ctx_enable_optional_device_features(ctx)
 	if !ez_gfx_ctx_create_device(ctx) do return false
@@ -439,6 +441,14 @@ ez_gfx_ctx_device_supports_extension :: proc(
 		}
 	}
 	return false
+}
+
+ez_gfx_ctx_cache_device_limits :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+	properties: vk.PhysicalDeviceProperties
+	vk.GetPhysicalDeviceProperties(ctx.physical_device, &properties)
+	ctx.min_storage_buffer_offset_alignment =
+		vk.DeviceSize(properties.limits.minStorageBufferOffsetAlignment)
+	return true
 }
 
 ez_gfx_ctx_cache_swapchain_present_modes :: proc(

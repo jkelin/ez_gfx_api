@@ -142,7 +142,7 @@ resize_after_screenshot_recreates_without_validation_errors :: proc(t: ^testing.
 }
 
 @(test)
-Structured_Buffer_allocates_binds_and_deallocates_by_pointer :: proc(t: ^testing.T) {
+structured_buffer_allocates_binds_and_deallocates_by_pointer :: proc(t: ^testing.T) {
 	app: Triangle_App
 	if !testing.expect(t, triangle_init_app(&app), "structured buffer test failed during init") {
 		triangle_cleanup(&app)

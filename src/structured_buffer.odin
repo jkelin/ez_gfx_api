@@ -144,17 +144,6 @@ ez_gfx_render_add_indirect_structured_buffer :: proc(
 		return false
 	}
 	indirect := descriptor.indirect_buffer
-	if !ez_gfx_render_add_structured_binding(
-		render,
-		shader_name,
-		&indirect.buffer,
-		0,
-		indirect.buffer.size,
-		nil,
-		indirect,
-	) {
-		return false
-	}
 	count_size := vk.DeviceSize(size_of(u32))
 	draw_offset := indirect.draw_offset
 	draw_size := indirect.buffer.size - draw_offset
@@ -193,7 +182,7 @@ ez_gfx_render_add_structured_binding :: proc(
 	}
 
 	name_len := ez_gfx_cstring_len(shader_name)
-	if name_len > EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
+	if name_len >= EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
 		fmt.eprintln("structured buffer shader name is too long")
 		return false
 	}
@@ -273,7 +262,7 @@ ez_gfx_render_add_indirect_structured_buffer_part :: proc(
 ) -> bool {
 	base_len := ez_gfx_cstring_len(shader_name)
 	name_len := base_len + len(suffix)
-	if name_len > EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
+	if name_len >= EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
 		fmt.eprintln("indirect structured buffer shader name is too long")
 		return false
 	}

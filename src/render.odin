@@ -17,9 +17,8 @@ Ez_Gfx_Render :: struct {
 	timeline_end:   u64,
 	texture_upload_wait_timeline: u64,
 	vertex_upload_wait_timeline: u64,
-	graph:          Ez_Gfx_Render_Graph,
-	pipelines:      [EZ_GFX_MAX_RENDER_PIPELINES]Ez_Gfx_Vertex_Pipeline_Descriptor,
-	pipeline_count: int,
+	graph:                      Ez_Gfx_Render_Graph,
+	pipeline_count:             int,
 	structured_bindings:        [EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS]Ez_Gfx_Render_Structured_Binding,
 	structured_binding_count:   int,
 	structured_binding_version: u64,
@@ -237,7 +236,6 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 		// Push constants are copied here so callers can pass frame-local structs safely.
 		mem.copy(&descriptor.push_constant_data[0], push_constant_data, int(push_constant_size))
 	}
-	render.pipelines[render.pipeline_count] = descriptor
 	render.pipeline_count += 1
 	if !ez_gfx_render_graph_add_vertex_pipeline(
 		&render.graph,
@@ -325,7 +323,6 @@ ez_gfx_render_add_vertex_pipeline_with_indirect_impl :: proc(
 	if push_constant_size > 0 {
 		mem.copy(&result.push_constant_data[0], push_constant_data, int(push_constant_size))
 	}
-	render.pipelines[render.pipeline_count] = result
 	render.pipeline_count += 1
 	if !ez_gfx_render_graph_add_vertex_pipeline(
 		&render.graph,

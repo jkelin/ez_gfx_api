@@ -48,7 +48,9 @@ V2P vertexmain(uint vertex_index: SV_VertexID, uint instance_index: SV_InstanceI
     V2P output;
     output.pos = mul(push_constants.mvp, float4(positions[vertex_index].xyz, 1.0));
     float3 normal = normalize(normals[vertex_index].xyz);
-    output.color = float4(normal * 0.5 + 0.5, 1.0);
+    float3 lit = normal * 0.5 + 0.5;
+    float4 instance_color = mesh_instances[instance_index].color;
+    output.color = float4(instance_color.rgb * lit, instance_color.a);
     return output;
 }
 
