@@ -16,10 +16,11 @@ Ez_Gfx_Buffer_Access :: enum u8 {
 Ez_Gfx_Structured_Buffer :: struct {
 	buffer:              Ez_Gfx_Buffer,
 	cpu_ptr:             rawptr,
+	capacity:            vk.DeviceSize,
 	size:                vk.DeviceSize,
-	live:                bool,
-	pending_destroy:     bool,
+	in_use:              bool,
 	last_write_timeline: u64,
+	last_used_timeline:  u64,
 	debug_name:          cstring,
 }
 
@@ -30,96 +31,41 @@ Ez_Gfx_Structured_Buffer_Manager :: struct {
 }
 
 Ez_Gfx_Render_Structured_Binding :: struct {
-	name:            [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
-	name_len:        int,
-	buffer:          ^Ez_Gfx_Buffer,
-	offset:          vk.DeviceSize,
-	size:            vk.DeviceSize,
-	structured_buffer:  ^Ez_Gfx_Structured_Buffer,
-	indirect_buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
+	name:              [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
+	name_len:          int,
+	buffer:            ^Ez_Gfx_Buffer,
+	offset:            vk.DeviceSize,
+	size:              vk.DeviceSize,
+	structured_buffer: ^Ez_Gfx_Structured_Buffer,
+	indirect_buffer:   ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
 }
 
-ez_gfx_allocate_structured_buffer :: proc(
+ez_gfx_render_acquire_structured_buffer :: proc(
+	shader_name: cstring,
 	size: vk.DeviceSize,
-	debug_name: cstring = nil,
 ) -> rawptr {
-	ctx := ez_gfx_get_current_ctx()
-	if ctx == nil do return nil
+	render := &ez_gfx_current_render
+	if !render.active || !render.ready {
+		fmt.eprintln("ez_gfx_render_acquire_structured_buffer called without an active render")
+		return nil
+	}
+	if shader_name == nil {
+		fmt.eprintln("structured buffer shader name is required")
+		return nil
+	}
 	if size == 0 {
 		fmt.eprintln("structured buffer size must be greater than zero")
 		return nil
 	}
 
-	manager := &ctx.structured_buffer_manager
-	ez_gfx_structured_buffer_manager_collect_completed(manager)
-	if manager.count >= EZ_GFX_MAX_STRUCTURED_BUFFERS {
-		fmt.eprintln("too many structured buffers")
-		return nil
-	}
-
-	slot := &manager.buffers[manager.count]
-	manager.count += 1
-	buffer, mapped, ok := ez_gfx_buffer_create_mapped(
+	storage, acquire_ok := ez_gfx_structured_buffer_manager_acquire(
+		&render.ctx.structured_buffer_manager,
 		size,
-		{.STORAGE_BUFFER, .TRANSFER_SRC, .TRANSFER_DST},
-		debug_name,
-		0.4,
+		shader_name,
 	)
-	if !ok {
-		manager.count -= 1
-		slot^ = {}
-		return nil
-	}
+	if !acquire_ok do return nil
 
-	slot.buffer = buffer
-	slot.cpu_ptr = mapped
-	slot.size = size
-	slot.live = true
-	slot.debug_name = debug_name
-	manager.version += 1
-	return mapped
-}
-
-ez_gfx_deallocate_structured_buffer :: proc(ptr: rawptr) -> bool {
-	ctx := ez_gfx_get_current_ctx()
-	if ctx == nil do return false
-	buffer := ez_gfx_structured_buffer_manager_find_by_ptr(&ctx.structured_buffer_manager, ptr)
-	if buffer == nil {
-		fmt.eprintln("structured buffer pointer was not allocated by ez_gfx")
-		return false
-	}
-	if !buffer.live {
-		fmt.eprintln("structured buffer was already deallocated")
-		return false
-	}
-
-	buffer.live = false
-	completed := ez_gfx_structured_buffer_completed_timeline()
-	if buffer.last_write_timeline <= completed {
-		ez_gfx_structured_buffer_destroy(buffer)
-		ez_gfx_structured_buffer_manager_compact(&ctx.structured_buffer_manager)
-	} else {
-		buffer.pending_destroy = true
-	}
-	ctx.structured_buffer_manager.version += 1
-	return true
-}
-
-ez_gfx_render_add_structured_buffer :: proc(
-	shader_name: cstring,
-	ptr: rawptr,
-) -> bool {
-	render := &ez_gfx_current_render
-	if !render.active || !render.ready {
-		fmt.eprintln("ez_gfx_render_add_structured_buffer called without an active render")
-		return false
-	}
-	storage := ez_gfx_structured_buffer_manager_find_by_ptr(&render.ctx.structured_buffer_manager, ptr)
-	if storage == nil || !storage.live {
-		fmt.eprintln("structured buffer pointer is not live")
-		return false
-	}
-	return ez_gfx_render_add_structured_binding(
+	if !ez_gfx_render_add_structured_binding(
 		render,
 		shader_name,
 		&storage.buffer,
@@ -127,7 +73,69 @@ ez_gfx_render_add_structured_buffer :: proc(
 		storage.size,
 		storage,
 		nil,
+	) {
+		storage.in_use = false
+		return nil
+	}
+	return storage.cpu_ptr
+}
+
+ez_gfx_structured_buffer_manager_acquire :: proc(
+	manager: ^Ez_Gfx_Structured_Buffer_Manager,
+	size: vk.DeviceSize,
+	debug_name: cstring = nil,
+) -> (
+	buffer: ^Ez_Gfx_Structured_Buffer,
+	ok: bool,
+) {
+	if size == 0 {
+		fmt.eprintln("structured buffer size must be greater than zero")
+		return nil, false
+	}
+
+	completed_timeline := ez_gfx_structured_buffer_completed_timeline()
+	for i in 0 ..< manager.count {
+		candidate := &manager.buffers[i]
+		if !candidate.in_use &&
+		   candidate.last_used_timeline <= completed_timeline &&
+		   candidate.capacity >= size {
+			candidate.in_use = true
+			candidate.size = size
+			candidate.last_write_timeline = 0
+			candidate.debug_name = debug_name
+			manager.version += 1
+			return candidate, true
+		}
+	}
+
+	if manager.count >= EZ_GFX_MAX_STRUCTURED_BUFFERS {
+		fmt.eprintln("too many structured buffers are in use")
+		return nil, false
+	}
+
+	slot := &manager.buffers[manager.count]
+	manager.count += 1
+	created, mapped, create_ok := ez_gfx_buffer_create_mapped(
+		size,
+		{.STORAGE_BUFFER, .TRANSFER_SRC, .TRANSFER_DST},
+		debug_name,
+		0.4,
 	)
+	if !create_ok {
+		manager.count -= 1
+		slot^ = {}
+		return nil, false
+	}
+	slot.buffer = created
+	slot.cpu_ptr = mapped
+	slot.capacity = size
+	slot.size = size
+	slot.in_use = true
+	slot.last_write_timeline = 0
+	slot.last_used_timeline = 0
+	slot.debug_name = debug_name
+	manager.version += 1
+	return slot, true
 }
 
 ez_gfx_render_add_indirect_structured_buffer :: proc(
@@ -136,7 +144,9 @@ ez_gfx_render_add_indirect_structured_buffer :: proc(
 ) -> bool {
 	render := &ez_gfx_current_render
 	if !render.active || !render.ready {
-		fmt.eprintln("ez_gfx_render_add_indirect_structured_buffer called without an active render")
+		fmt.eprintln(
+			"ez_gfx_render_add_indirect_structured_buffer called without an active render",
+		)
 		return false
 	}
 	if descriptor == nil || !descriptor.ok || descriptor.indirect_buffer == nil {
@@ -147,23 +157,25 @@ ez_gfx_render_add_indirect_structured_buffer :: proc(
 	count_size := vk.DeviceSize(size_of(u32))
 	draw_offset := indirect.draw_offset
 	draw_size := indirect.buffer.size - draw_offset
-	return ez_gfx_render_add_indirect_structured_buffer_part(
-		render,
-		shader_name,
-		".count",
-		&indirect.buffer,
-		0,
-		count_size,
-		indirect,
-	) &&
-	ez_gfx_render_add_indirect_structured_buffer_part(
-		render,
-		shader_name,
-		".elements",
-		&indirect.buffer,
-		draw_offset,
-		draw_size,
-		indirect,
+	return(
+		ez_gfx_render_add_indirect_structured_buffer_part(
+			render,
+			shader_name,
+			".count",
+			&indirect.buffer,
+			0,
+			count_size,
+			indirect,
+		) &&
+		ez_gfx_render_add_indirect_structured_buffer_part(
+			render,
+			shader_name,
+			".elements",
+			&indirect.buffer,
+			draw_offset,
+			draw_size,
+			indirect,
+		) \
 	)
 }
 
@@ -295,24 +307,27 @@ ez_gfx_render_find_structured_binding :: proc(
 	if render == nil do return nil
 	for i in 0 ..< render.structured_binding_count {
 		binding := &render.structured_bindings[i]
-		if ez_gfx_shader_target_name_equals_bytes(binding.name[:], binding.name_len, name, name_len) {
+		if ez_gfx_shader_target_name_equals_bytes(
+			binding.name[:],
+			binding.name_len,
+			name,
+			name_len,
+		) {
 			return binding
 		}
 	}
 	return nil
 }
 
-ez_gfx_structured_buffer_manager_find_by_ptr :: proc(
+ez_gfx_structured_buffer_manager_release_completed :: proc(
 	manager: ^Ez_Gfx_Structured_Buffer_Manager,
-	ptr: rawptr,
-) -> ^Ez_Gfx_Structured_Buffer {
-	if ptr == nil do return nil
+) {
+	completed_timeline := ez_gfx_structured_buffer_completed_timeline()
 	for i in 0 ..< manager.count {
-		if manager.buffers[i].cpu_ptr == ptr {
-			return &manager.buffers[i]
+		if manager.buffers[i].last_used_timeline <= completed_timeline {
+			manager.buffers[i].in_use = false
 		}
 	}
-	return nil
 }
 
 ez_gfx_structured_buffer_manager_destroy :: proc(manager: ^Ez_Gfx_Structured_Buffer_Manager) {
@@ -323,39 +338,23 @@ ez_gfx_structured_buffer_manager_destroy :: proc(manager: ^Ez_Gfx_Structured_Buf
 	manager.version = 0
 }
 
-ez_gfx_structured_buffer_manager_collect_completed :: proc(manager: ^Ez_Gfx_Structured_Buffer_Manager) {
-	completed := ez_gfx_structured_buffer_completed_timeline()
-	for i in 0 ..< manager.count {
-		buffer := &manager.buffers[i]
-		if buffer.pending_destroy && buffer.last_write_timeline <= completed {
-			ez_gfx_structured_buffer_destroy(buffer)
-		}
-	}
-	ez_gfx_structured_buffer_manager_compact(manager)
-}
-
-ez_gfx_structured_buffer_manager_compact :: proc(manager: ^Ez_Gfx_Structured_Buffer_Manager) {
-	i := 0
-	for i < manager.count {
-		if manager.buffers[i].buffer.handle != vk.Buffer(0) || manager.buffers[i].live {
-			i += 1
-			continue
-		}
-		for j := i; j + 1 < manager.count; j += 1 {
-			manager.buffers[j] = manager.buffers[j + 1]
-		}
-		manager.count -= 1
-		manager.buffers[manager.count] = {}
-	}
+ez_gfx_structured_buffer_mark_submitted :: proc(
+	buffer: ^Ez_Gfx_Structured_Buffer,
+	timeline_value: u64,
+) {
+	if buffer == nil do return
+	buffer.last_used_timeline = timeline_value
+	buffer.in_use = false
 }
 
 ez_gfx_structured_buffer_destroy :: proc(buffer: ^Ez_Gfx_Structured_Buffer) {
 	ez_gfx_buffer_destroy(&buffer.buffer)
 	buffer.cpu_ptr = nil
+	buffer.capacity = 0
 	buffer.size = 0
-	buffer.live = false
-	buffer.pending_destroy = false
+	buffer.in_use = false
 	buffer.last_write_timeline = 0
+	buffer.last_used_timeline = 0
 	buffer.debug_name = nil
 }
 

@@ -9,21 +9,21 @@ EZ_GFX_MAX_RENDER_PIPELINES :: 16
 UINT64_MAX :: ~u64(0)
 
 Ez_Gfx_Render :: struct {
-	ctx:            ^Ez_Gfx_Ctx,
-	window:         ^Ez_Gfx_Window,
-	frame:          ^Ez_Gfx_Frame_Slot,
-	frame_slot:     u32,
-	image_index:    u32,
-	timeline_end:   u64,
+	ctx:                          ^Ez_Gfx_Ctx,
+	window:                       ^Ez_Gfx_Window,
+	frame:                        ^Ez_Gfx_Frame_Slot,
+	frame_slot:                   u32,
+	image_index:                  u32,
+	timeline_end:                 u64,
 	texture_upload_wait_timeline: u64,
-	vertex_upload_wait_timeline: u64,
-	graph:                      Ez_Gfx_Render_Graph,
-	pipeline_count:             int,
-	structured_bindings:        [EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS]Ez_Gfx_Render_Structured_Binding,
-	structured_binding_count:   int,
-	structured_binding_version: u64,
-	active:         bool,
-	ready:          bool,
+	vertex_upload_wait_timeline:  u64,
+	graph:                        Ez_Gfx_Render_Graph,
+	pipeline_count:               int,
+	structured_bindings:          [EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS]Ez_Gfx_Render_Structured_Binding,
+	structured_binding_count:     int,
+	structured_binding_version:   u64,
+	active:                       bool,
+	ready:                        bool,
 }
 
 @(thread_local)
@@ -57,8 +57,9 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 		render.active = false
 		return false
 	}
-	render.texture_upload_wait_timeline =
-		ez_gfx_texture_manager_latest_scheduled_timeline(&ctx.texture_manager)
+	render.texture_upload_wait_timeline = ez_gfx_texture_manager_latest_scheduled_timeline(
+		&ctx.texture_manager,
+	)
 	if !ez_gfx_texture_manager_wait_submitted_timeline(
 		&ctx.texture_manager,
 		render.texture_upload_wait_timeline,
@@ -66,8 +67,9 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 		render.active = false
 		return false
 	}
-	render.vertex_upload_wait_timeline =
-		ez_gfx_vertex_manager_latest_scheduled_timeline(&ctx.vertex_manager)
+	render.vertex_upload_wait_timeline = ez_gfx_vertex_manager_latest_scheduled_timeline(
+		&ctx.vertex_manager,
+	)
 	if !ez_gfx_vertex_manager_wait_submitted_timeline(
 		&ctx.vertex_manager,
 		render.vertex_upload_wait_timeline,
@@ -78,7 +80,7 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 	ez_gfx_texture_manager_collect_destroyed(&ctx.texture_manager, ctx)
 	ez_gfx_vertex_manager_collect_completed(&ctx.vertex_manager)
 	ez_gfx_indirect_buffer_manager_release_completed(&ctx.indirect_manager)
-	ez_gfx_structured_buffer_manager_collect_completed(&ctx.structured_buffer_manager)
+	ez_gfx_structured_buffer_manager_release_completed(&ctx.structured_buffer_manager)
 
 	acquire_result := vk.AcquireNextImageKHR(
 		ctx.device,
@@ -141,7 +143,7 @@ ez_gfx_render_acquire_indirect_buffer :: proc(
 	return Ez_Gfx_Vertex_Pipeline_Descriptor {
 		indirect_buffer = indirect,
 		indirect_stride = indirect_stride,
-		ok              = true,
+		ok = true,
 	}
 }
 
@@ -150,7 +152,13 @@ ez_gfx_render_add_vertex_pipeline_without_push_constants :: proc(
 	indirect_stride: vk.DeviceSize,
 	indirect_capacity: u32,
 ) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
-	return ez_gfx_render_add_vertex_pipeline_impl(shader, indirect_stride, indirect_capacity, nil, 0)
+	return ez_gfx_render_add_vertex_pipeline_impl(
+		shader,
+		indirect_stride,
+		indirect_capacity,
+		nil,
+		0,
+	)
 }
 
 ez_gfx_render_add_vertex_pipeline_with_push_constants :: proc(
@@ -212,7 +220,8 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 	)
 	if !pipeline_ok do return {}
 	frame_index := int(render.frame_slot)
-	if pipeline.descriptor_versions[frame_index] != ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
+	if pipeline.descriptor_versions[frame_index] !=
+	   ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
 		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot) {
 			return {}
 		}
@@ -282,7 +291,9 @@ ez_gfx_render_add_vertex_pipeline_with_indirect_impl :: proc(
 		return {}
 	}
 	if !render.active || !render.ready {
-		fmt.eprintln("ez_gfx_render_add_vertex_pipeline_with_indirect called without an active render")
+		fmt.eprintln(
+			"ez_gfx_render_add_vertex_pipeline_with_indirect called without an active render",
+		)
 		return {}
 	}
 	if render.pipeline_count >= EZ_GFX_MAX_RENDER_PIPELINES {
@@ -311,7 +322,8 @@ ez_gfx_render_add_vertex_pipeline_with_indirect_impl :: proc(
 	)
 	if !pipeline_ok do return {}
 	frame_index := int(render.frame_slot)
-	if pipeline.descriptor_versions[frame_index] != ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
+	if pipeline.descriptor_versions[frame_index] !=
+	   ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
 		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot) {
 			return {}
 		}
@@ -341,7 +353,14 @@ ez_gfx_render_add_compute_pipeline_without_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	dispatch_x, dispatch_y, dispatch_z: u32,
 ) -> Ez_Gfx_Compute_Pipeline_Descriptor {
-	return ez_gfx_render_add_compute_pipeline_impl(shader, dispatch_x, dispatch_y, dispatch_z, nil, 0)
+	return ez_gfx_render_add_compute_pipeline_impl(
+		shader,
+		dispatch_x,
+		dispatch_y,
+		dispatch_z,
+		nil,
+		0,
+	)
 }
 
 ez_gfx_render_add_compute_pipeline_with_push_constants :: proc(
@@ -388,10 +407,14 @@ ez_gfx_render_add_compute_pipeline_impl :: proc(
 		return {}
 	}
 
-	pipeline, pipeline_ok := ez_gfx_compute_pipeline_manager_get(&render.ctx.pipeline_manager, shader)
+	pipeline, pipeline_ok := ez_gfx_compute_pipeline_manager_get(
+		&render.ctx.pipeline_manager,
+		shader,
+	)
 	if !pipeline_ok do return {}
 	frame_index := int(render.frame_slot)
-	if pipeline.descriptor_versions[frame_index] != ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
+	if pipeline.descriptor_versions[frame_index] !=
+	   ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
 		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot) {
 			return {}
 		}

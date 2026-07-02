@@ -60,11 +60,9 @@
 
 - Add compute shader support. The public render API, linked Slang program creation, pipeline creation, and command recording paths are still graphics-only and bind `.GRAPHICS` pipelines.
 
-- Structured-buffer manager compaction (`ez_gfx_structured_buffer_manager_compact`) shifts array entries, invalidating `^Ez_Gfx_Structured_Buffer` pointers held by an active render's bindings and render-graph accesses. Calling `ez_gfx_allocate_structured_buffer` or `ez_gfx_deallocate_structured_buffer` between `ez_gfx_begin_render` and `ez_gfx_finish_render` can corrupt `last_write_timeline` tracking. Replace raw pointers with stable handles (slot indices plus generation counters).
+- Refactor structured-buffer and indirect-buffer binding to pipelines. Split buffer lifetime from pipeline binding: introduce a shared acquire API for structured buffers and indirect buffers so the same acquired buffer can be reused across different pipelines in one frame. When adding a pipeline to a render, require explicit per-name binding parameters for every structured buffer and indirect buffer the shader expects; do not infer bindings from earlier render calls. Validate at render submit that every required buffer is bound and that each binding matches the expected size/capacity. Add a parallel render-target API: a describe call that takes a debug label and size and returns a render-target ID, plus explicit per-pipeline binding of those IDs with the same submit-time validation.
 
-- Descriptor sets are per frame slot, not per graph node: adding the same shader twice in one render with different structured-buffer bindings silently makes all nodes use the last-written bindings because updates happen at add-time while recording happens at finish. Add per-node descriptor sets or fail loudly when duplicate shader nodes reuse the same frame slot.
-
-- No CPU/GPU synchronization for persistently mapped structured buffers: a single mapped pointer lets CPU writes race in-flight GPU reads from previous frames. Add per-frame-in-flight buffering or document and enforce an explicit sync contract.
+- Add eviction or bucket trimming for the structured-buffer pool. Per-frame structured buffers are reused safely by timeline, but a one-off large acquire keeps its allocation until context destroy.
 
 - Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
 

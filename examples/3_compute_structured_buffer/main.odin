@@ -6,6 +6,7 @@ import shared "../shared"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
@@ -41,27 +42,27 @@ Draw_Push_Constants :: struct {
 }
 
 Loaded_Mesh :: struct {
-	positions:    [dynamic][4]f32,
-	normals:      [dynamic][4]f32,
-	indices:      [dynamic]u32,
-	descriptors:  [dynamic]Mesh_Descriptor,
-	instances:    [dynamic]Mesh_Instance,
-	mesh_count:   u32,
+	positions:   [dynamic][4]f32,
+	normals:     [dynamic][4]f32,
+	indices:     [dynamic]u32,
+	descriptors: [dynamic]Mesh_Descriptor,
+	instances:   [dynamic]Mesh_Instance,
+	mesh_count:  u32,
 }
 
 App :: struct {
-	ctx:                  gfx.Ez_Gfx_Ctx,
-	windows:              [gfx.MAX_WINDOWS]gfx.Ez_Gfx_Window,
-	window_count:         int,
-	compute_shader:       gfx.Ez_Gfx_Shader_Program,
-	draw_shader:          gfx.Ez_Gfx_Shader_Program,
+	ctx:                   gfx.Ez_Gfx_Ctx,
+	windows:               [gfx.MAX_WINDOWS]gfx.Ez_Gfx_Window,
+	window_count:          int,
+	compute_shader:        gfx.Ez_Gfx_Shader_Program,
+	draw_shader:           gfx.Ez_Gfx_Shader_Program,
 	compute_shader_loaded: bool,
 	draw_shader_loaded:    bool,
-	mesh_descriptors_ptr: rawptr,
-	mesh_instances_ptr:   rawptr,
-	mesh_count:           u32,
-	camera:               shared.Orbit_Camera,
-	input:                shared.Example_Input,
+	mesh_descriptors:      []Mesh_Descriptor,
+	mesh_instances:        []Mesh_Instance,
+	mesh_count:            u32,
+	camera:                shared.Orbit_Camera,
+	input:                 shared.Example_Input,
 }
 
 main :: proc() {
@@ -165,7 +166,10 @@ example_init :: proc(app: ^App) -> bool {
 		return false
 	}
 
-	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(&app.ctx.vertex_manager, mesh.indices[:])
+	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
+		&app.ctx.vertex_manager,
+		mesh.indices[:],
+	)
 	if !index_ok do return false
 
 	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
@@ -187,25 +191,18 @@ example_init :: proc(app: ^App) -> bool {
 	}
 	app.mesh_count = mesh.mesh_count
 
-	app.mesh_descriptors_ptr = gfx.ez_gfx_allocate_structured_buffer(
-		vk.DeviceSize(len(mesh.descriptors) * size_of(Mesh_Descriptor)),
-		"example 3 mesh descriptors",
+	app.mesh_descriptors = make([]Mesh_Descriptor, len(mesh.descriptors))
+	mem.copy(
+		raw_data(app.mesh_descriptors),
+		raw_data(mesh.descriptors[:]),
+		len(mesh.descriptors) * size_of(Mesh_Descriptor),
 	)
-	if app.mesh_descriptors_ptr == nil do return false
-	descriptors := cast([^]Mesh_Descriptor)app.mesh_descriptors_ptr
-	for descriptor, i in mesh.descriptors {
-		descriptors[i] = descriptor
-	}
-
-	app.mesh_instances_ptr = gfx.ez_gfx_allocate_structured_buffer(
-		vk.DeviceSize(len(mesh.instances) * size_of(Mesh_Instance)),
-		"example 3 mesh instances",
+	app.mesh_instances = make([]Mesh_Instance, len(mesh.instances))
+	mem.copy(
+		raw_data(app.mesh_instances),
+		raw_data(mesh.instances[:]),
+		len(mesh.instances) * size_of(Mesh_Instance),
 	)
-	if app.mesh_instances_ptr == nil do return false
-	instances := cast([^]Mesh_Instance)app.mesh_instances_ptr
-	for instance, i in mesh.instances {
-		instances[i] = instance
-	}
 	return true
 }
 
@@ -313,15 +310,18 @@ append_gltf_mesh :: proc(
 		}
 
 		mesh_index := u32(len(mesh.descriptors))
-		append(&mesh.descriptors, Mesh_Descriptor {
-			index_count   = index_count,
-			first_index   = first_index,
-			vertex_offset = 0,
-		})
-		append(&mesh.instances, Mesh_Instance {
-			mesh_index = mesh_index,
-			color      = example_color(mesh_index),
-		})
+		append(
+			&mesh.descriptors,
+			Mesh_Descriptor {
+				index_count = index_count,
+				first_index = first_index,
+				vertex_offset = 0,
+			},
+		)
+		append(
+			&mesh.instances,
+			Mesh_Instance{mesh_index = mesh_index, color = example_color(mesh_index)},
+		)
 	}
 	return true
 }
@@ -331,7 +331,10 @@ append_gltf_positions :: proc(
 	accessor_index: gltf.Integer,
 	transform: shared.Mat4,
 	positions: ^[dynamic][4]f32,
-) -> (count: u32, ok: bool) {
+) -> (
+	count: u32,
+	ok: bool,
+) {
 	accessor := data.accessors[accessor_index]
 	if accessor.component_type != .Float || accessor.type != .Vector3 {
 		fmt.eprintln("example 3 only supports f32 vec3 positions")
@@ -358,7 +361,9 @@ append_gltf_normals :: proc(
 	if !normal_ok do return false
 
 	accessor := data.accessors[normal_accessor]
-	if accessor.component_type != .Float || accessor.type != .Vector3 || accessor.count != position_count {
+	if accessor.component_type != .Float ||
+	   accessor.type != .Vector3 ||
+	   accessor.count != position_count {
 		return false
 	}
 	view, view_ok := shared.gltf_accessor_view(data, normal_accessor)
@@ -371,11 +376,7 @@ append_gltf_normals :: proc(
 	return true
 }
 
-append_default_normals :: proc(
-	count: u32,
-	transform: shared.Mat4,
-	normals: ^[dynamic][4]f32,
-) {
+append_default_normals :: proc(count: u32, transform: shared.Mat4, normals: ^[dynamic][4]f32) {
 	normal := transform_normal(transform, {0.0, 1.0, 0.0, 0.0})
 	for _ in 0 ..< int(count) {
 		append(normals, normal)
@@ -384,19 +385,17 @@ append_default_normals :: proc(
 
 gltf_node_matrix :: proc(node: gltf.Node) -> shared.Mat4 {
 	base := gltf_matrix_to_mat4(node.mat)
-	trs := shared.mat4_from_linalg(linalg.matrix4_from_trs(
-		linalg.Vector3f32 {
-			f32(node.translation.x),
-			f32(node.translation.y),
-			f32(node.translation.z),
-		},
-		gltf_quaternion_to_linalg(node.rotation),
-		linalg.Vector3f32 {
-			f32(node.scale.x),
-			f32(node.scale.y),
-			f32(node.scale.z),
-		},
-	))
+	trs := shared.mat4_from_linalg(
+		linalg.matrix4_from_trs(
+			linalg.Vector3f32 {
+				f32(node.translation.x),
+				f32(node.translation.y),
+				f32(node.translation.z),
+			},
+			gltf_quaternion_to_linalg(node.rotation),
+			linalg.Vector3f32{f32(node.scale.x), f32(node.scale.y), f32(node.scale.z)},
+		),
+	)
 	return shared.mat4_mul(base, trs)
 }
 
@@ -506,9 +505,35 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		return
 	}
 
-	if !gfx.ez_gfx_render_add_structured_buffer("mesh_descriptors", app.mesh_descriptors_ptr) ||
-	   !gfx.ez_gfx_render_add_structured_buffer("mesh_instances", app.mesh_instances_ptr) ||
-	   !gfx.ez_gfx_render_add_indirect_structured_buffer("draw_commands", &indirect) {
+	descriptor_bytes := vk.DeviceSize(len(app.mesh_descriptors) * size_of(Mesh_Descriptor))
+	mesh_descriptors_ptr := gfx.ez_gfx_render_acquire_structured_buffer(
+		"mesh_descriptors",
+		descriptor_bytes,
+	)
+	if mesh_descriptors_ptr == nil {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	mesh_descriptors := cast([^]Mesh_Descriptor)mesh_descriptors_ptr
+	for descriptor, i in app.mesh_descriptors {
+		mesh_descriptors[i] = descriptor
+	}
+
+	instance_bytes := vk.DeviceSize(len(app.mesh_instances) * size_of(Mesh_Instance))
+	mesh_instances_ptr := gfx.ez_gfx_render_acquire_structured_buffer(
+		"mesh_instances",
+		instance_bytes,
+	)
+	if mesh_instances_ptr == nil {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	mesh_instances := cast([^]Mesh_Instance)mesh_instances_ptr
+	for instance, i in app.mesh_instances {
+		mesh_instances[i] = instance
+	}
+
+	if !gfx.ez_gfx_render_add_indirect_structured_buffer("draw_commands", &indirect) {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
@@ -538,7 +563,11 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	draw_push := Draw_Push_Constants {
 		mvp = shared.mat4_mul(projection, view),
 	}
-	draw := gfx.ez_gfx_render_add_vertex_pipeline_with_indirect(&app.draw_shader, &indirect, draw_push)
+	draw := gfx.ez_gfx_render_add_vertex_pipeline_with_indirect(
+		&app.draw_shader,
+		&indirect,
+		draw_push,
+	)
 	if !draw.ok {
 		_ = gfx.ez_gfx_finish_render()
 		return
@@ -550,13 +579,13 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 cleanup :: proc(app: ^App) {
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	gfx.ez_gfx_ctx_wait_idle()
-	if app.mesh_instances_ptr != nil {
-		_ = gfx.ez_gfx_deallocate_structured_buffer(app.mesh_instances_ptr)
-		app.mesh_instances_ptr = nil
+	if app.mesh_instances != nil {
+		delete(app.mesh_instances)
+		app.mesh_instances = nil
 	}
-	if app.mesh_descriptors_ptr != nil {
-		_ = gfx.ez_gfx_deallocate_structured_buffer(app.mesh_descriptors_ptr)
-		app.mesh_descriptors_ptr = nil
+	if app.mesh_descriptors != nil {
+		delete(app.mesh_descriptors)
+		app.mesh_descriptors = nil
 	}
 	if app.compute_shader_loaded {
 		gfx.ez_gfx_shader_destroy(&app.compute_shader)

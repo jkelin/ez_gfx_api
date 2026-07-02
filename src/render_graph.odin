@@ -27,12 +27,12 @@ Ez_Gfx_Render_Graph_Access :: struct {
 	resource_kind:          Ez_Gfx_Render_Graph_Resource_Kind,
 	target_kind:            Ez_Gfx_Render_Target_Kind,
 	target:                 ^Ez_Gfx_Render_Target_Texture,
-	structured_binding:         ^Ez_Gfx_Render_Structured_Binding,
-	sampled_read:               bool,
-	storage_read:               bool,
-	storage_write:              bool,
-	structured_read:            bool,
-	structured_write:           bool,
+	structured_binding:     ^Ez_Gfx_Render_Structured_Binding,
+	sampled_read:           bool,
+	storage_read:           bool,
+	storage_write:          bool,
+	structured_read:        bool,
+	structured_write:       bool,
 	color_write:            bool,
 	depth_write:            bool,
 	color_attachment_index: u32,
@@ -138,7 +138,9 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 				declaration.name_len,
 			)
 			if target == nil {
-				fmt.eprintln("shader storage target declaration was not acquired before graph construction")
+				fmt.eprintln(
+					"shader storage target declaration was not acquired before graph construction",
+				)
 				return false
 			}
 			if !ez_gfx_render_graph_node_add_managed_storage_access(node, declaration, target) {
@@ -224,7 +226,8 @@ ez_gfx_render_graph_node_add_structured_buffers :: proc(
 		access.resource_kind = .Structured_Buffer
 		access.structured_binding = render_binding
 		access.structured_read = binding_info.access == .Read || binding_info.access == .Read_Write
-		access.structured_write = binding_info.access == .Write || binding_info.access == .Read_Write
+		access.structured_write =
+			binding_info.access == .Write || binding_info.access == .Read_Write
 	}
 	return true
 }
@@ -511,8 +514,19 @@ ez_gfx_render_graph_prepare_structured_buffers :: proc(
 
 		barriers[barrier_count] = vk.BufferMemoryBarrier2 {
 			sType               = .BUFFER_MEMORY_BARRIER_2,
-			srcStageMask        = {.HOST, .COMPUTE_SHADER, .VERTEX_SHADER, .FRAGMENT_SHADER, .DRAW_INDIRECT},
-			srcAccessMask       = {.HOST_WRITE, .SHADER_STORAGE_WRITE, .SHADER_STORAGE_READ, .INDIRECT_COMMAND_READ},
+			srcStageMask        = {
+				.HOST,
+				.COMPUTE_SHADER,
+				.VERTEX_SHADER,
+				.FRAGMENT_SHADER,
+				.DRAW_INDIRECT,
+			},
+			srcAccessMask       = {
+				.HOST_WRITE,
+				.SHADER_STORAGE_WRITE,
+				.SHADER_STORAGE_READ,
+				.INDIRECT_COMMAND_READ,
+			},
 			dstStageMask        = ez_gfx_render_graph_node_shader_stage(node),
 			dstAccessMask       = dst_access,
 			srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
@@ -570,7 +584,9 @@ ez_gfx_render_graph_node_wait_value :: proc(node: ^Ez_Gfx_Render_Graph_Node) -> 
 	wait_value: u64
 	for i in 0 ..< node.access_count {
 		access := &node.accesses[i]
-		if access.resource_kind == .Managed && access.target != nil && access.target.last_write_timeline > wait_value {
+		if access.resource_kind == .Managed &&
+		   access.target != nil &&
+		   access.target.last_write_timeline > wait_value {
 			wait_value = access.target.last_write_timeline
 		}
 		if access.resource_kind == .Structured_Buffer && access.structured_binding != nil {
@@ -740,7 +756,12 @@ ez_gfx_render_graph_execute_compute_node :: proc(
 			&descriptor.push_constant_data[0],
 		)
 	}
-	vk.CmdDispatch(command_buffer, descriptor.dispatch_x, descriptor.dispatch_y, descriptor.dispatch_z)
+	vk.CmdDispatch(
+		command_buffer,
+		descriptor.dispatch_x,
+		descriptor.dispatch_y,
+		descriptor.dispatch_z,
+	)
 	return true
 }
 
@@ -934,15 +955,23 @@ ez_gfx_render_graph_mark_node_writes_submitted :: proc(
 		if access.color_write && access.resource_kind == .Swapchain {
 			swapchain.last_write_timeline[render.image_index] = timeline_value
 		}
-		if access.resource_kind == .Managed && (access.color_write || access.depth_write || access.storage_write) {
+		if access.resource_kind == .Managed &&
+		   (access.color_write || access.depth_write || access.storage_write) {
 			access.target.initialized = true
 			access.target.last_write_timeline = timeline_value
 		}
-		if access.resource_kind == .Structured_Buffer && access.structured_write && access.structured_binding != nil {
+		if access.resource_kind == .Structured_Buffer && access.structured_binding != nil {
 			if access.structured_binding.structured_buffer != nil {
-				access.structured_binding.structured_buffer.last_write_timeline = timeline_value
+				if access.structured_write {
+					access.structured_binding.structured_buffer.last_write_timeline =
+						timeline_value
+				}
+				ez_gfx_structured_buffer_mark_submitted(
+					access.structured_binding.structured_buffer,
+					timeline_value,
+				)
 			}
-			if access.structured_binding.indirect_buffer != nil {
+			if access.structured_write && access.structured_binding.indirect_buffer != nil {
 				access.structured_binding.indirect_buffer.last_used_timeline = timeline_value
 			}
 		}
@@ -1016,7 +1045,14 @@ ez_gfx_render_graph_execute_empty_present :: proc(render: ^Ez_Gfx_Render) -> boo
 	if render.vertex_upload_wait_timeline > wait_value {
 		wait_value = render.vertex_upload_wait_timeline
 	}
-	if !ez_gfx_render_graph_submit_command(render, command_buffer, wait_value, signal_value, true, true) {
+	if !ez_gfx_render_graph_submit_command(
+		render,
+		command_buffer,
+		wait_value,
+		signal_value,
+		true,
+		true,
+	) {
 		return false
 	}
 	ez_gfx_render_graph_mark_node_writes_submitted(render, &node, signal_value)

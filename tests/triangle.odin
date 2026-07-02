@@ -26,14 +26,14 @@ Validation_Log :: struct {
 }
 
 Triangle_App :: struct {
-	ctx:                gfx.Ez_Gfx_Ctx,
-	window:             gfx.Ez_Gfx_Window,
-	shader:             gfx.Ez_Gfx_Shader_Program,
-	shader_loaded:      bool,
-	triangle_index:     u32,
-	triangle_index_len: u32,
-	triangle_vertex:    u32,
-	validation_log:     Validation_Log,
+	ctx:                     gfx.Ez_Gfx_Ctx,
+	window:                  gfx.Ez_Gfx_Window,
+	shader:                  gfx.Ez_Gfx_Shader_Program,
+	shader_loaded:           bool,
+	triangle_index:          u32,
+	triangle_index_len:      u32,
+	triangle_vertex:         u32,
+	validation_log:          Validation_Log,
 	vertex_upload_callbacks: u64,
 	vertex_upload_errors:    u64,
 }
@@ -142,7 +142,7 @@ resize_after_screenshot_recreates_without_validation_errors :: proc(t: ^testing.
 }
 
 @(test)
-structured_buffer_allocates_binds_and_deallocates_by_pointer :: proc(t: ^testing.T) {
+structured_buffer_acquires_per_frame_and_reuses_pool :: proc(t: ^testing.T) {
 	app: Triangle_App
 	if !testing.expect(t, triangle_init_app(&app), "structured buffer test failed during init") {
 		triangle_cleanup(&app)
@@ -150,25 +150,36 @@ structured_buffer_allocates_binds_and_deallocates_by_pointer :: proc(t: ^testing
 	}
 	defer triangle_cleanup(&app)
 
-	ptr := gfx.ez_gfx_allocate_structured_buffer(64, "test structured buffer")
-	if !testing.expect(t, ptr != nil, "structured buffer allocation failed") {
-		return
-	}
-
-	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "structured buffer test failed to begin render") {
-		_ = gfx.ez_gfx_deallocate_structured_buffer(ptr)
-		return
-	}
 	testing.expect(
 		t,
-		gfx.ez_gfx_render_add_structured_buffer("test_buffer", ptr),
-		"structured buffer bind by shader name failed",
+		gfx.ez_gfx_render_acquire_structured_buffer("test_buffer", 64) == nil,
+		"structured buffer acquire should require an active render",
 	)
-	testing.expect(t, gfx.ez_gfx_finish_render(), "structured buffer test failed to finish render")
 
-	gfx.ez_gfx_ctx_wait_idle()
-	testing.expect(t, gfx.ez_gfx_deallocate_structured_buffer(ptr), "structured buffer deallocation failed")
-	testing.expect(t, !gfx.ez_gfx_deallocate_structured_buffer(ptr), "stale structured pointer should be rejected")
+	for frame in 0 ..< 2 {
+		if !testing.expect(
+			t,
+			gfx.ez_gfx_begin_render(&app.window),
+			"structured buffer test failed to begin render",
+		) {
+			return
+		}
+		ptr := gfx.ez_gfx_render_acquire_structured_buffer("test_buffer", 64)
+		if !testing.expect(t, ptr != nil, "structured buffer acquire failed") {
+			_ = gfx.ez_gfx_finish_render()
+			return
+		}
+		values := cast([^]u32)ptr
+		values[0] = u32(frame)
+		testing.expect(
+			t,
+			gfx.ez_gfx_finish_render(),
+			"structured buffer test failed to finish render",
+		)
+		gfx.ez_gfx_ctx_wait_idle()
+	}
+
+	testing.expect_value(t, app.ctx.structured_buffer_manager.count, 1)
 	testing.expect_value(t, app.validation_log.errors, u32(0))
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }
