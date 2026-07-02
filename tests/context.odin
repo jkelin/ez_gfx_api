@@ -55,3 +55,17 @@ transfer_queue_selector_falls_back_to_graphics_family :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, selected, u32(0))
 }
+
+@(test)
+texture_decode_worker_count_reserves_two_logical_cpus :: proc(t: ^testing.T) {
+	testing.expect_value(t, gfx.ez_gfx_texture_decode_worker_count_from_logical(0), u32(1))
+	testing.expect_value(t, gfx.ez_gfx_texture_decode_worker_count_from_logical(1), u32(1))
+	testing.expect_value(t, gfx.ez_gfx_texture_decode_worker_count_from_logical(2), u32(1))
+	testing.expect_value(t, gfx.ez_gfx_texture_decode_worker_count_from_logical(8), u32(6))
+}
+
+@(test)
+explicit_texture_decode_worker_count_is_preserved :: proc(t: ^testing.T) {
+	testing.expect_value(t, gfx.ez_gfx_ctx_resolve_texture_decode_worker_count(1), u32(1))
+	testing.expect_value(t, gfx.ez_gfx_ctx_resolve_texture_decode_worker_count(7), u32(7))
+}

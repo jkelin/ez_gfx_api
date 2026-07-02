@@ -2,6 +2,7 @@ package tests
 
 import gfx "../src"
 import "core:testing"
+import vk "vendor:vulkan"
 
 @(test)
 texture_full_mip_count_halves_to_one_pixel :: proc(t: ^testing.T) {
@@ -65,6 +66,36 @@ texture_decode_raw_rejects_wrong_byte_count :: proc(t: ^testing.T) {
 	testing.expect_value(t, len(pixels), 0)
 	testing.expect_value(t, width, u32(0))
 	testing.expect_value(t, height, u32(0))
+}
+
+@(test)
+texture_decode_upload_job_reuses_raw_rgba_region :: proc(t: ^testing.T) {
+	data := [?]u8{10, 20, 30, 40}
+	job := texture_test_job(data[:], .RGBA, 1, 1)
+
+	upload := gfx.ez_gfx_texture_decode_upload_job(&job)
+	defer gfx.ez_gfx_texture_upload_job_destroy(&upload)
+
+	testing.expect_value(t, upload.err, gfx.Ez_Gfx_Texture_Error.None)
+	testing.expect_value(t, upload.source, gfx.Ez_Gfx_Texture_Decoded_Source.RGBA)
+	testing.expect(t, !upload.owns_pixels)
+	testing.expect(t, raw_data(upload.pixels) == raw_data(data[:]))
+	testing.expect_value(t, gfx.ez_gfx_texture_staging_size(&upload), vk.DeviceSize(4))
+}
+
+@(test)
+texture_decode_upload_job_keeps_raw_rgb_for_staging_expand :: proc(t: ^testing.T) {
+	data := [?]u8{10, 20, 30, 40, 50, 60}
+	job := texture_test_job(data[:], .RGB, 2, 1)
+
+	upload := gfx.ez_gfx_texture_decode_upload_job(&job)
+	defer gfx.ez_gfx_texture_upload_job_destroy(&upload)
+
+	testing.expect_value(t, upload.err, gfx.Ez_Gfx_Texture_Error.None)
+	testing.expect_value(t, upload.source, gfx.Ez_Gfx_Texture_Decoded_Source.RGB)
+	testing.expect(t, !upload.owns_pixels)
+	testing.expect(t, raw_data(upload.pixels) == raw_data(data[:]))
+	testing.expect_value(t, gfx.ez_gfx_texture_staging_size(&upload), vk.DeviceSize(8))
 }
 
 @(test)

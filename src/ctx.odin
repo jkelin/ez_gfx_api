@@ -7,6 +7,7 @@ import "base:runtime"
 import "core:c"
 import "core:fmt"
 import "core:sync"
+import sysinfo "core:sys/info"
 import "vendor:glfw"
 import vk "vendor:vulkan"
 
@@ -42,6 +43,7 @@ Ez_Gfx_Ctx_Desc :: struct {
 	texture_loaded_user_data: rawptr,
 	vertex_uploaded_callback:  Ez_Gfx_Vertex_Uploaded_Callback,
 	vertex_uploaded_user_data: rawptr,
+	texture_decode_worker_count: u32,
 }
 
 Ez_Gfx_Validation_Counts :: struct {
@@ -96,6 +98,7 @@ Ez_Gfx_Ctx :: struct {
 	texture_loaded_user_data:             rawptr,
 	vertex_uploaded_callback:             Ez_Gfx_Vertex_Uploaded_Callback,
 	vertex_uploaded_user_data:            rawptr,
+	texture_decode_worker_count:          u32,
 	validation_counts:                    Ez_Gfx_Validation_Counts,
 }
 
@@ -111,6 +114,21 @@ ez_gfx_get_current_ctx :: proc() -> ^Ez_Gfx_Ctx {
 		fmt.eprintln("ez_gfx: no current context set")
 	}
 	return ez_gfx_current_ctx
+}
+
+ez_gfx_ctx_resolve_texture_decode_worker_count :: proc(requested: u32) -> u32 {
+	if requested > 0 do return requested
+
+	_, logical, ok := sysinfo.cpu_core_count()
+	if !ok || logical <= 2 {
+		return 1
+	}
+	return ez_gfx_texture_decode_worker_count_from_logical(logical)
+}
+
+ez_gfx_texture_decode_worker_count_from_logical :: proc(logical_cpu_count: int) -> u32 {
+	if logical_cpu_count <= 2 do return 1
+	return u32(logical_cpu_count - 2)
 }
 
 vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
@@ -131,6 +149,8 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 	ctx.texture_loaded_user_data = desc.texture_loaded_user_data
 	ctx.vertex_uploaded_callback = desc.vertex_uploaded_callback
 	ctx.vertex_uploaded_user_data = desc.vertex_uploaded_user_data
+	ctx.texture_decode_worker_count =
+		ez_gfx_ctx_resolve_texture_decode_worker_count(desc.texture_decode_worker_count)
 	ctx.validation_counts = {}
 	ctx.debug_utils_enabled = desc.enable_validation || desc.enable_debug
 	ctx.swapchain_present_mode = .FIFO

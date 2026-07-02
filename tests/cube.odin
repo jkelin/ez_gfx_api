@@ -159,6 +159,7 @@ cube_test_init_app :: proc(app: ^Cube_Test_App) -> bool {
 			validation_callback = validation_callback,
 			validation_user_data = &app.validation_log,
 			enable_debug = true,
+			texture_decode_worker_count = 2,
 		},
 	) {
 		return false

@@ -10,6 +10,7 @@ Ez_Gfx_Buffer :: struct {
 	allocation:      vma.Allocation,
 	allocation_info: vma.Allocation_Info,
 	size:            vk.DeviceSize,
+	mapped_data:     rawptr,
 }
 
 ez_gfx_buffer_create :: proc(
@@ -18,6 +19,7 @@ ez_gfx_buffer_create :: proc(
 	properties: vk.MemoryPropertyFlags,
 	debug_name: cstring = nil,
 	memory_priority: f32 = 0.5,
+	persistently_mapped: bool = false,
 ) -> (
 	buffer: Ez_Gfx_Buffer,
 	ok: bool,
@@ -43,6 +45,8 @@ ez_gfx_buffer_create :: proc(
 	}
 	if (properties & {.HOST_VISIBLE}) == {} {
 		alloc_info.flags = {}
+	} else if persistently_mapped {
+		alloc_info.flags |= {.Mapped}
 	}
 	result := vma.create_buffer(
 		ctx.vma_allocator,
@@ -68,6 +72,7 @@ ez_gfx_buffer_create :: proc(
 	}
 
 	buffer.size = size
+	buffer.mapped_data = buffer.allocation_info.mapped_data
 	return buffer, true
 }
 
@@ -84,6 +89,12 @@ ez_gfx_buffer_write_at :: proc(buffer: ^Ez_Gfx_Buffer, offset: vk.DeviceSize, da
 	if offset + vk.DeviceSize(byte_size) > buffer.size {
 		fmt.eprintln("buffer write exceeds allocation size")
 		return false
+	}
+
+	if buffer.mapped_data != nil {
+		mapped_bytes := ([^]u8)(buffer.mapped_data)
+		mem.copy(&mapped_bytes[int(offset)], raw_data(data), byte_size)
+		return true
 	}
 
 	mapped: rawptr
@@ -133,4 +144,5 @@ ez_gfx_buffer_destroy :: proc(buffer: ^Ez_Gfx_Buffer) {
 	}
 	buffer.allocation_info = {}
 	buffer.size = 0
+	buffer.mapped_data = nil
 }
