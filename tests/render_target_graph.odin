@@ -61,11 +61,35 @@ load_target_preserves_previous_frame_without_validation_errors :: proc(t: ^testi
 	if !testing.expect(t, render_target_graph_run_frame(&app, 0, 1)) {
 		return
 	}
-	if !testing.expect(t, render_target_graph_run_frame(&app, 1, 1)) {
+	if !testing.expect(t, render_target_graph_run_snapshot_frames(&app, 1, 1)) {
 		return
 	}
 
 	gfx.ez_gfx_ctx_wait_idle()
+	expect_window_snapshot(t, &app.window, "load_target_history")
+	testing.expect_value(t, app.validation_log.errors, u32(0))
+	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+}
+
+@(test)
+managed_rwtexture_store_load_matches_snapshot :: proc(t: ^testing.T) {
+	shader_paths := [?]cstring{"tests/rt_storage_write.slang", "tests/rt_storage_read.slang"}
+	app: Render_Target_Graph_App
+	if !testing.expect(
+		t,
+		render_target_graph_init_app(&app, cstring("ez_gfx_api managed rwtexture"), shader_paths[:]),
+	) {
+		render_target_graph_cleanup(&app)
+		return
+	}
+	defer render_target_graph_cleanup(&app)
+
+	if !testing.expect(t, render_target_graph_run_snapshot_frames(&app, 0, len(shader_paths))) {
+		return
+	}
+
+	gfx.ez_gfx_ctx_wait_idle()
+	expect_window_snapshot(t, &app.window, "managed_rwtexture_store_load")
 	testing.expect_value(t, app.validation_log.errors, u32(0))
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }
@@ -168,6 +192,22 @@ render_target_graph_run_frame :: proc(
 		}
 	}
 	return false
+}
+
+render_target_graph_run_snapshot_frames :: proc(
+	app: ^Render_Target_Graph_App,
+	shader_start: int,
+	shader_count: int,
+) -> bool {
+	frames_drawn := 0
+	target_frames := max(1, int(app.window.swapchain.image_count) + 1)
+	for frames_drawn < target_frames {
+		if !render_target_graph_run_frame(app, shader_start, shader_count) {
+			return false
+		}
+		frames_drawn += 1
+	}
+	return true
 }
 
 render_target_graph_draw_frame :: proc(

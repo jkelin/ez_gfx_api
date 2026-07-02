@@ -87,7 +87,8 @@ cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 
 	frames_drawn := 0
 	attempts := 0
-	for frames_drawn < CUBE_TEST_FRAMES && attempts < 60 {
+	target_frames := max(CUBE_TEST_FRAMES, int(app.window.swapchain.image_count) + 1)
+	for frames_drawn < target_frames && attempts < 60 {
 		attempts += 1
 		gfx.ez_gfx_window_poll_events()
 		if gfx.ez_gfx_window_should_close(&app.window) do return
@@ -95,11 +96,12 @@ cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 			frames_drawn += 1
 		}
 	}
-	if !testing.expect_value(t, frames_drawn, CUBE_TEST_FRAMES) {
+	if !testing.expect_value(t, frames_drawn, target_frames) {
 		return
 	}
 
 	gfx.ez_gfx_ctx_wait_idle()
+	expect_window_snapshot(t, &app.window, "cube")
 	testing.expect_value(t, app.validation_log.errors, u32(0))
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }

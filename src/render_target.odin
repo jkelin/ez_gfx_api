@@ -326,6 +326,20 @@ ez_gfx_render_target_transition_for_sampled_read :: proc(
 	)
 }
 
+ez_gfx_render_target_transition_for_storage_access :: proc(
+	target: ^Ez_Gfx_Render_Target_Texture,
+	command_buffer: vk.CommandBuffer,
+) {
+	ez_gfx_render_target_transition(
+		target,
+		command_buffer,
+		.GENERAL,
+		{.SHADER_SAMPLED_READ, .SHADER_STORAGE_READ, .SHADER_STORAGE_WRITE},
+		{.VERTEX_SHADER, .FRAGMENT_SHADER},
+	)
+	target.initialized = true
+}
+
 ez_gfx_render_target_transition_for_color_attachment :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,

@@ -19,6 +19,8 @@ Ez_Gfx_Render_Graph_Access :: struct {
 	target_kind:            Ez_Gfx_Render_Target_Kind,
 	target:                 ^Ez_Gfx_Render_Target_Texture,
 	sampled_read:           bool,
+	storage_read:           bool,
+	storage_write:          bool,
 	color_write:            bool,
 	depth_write:            bool,
 	color_attachment_index: u32,
@@ -113,6 +115,21 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 
 	for i in 0 ..< shader.target_declaration_count {
 		declaration := &shader.target_declarations[i]
+		if declaration.storage {
+			target := ez_gfx_render_target_manager_find(
+				target_manager,
+				declaration.name[:],
+				declaration.name_len,
+			)
+			if target == nil {
+				fmt.eprintln("shader storage target declaration was not acquired before graph construction")
+				return false
+			}
+			if !ez_gfx_render_graph_node_add_managed_storage_access(node, declaration, target) {
+				return false
+			}
+			continue
+		}
 		if ez_gfx_render_graph_node_writes_name(node, declaration.name[:], declaration.name_len) {
 			continue
 		}
@@ -224,6 +241,23 @@ ez_gfx_render_graph_node_add_managed_sampled_read :: proc(
 	return true
 }
 
+ez_gfx_render_graph_node_add_managed_storage_access :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	declaration: ^Ez_Gfx_Shader_Target_Declaration,
+	target: ^Ez_Gfx_Render_Target_Texture,
+) -> bool {
+	access, ok := ez_gfx_render_graph_node_next_access(node)
+	if !ok do return false
+	access.name = declaration.name
+	access.name_len = declaration.name_len
+	access.resource_kind = .Managed
+	access.target_kind = declaration.kind
+	access.target = target
+	access.storage_read = true
+	access.storage_write = true
+	return true
+}
+
 ez_gfx_render_graph_node_next_access :: proc(
 	node: ^Ez_Gfx_Render_Graph_Node,
 ) -> (
@@ -285,6 +319,9 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 		if !ez_gfx_render_graph_prepare_sampled_reads(render, node, command_buffer) {
 			return false
 		}
+		if !ez_gfx_render_graph_prepare_storage_accesses(render, node, command_buffer) {
+			return false
+		}
 		if !ez_gfx_render_graph_execute_node(render, node, command_buffer) {
 			return false
 		}
@@ -331,6 +368,24 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 	return true
 }
 
+ez_gfx_render_graph_prepare_storage_accesses :: proc(
+	render: ^Ez_Gfx_Render,
+	node: ^Ez_Gfx_Render_Graph_Node,
+	command_buffer: vk.CommandBuffer,
+) -> bool {
+	_ = render
+	for i in 0 ..< node.access_count {
+		access := &node.accesses[i]
+		if !(access.storage_read || access.storage_write) do continue
+		if access.target == nil {
+			fmt.eprintln("render graph storage access is missing a target")
+			return false
+		}
+		ez_gfx_render_target_transition_for_storage_access(access.target, command_buffer)
+	}
+	return true
+}
+
 ez_gfx_render_graph_prepare_sampled_reads :: proc(
 	render: ^Ez_Gfx_Render,
 	node: ^Ez_Gfx_Render_Graph_Node,
@@ -369,7 +424,7 @@ ez_gfx_render_graph_transition_future_reads :: proc(
 	for i in 0 ..< node.access_count {
 		access := &node.accesses[i]
 		if access.resource_kind != .Managed || access.target == nil do continue
-		if !(access.color_write || access.depth_write) do continue
+		if !(access.color_write || access.depth_write || access.storage_write) do continue
 		if ez_gfx_render_graph_has_future_sampled_read(
 			&render.graph,
 			node_index + 1,
@@ -648,6 +703,9 @@ ez_gfx_render_graph_mark_node_writes_initialized :: proc(
 		if access.resource_kind == .Managed && (access.color_write || access.depth_write) {
 			access.target.initialized = true
 		}
+		if access.resource_kind == .Managed && access.storage_write {
+			access.target.initialized = true
+		}
 	}
 }
 
@@ -662,7 +720,7 @@ ez_gfx_render_graph_mark_node_writes_submitted :: proc(
 		if access.color_write && access.resource_kind == .Swapchain {
 			swapchain.last_write_timeline[render.image_index] = timeline_value
 		}
-		if access.resource_kind == .Managed && (access.color_write || access.depth_write) {
+		if access.resource_kind == .Managed && (access.color_write || access.depth_write || access.storage_write) {
 			access.target.initialized = true
 			access.target.last_write_timeline = timeline_value
 		}

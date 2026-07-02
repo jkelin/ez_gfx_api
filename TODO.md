@@ -4,15 +4,15 @@
 
 - Expand the pipeline cache key to include topology, blend, and rasterization options instead of only shader identity, color formats, and depth format. The current Vulkan pipeline state is hardcoded, so this is not a live bug yet, but the cache will return incompatible pipelines as soon as those states become configurable.
 
-- Support arbitrary sampled and writable access to render targets. The renderer supports attachment writes and declaration-based sampled reads, but rejects feedback/read-write color targets and lacks storage-image write semantics, swapchain reads, and general hazard handling.
+- Support arbitrary sampled and writable access to managed render targets. The renderer supports attachment writes, declaration-based sampled reads, and managed storage-image writes, but still rejects attachment feedback/read-write color targets and lacks a fully general hazard model. The swapchain is intentionally shader write-only through `ColorTarget("swapchain", "write")`; shader reads from the swapchain are not supported.
 
-- Add explicit storage-image render target semantics when shaders need writable image resources outside attachment writes. Color render targets have `STORAGE` image usage and general-layout transitions, but descriptors are still combined image samplers rather than storage-image bindings.
+- Expand explicit storage-image render target semantics beyond the first managed `RWTexture2D` path. Color render targets can now be bound as storage images, but the graph still treats storage declarations as conservative read/write accesses and needs richer per-stage/per-access hazard metadata.
 
 - Document and enforce that explicit target attributes are the source of truth for engine render target intent, even when shader resource reflection changes due to compiler optimization. Declarations currently drive lifetime/format/load behavior, but graph scheduling still mixes declaration-derived reads with reflected color/depth writes.
 
-- Decide and document the supported semantics for reading from `swapchain`. Shader reads from `swapchain` are currently rejected, while screenshots use transfer-source usage; if shader reads are intentionally unsupported, document that policy, otherwise add usage flags, layout transitions, format checks, and synchronization.
+- Document the swapchain shader policy in public-facing docs: `swapchain` is a presentation target and is shader write-only. Readback remains available through transfer-based screenshots, not shader resource reads.
 
-- Add render target pixel readback tests so multi-frame `LoadTarget` behavior can assert preserved contents, not only Vulkan validation cleanliness. The current history test exercises two frames without validation errors but does not read pixels back to prove the previous frame's color was loaded.
+- Add broader render target pixel snapshot coverage for more graph shapes. `LoadTarget` history and managed storage-image store/load now have snapshot tests, but fork/join and scaled-target render areas still need pixel assertions.
 
 - Choose depth/stencil formats from device-supported candidates and prefer D24/D16 where the extra D32 precision is not required. Depth target parsing currently maps `d32_float` to a hardcoded `D24_UNORM_S8_UINT`, and the renderer still does not query `vkGetPhysicalDeviceFormatProperties` before choosing depth formats.
 

@@ -29,6 +29,15 @@ color_history_read_reflects_metadata :: proc(t: ^testing.T) {
 }
 
 @(test)
+managed_rwtexture_reflects_as_target_declaration :: proc(t: ^testing.T) {
+	program, ok := reflect_shader(t, "tests/rt_storage_write.slang")
+	if !ok do return
+	testing.expect_value(t, program.target_usage_count, 1)
+	testing.expect_value(t, program.target_declaration_count, 1)
+	testing.expect(t, program.target_declarations[0].storage)
+}
+
+@(test)
 load_target_reflects_metadata :: proc(t: ^testing.T) {
 	program, ok := reflect_shader(t, "tests/load_target.slang")
 	if !ok do return

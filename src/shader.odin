@@ -64,6 +64,7 @@ Ez_Gfx_Shader_Target_Declaration :: struct {
 	format:              vk.Format,
 	binding:             u32,
 	set:                 u32,
+	storage:             bool,
 	load_on_frame_begin: bool,
 }
 
@@ -873,8 +874,15 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 		) {
 			return false
 		}
+		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
+		declaration.storage = ez_gfx_shader_target_declaration_is_storage(field_type_layout)
+		if declaration.storage && declaration.kind != .Color {
+			fmt.eprintln("RW render targets currently support color targets only")
+			return false
+		}
 		declaration.binding = sp.variable_layout_getBindingIndex(field_layout)
-		declaration.set = u32(sp.variable_layout_getBindingSpace(field_layout, .ShaderResource))
+		binding_category := declaration.storage ? sp.LayoutUnit.UnorderedAccess : sp.LayoutUnit.ShaderResource
+		declaration.set = u32(sp.variable_layout_getBindingSpace(field_layout, binding_category))
 		declaration.load_on_frame_begin = load_on_frame_begin
 		if declaration.set != 0 {
 			fmt.eprintln("only descriptor set 0 is supported for render targets")
@@ -884,6 +892,12 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 	}
 
 	return true
+}
+
+ez_gfx_shader_target_declaration_is_storage :: proc(type_layout: ^sp.TypeLayoutReflection) -> bool {
+	if type_layout == nil do return false
+	return sp.type_layout_getResourceAccess(type_layout) == .READ_WRITE ||
+	       sp.type_layout_getResourceAccess(type_layout) == .WRITE
 }
 
 ez_gfx_shader_reflect_target_usages_from_layout :: proc(

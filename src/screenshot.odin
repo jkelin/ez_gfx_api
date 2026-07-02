@@ -175,35 +175,8 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		return false
 	}
 
-	command_submit := vk.CommandBufferSubmitInfo {
-		sType         = .COMMAND_BUFFER_SUBMIT_INFO,
-		commandBuffer = command_buffer,
-	}
-	wait_info := vk.SemaphoreSubmitInfo {
-		sType     = .SEMAPHORE_SUBMIT_INFO,
-		semaphore = image_available,
-		stageMask = {.ALL_COMMANDS},
-	}
 	signal_value := ez_gfx_ctx_next_timeline_value(ctx)
-	signal_info := vk.SemaphoreSubmitInfo {
-		sType     = .SEMAPHORE_SUBMIT_INFO,
-		semaphore = ctx.timeline_semaphore,
-		value     = signal_value,
-		stageMask = {.ALL_COMMANDS},
-	}
-	submit_info := vk.SubmitInfo2 {
-		sType                    = .SUBMIT_INFO_2,
-		waitSemaphoreInfoCount   = 1,
-		pWaitSemaphoreInfos      = &wait_info,
-		commandBufferInfoCount   = 1,
-		pCommandBufferInfos      = &command_submit,
-		signalSemaphoreInfoCount = 1,
-		pSignalSemaphoreInfos    = &signal_info,
-	}
-	sync.mutex_lock(&ctx.queue_mutex)
-	submit_result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0))
-	sync.mutex_unlock(&ctx.queue_mutex)
-	if submit_result != .SUCCESS {
+	if !ez_gfx_screenshot_submit_copy(ctx, command_buffer, image_available, signal_value) {
 		fmt.eprintln("failed to submit screenshot copy")
 		return false
 	}
@@ -243,6 +216,42 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 
 	pixels^ = pixel_data
 	return true
+}
+
+ez_gfx_screenshot_submit_copy :: proc(
+	ctx: ^Ez_Gfx_Ctx,
+	command_buffer: vk.CommandBuffer,
+	image_available: vk.Semaphore,
+	signal_value: u64,
+) -> bool {
+	command_submit := vk.CommandBufferSubmitInfo {
+		sType         = .COMMAND_BUFFER_SUBMIT_INFO,
+		commandBuffer = command_buffer,
+	}
+	wait_info := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = image_available,
+		stageMask = {.ALL_COMMANDS},
+	}
+	signal_info := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = ctx.timeline_semaphore,
+		value     = signal_value,
+		stageMask = {.ALL_COMMANDS},
+	}
+	submit_info := vk.SubmitInfo2 {
+		sType                    = .SUBMIT_INFO_2,
+		waitSemaphoreInfoCount   = 1,
+		pWaitSemaphoreInfos      = &wait_info,
+		commandBufferInfoCount   = 1,
+		pCommandBufferInfos      = &command_submit,
+		signalSemaphoreInfoCount = 1,
+		pSignalSemaphoreInfos    = &signal_info,
+	}
+	sync.mutex_lock(&ctx.queue_mutex)
+	result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0))
+	sync.mutex_unlock(&ctx.queue_mutex)
+	return result == .SUCCESS
 }
 
 ez_gfx_screenshot_write_png :: proc(path: string, width, height: int, bgra: []u8) -> bool {

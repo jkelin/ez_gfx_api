@@ -49,6 +49,7 @@ triangle_renders_without_validation_errors :: proc(t: ^testing.T) {
 	}
 
 	gfx.ez_gfx_ctx_wait_idle()
+	expect_window_snapshot(t, &app.window, "triangle")
 	testing.expect_value(t, app.validation_log.errors, u32(0))
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }
@@ -225,7 +226,8 @@ triangle_init_resources :: proc(app: ^Triangle_App) -> bool {
 triangle_run_frames :: proc(app: ^Triangle_App) -> bool {
 	frames_drawn := 0
 	attempts := 0
-	for frames_drawn < TRIANGLE_FRAMES && attempts < 60 {
+	target_frames := max(TRIANGLE_FRAMES, int(app.window.swapchain.image_count) + 1)
+	for frames_drawn < target_frames && attempts < 60 {
 		attempts += 1
 		gfx.ez_gfx_window_poll_events()
 		if gfx.ez_gfx_window_should_close(&app.window) do return false
@@ -233,7 +235,7 @@ triangle_run_frames :: proc(app: ^Triangle_App) -> bool {
 			frames_drawn += 1
 		}
 	}
-	return frames_drawn == TRIANGLE_FRAMES
+	return frames_drawn == target_frames
 }
 
 triangle_draw_frame :: proc(app: ^Triangle_App) -> bool {

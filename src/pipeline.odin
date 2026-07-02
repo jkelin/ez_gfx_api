@@ -359,7 +359,7 @@ ez_gfx_pipeline_create_descriptors :: proc(
 
 		layout_bindings[binding_index] = vk.DescriptorSetLayoutBinding {
 			binding         = target_info.binding,
-			descriptorType  = .COMBINED_IMAGE_SAMPLER,
+			descriptorType  = ez_gfx_pipeline_target_descriptor_type(target_info),
 			descriptorCount = 1,
 			stageFlags      = {.VERTEX, .FRAGMENT},
 		}
@@ -391,7 +391,7 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		return true
 	}
 
-	pool_sizes: [2]vk.DescriptorPoolSize
+	pool_sizes: [3]vk.DescriptorPoolSize
 	pool_size_count := 0
 	if shader.vertex_heap_binding_count > 0 {
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
@@ -403,6 +403,11 @@ ez_gfx_pipeline_create_descriptors :: proc(
 	if shader.target_declaration_count > 0 {
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
 			type            = .COMBINED_IMAGE_SAMPLER,
+			descriptorCount = u32(shader.target_declaration_count),
+		}
+		pool_size_count += 1
+		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
+			type            = .STORAGE_IMAGE,
 			descriptorCount = u32(shader.target_declaration_count),
 		}
 		pool_size_count += 1
@@ -498,14 +503,14 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		image_infos[i] = vk.DescriptorImageInfo {
 			sampler     = target.sampler,
 			imageView   = target.image_view,
-			imageLayout = ez_gfx_render_target_descriptor_layout(target.kind),
+			imageLayout = ez_gfx_pipeline_target_descriptor_layout(target_info),
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
 			dstSet          = record.descriptor_set,
 			dstBinding      = target_info.binding,
 			descriptorCount = 1,
-			descriptorType  = .COMBINED_IMAGE_SAMPLER,
+			descriptorType  = ez_gfx_pipeline_target_descriptor_type(target_info),
 			pImageInfo      = &image_infos[i],
 		}
 		write_count += 1
@@ -516,6 +521,20 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	}
 	record.descriptor_version = ctx.render_target_manager.version
 	return true
+}
+
+ez_gfx_pipeline_target_descriptor_type :: proc(
+	target_info: ^Ez_Gfx_Shader_Target_Declaration,
+) -> vk.DescriptorType {
+	if target_info.storage do return .STORAGE_IMAGE
+	return .COMBINED_IMAGE_SAMPLER
+}
+
+ez_gfx_pipeline_target_descriptor_layout :: proc(
+	target_info: ^Ez_Gfx_Shader_Target_Declaration,
+) -> vk.ImageLayout {
+	if target_info.storage do return .GENERAL
+	return ez_gfx_render_target_descriptor_layout(target_info.kind)
 }
 
 ez_gfx_pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipeline_Record) {
