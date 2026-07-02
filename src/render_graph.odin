@@ -308,6 +308,12 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 			return false
 		}
 		if i == 0 {
+			ez_gfx_texture_manager_record_graphics_handoffs(
+				&render.ctx.texture_manager,
+				render.ctx,
+				command_buffer,
+				render.texture_upload_wait_timeline,
+			)
 			if !ez_gfx_render_target_manager_clear_frame_targets(
 				&render.ctx.render_target_manager,
 				render.ctx,
@@ -765,6 +771,12 @@ ez_gfx_render_graph_execute_empty_present :: proc(render: ^Ez_Gfx_Render) -> boo
 	if !ez_gfx_render_graph_begin_commands(command_buffer) {
 		return false
 	}
+	ez_gfx_texture_manager_record_graphics_handoffs(
+		&render.ctx.texture_manager,
+		render.ctx,
+		command_buffer,
+		render.texture_upload_wait_timeline,
+	)
 	if !ez_gfx_render_graph_begin_node_rendering(render, &node, command_buffer) {
 		return false
 	}

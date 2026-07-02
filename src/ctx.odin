@@ -61,7 +61,9 @@ Ez_Gfx_Ctx :: struct {
 	physical_device:                      vk.PhysicalDevice,
 	device:                               vk.Device,
 	queue_family_index:                   u32,
+	transfer_queue_family_index:          u32,
 	graphics_queue:                       vk.Queue,
+	transfer_queue:                       vk.Queue,
 	queue_mutex:                          sync.Mutex,
 	command_pool:                         vk.CommandPool,
 	frame_slots:                          [EZ_GFX_FRAMES_IN_FLIGHT]Ez_Gfx_Frame_Slot,
@@ -315,9 +317,11 @@ ez_gfx_ctx_pick_physical_device :: proc(ctx: ^Ez_Gfx_Ctx, surface: vk.SurfaceKHR
 
 	for device in devices[:count] {
 		queue_index: u32
-		if ez_gfx_ctx_is_device_suitable(device, surface, &queue_index) {
+		transfer_queue_index: u32
+		if ez_gfx_ctx_is_device_suitable(device, surface, &queue_index, &transfer_queue_index) {
 			ctx.physical_device = device
 			ctx.queue_family_index = queue_index
+			ctx.transfer_queue_family_index = transfer_queue_index
 			return true
 		}
 	}
@@ -332,6 +336,7 @@ ez_gfx_ctx_is_device_suitable :: proc(
 	device: vk.PhysicalDevice,
 	surface: vk.SurfaceKHR,
 	queue_index: ^u32,
+	transfer_queue_index: ^u32,
 ) -> bool {
 	if !ez_gfx_ctx_device_supports_extension(device, vk.KHR_SWAPCHAIN_EXTENSION_NAME) {
 		return false
@@ -347,15 +352,42 @@ ez_gfx_ctx_is_device_suitable :: proc(
 
 	queues: [32]vk.QueueFamilyProperties
 	vk.GetPhysicalDeviceQueueFamilyProperties(device, &queue_count, &queues[0])
+	graphics_queue_index: u32
+	found_graphics_present := false
 	for queue, i in queues[:queue_count] {
 		present_supported: b32
 		vk.GetPhysicalDeviceSurfaceSupportKHR(device, u32(i), surface, &present_supported)
 		if .GRAPHICS in queue.queueFlags && present_supported {
-			queue_index^ = u32(i)
-			return true
+			graphics_queue_index = u32(i)
+			found_graphics_present = true
+			break
 		}
 	}
-	return false
+	if !found_graphics_present do return false
+
+	queue_index^ = graphics_queue_index
+	transfer_queue_index^ =
+		ez_gfx_ctx_choose_transfer_queue_family(queues[:queue_count], graphics_queue_index)
+	return true
+}
+
+ez_gfx_ctx_choose_transfer_queue_family :: proc(
+	queues: []vk.QueueFamilyProperties,
+	graphics_queue_index: u32,
+) -> u32 {
+	for queue, i in queues {
+		if queue.queueCount == 0 do continue
+		if .TRANSFER in queue.queueFlags && !(.GRAPHICS in queue.queueFlags) {
+			return u32(i)
+		}
+	}
+	for queue, i in queues {
+		if queue.queueCount == 0 do continue
+		if .TRANSFER in queue.queueFlags {
+			return u32(i)
+		}
+	}
+	return graphics_queue_index
 }
 
 ez_gfx_ctx_device_supports_extension :: proc(
@@ -489,11 +521,22 @@ ez_gfx_ctx_present_mode_requires_shared_present :: proc(mode: vk.PresentModeKHR)
 
 ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	priority: f32 = 1.0
-	queue_info := vk.DeviceQueueCreateInfo {
+	queue_infos: [2]vk.DeviceQueueCreateInfo
+	queue_infos[0] = vk.DeviceQueueCreateInfo {
 		sType            = .DEVICE_QUEUE_CREATE_INFO,
 		queueFamilyIndex = ctx.queue_family_index,
 		queueCount       = 1,
 		pQueuePriorities = &priority,
+	}
+	queue_info_count: u32 = 1
+	if ctx.transfer_queue_family_index != ctx.queue_family_index {
+		queue_infos[1] = vk.DeviceQueueCreateInfo {
+			sType            = .DEVICE_QUEUE_CREATE_INFO,
+			queueFamilyIndex = ctx.transfer_queue_family_index,
+			queueCount       = 1,
+			pQueuePriorities = &priority,
+		}
+		queue_info_count = 2
 	}
 
 	vulkan13_features := vk.PhysicalDeviceVulkan13Features {
@@ -572,8 +615,8 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	create_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
 		pNext                   = &features,
-		queueCreateInfoCount    = 1,
-		pQueueCreateInfos       = &queue_info,
+		queueCreateInfoCount    = queue_info_count,
+		pQueueCreateInfos       = &queue_infos[0],
 		enabledExtensionCount   = u32(len(device_extensions)),
 		ppEnabledExtensionNames = raw_data(device_extensions),
 	}
@@ -585,6 +628,7 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	}
 
 	vk.GetDeviceQueue(ctx.device, ctx.queue_family_index, 0, &ctx.graphics_queue)
+	vk.GetDeviceQueue(ctx.device, ctx.transfer_queue_family_index, 0, &ctx.transfer_queue)
 	return true
 }
 
@@ -1082,6 +1126,14 @@ ez_gfx_ctx_name_device_objects :: proc(ctx: ^Ez_Gfx_Ctx) {
 		ez_gfx_debug_handle(ctx.graphics_queue),
 		"ez_gfx graphics queue",
 	)
+	if ctx.transfer_queue != ctx.graphics_queue {
+		ez_gfx_debug_set_object_name(
+			ctx,
+			.QUEUE,
+			ez_gfx_debug_handle(ctx.transfer_queue),
+			"ez_gfx transfer queue",
+		)
+	}
 }
 
 ez_gfx_debug_handle :: proc(handle: $T) -> u64 {

@@ -32,3 +32,26 @@ present_mode_selector_falls_back_to_fifo_when_unsupported :: proc(t: ^testing.T)
 
 	testing.expect_value(t, selected, vk.PresentModeKHR(.FIFO))
 }
+
+@(test)
+transfer_queue_selector_prefers_dedicated_transfer_family :: proc(t: ^testing.T) {
+	queues := [?]vk.QueueFamilyProperties {
+		{queueFlags = {.GRAPHICS, .TRANSFER}, queueCount = 1},
+		{queueFlags = {.TRANSFER}, queueCount = 1},
+	}
+
+	selected := gfx.ez_gfx_ctx_choose_transfer_queue_family(queues[:], 0)
+
+	testing.expect_value(t, selected, u32(1))
+}
+
+@(test)
+transfer_queue_selector_falls_back_to_graphics_family :: proc(t: ^testing.T) {
+	queues := [?]vk.QueueFamilyProperties {
+		{queueFlags = {.GRAPHICS, .TRANSFER}, queueCount = 1},
+	}
+
+	selected := gfx.ez_gfx_ctx_choose_transfer_queue_family(queues[:], 0)
+
+	testing.expect_value(t, selected, u32(0))
+}

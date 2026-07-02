@@ -118,6 +118,20 @@ Ez_Gfx_Texture_Destroy_Job :: struct {
 	retire_timeline: u64,
 }
 
+Ez_Gfx_Texture_Staging_Retire_Job :: struct {
+	buffer:          Ez_Gfx_Buffer,
+	retire_timeline: u64,
+}
+
+Ez_Gfx_Texture_Graphics_Handoff_Job :: struct {
+	id:                Ez_Gfx_Texture_ID,
+	image:             vk.Image,
+	width:             u32,
+	height:            u32,
+	mip_count:         u32,
+	transfer_timeline: u64,
+}
+
 Ez_Gfx_Texture_Manager :: struct {
 	textures:                         [EZ_GFX_MAX_TEXTURES]Ez_Gfx_Texture_Record,
 	descriptor_set_layout:            vk.DescriptorSetLayout,
@@ -130,6 +144,8 @@ Ez_Gfx_Texture_Manager :: struct {
 	cond:                             sync.Cond,
 	jobs:                             [dynamic]Ez_Gfx_Texture_Load_Job,
 	pending_destroys:                 [dynamic]Ez_Gfx_Texture_Destroy_Job,
+	pending_staging:                  [dynamic]Ez_Gfx_Texture_Staging_Retire_Job,
+	pending_graphics_handoffs:        [dynamic]Ez_Gfx_Texture_Graphics_Handoff_Job,
 	shutdown:                         bool,
 	latest_scheduled_texture_timeline: u64,
 	latest_submitted_texture_timeline: u64,
@@ -161,6 +177,8 @@ ez_gfx_texture_manager_create :: proc(manager: ^Ez_Gfx_Texture_Manager, ctx: ^Ez
 	manager^ = {}
 	manager.jobs = make([dynamic]Ez_Gfx_Texture_Load_Job)
 	manager.pending_destroys = make([dynamic]Ez_Gfx_Texture_Destroy_Job)
+	manager.pending_staging = make([dynamic]Ez_Gfx_Texture_Staging_Retire_Job)
+	manager.pending_graphics_handoffs = make([dynamic]Ez_Gfx_Texture_Graphics_Handoff_Job)
 
 	if !ez_gfx_texture_manager_create_descriptors(manager, ctx) {
 		ez_gfx_texture_manager_destroy(manager, ctx)
@@ -201,6 +219,11 @@ ez_gfx_texture_manager_destroy :: proc(manager: ^Ez_Gfx_Texture_Manager, ctx: ^E
 		ez_gfx_texture_record_destroy(ctx, &manager.pending_destroys[i].record)
 	}
 	if raw_data(manager.pending_destroys) != nil do delete(manager.pending_destroys)
+	for i in 0 ..< len(manager.pending_staging) {
+		ez_gfx_buffer_destroy(&manager.pending_staging[i].buffer)
+	}
+	if raw_data(manager.pending_staging) != nil do delete(manager.pending_staging)
+	if raw_data(manager.pending_graphics_handoffs) != nil do delete(manager.pending_graphics_handoffs)
 
 	for i in 0 ..< len(manager.textures) {
 		ez_gfx_texture_record_destroy(ctx, &manager.textures[i])
@@ -288,6 +311,7 @@ ez_gfx_texture_manager_unload :: proc(
 
 	record := ez_gfx_texture_manager_find_locked(manager, texture_id)
 	if record == nil do return .Not_Found
+	ez_gfx_texture_manager_remove_pending_handoffs_locked(manager, texture_id)
 	if record.state == .Queued || record.state == .Loading {
 		record.state = .Unloading
 		return .None
@@ -416,7 +440,7 @@ ez_gfx_texture_manager_create_upload_commands :: proc(
 	pool_info := vk.CommandPoolCreateInfo {
 		sType            = .COMMAND_POOL_CREATE_INFO,
 		flags            = {.RESET_COMMAND_BUFFER},
-		queueFamilyIndex = ctx.queue_family_index,
+		queueFamilyIndex = ctx.transfer_queue_family_index,
 	}
 	if vk.CreateCommandPool(ctx.device, &pool_info, nil, &manager.upload_command_pool) != .SUCCESS {
 		fmt.eprintln("failed to create texture upload command pool")
@@ -534,8 +558,8 @@ ez_gfx_texture_upload_job :: proc(
 		vma.destroy_image(ctx.vma_allocator, image, allocation)
 		return .Vulkan_Failed
 	}
-	defer ez_gfx_buffer_destroy(&staging)
 	if !ez_gfx_buffer_write(&staging, decoded_pixels) {
+		ez_gfx_buffer_destroy(&staging)
 		vma.destroy_image(ctx.vma_allocator, image, allocation)
 		return .Vulkan_Failed
 	}
@@ -548,6 +572,7 @@ ez_gfx_texture_upload_job :: proc(
 		job.desc,
 	)
 	if resource_err != .None {
+		ez_gfx_buffer_destroy(&staging)
 		vma.destroy_image(ctx.vma_allocator, image, allocation)
 		return resource_err
 	}
@@ -558,6 +583,7 @@ ez_gfx_texture_upload_job :: proc(
 		sync.mutex_unlock(&manager.mutex)
 		vk.DestroySampler(ctx.device, sampler, nil)
 		vk.DestroyImageView(ctx.device, view, nil)
+		ez_gfx_buffer_destroy(&staging)
 		vma.destroy_image(ctx.vma_allocator, image, allocation)
 		return .None
 	}
@@ -566,10 +592,8 @@ ez_gfx_texture_upload_job :: proc(
 	record.allocation_info = allocation_info
 	record.image_view = view
 	record.sampler = sampler
-	record.layout = .SHADER_READ_ONLY_OPTIMAL
+	record.layout = .TRANSFER_DST_OPTIMAL
 	sync.mutex_unlock(&manager.mutex)
-
-	ez_gfx_texture_update_descriptor(manager, ctx, job.id)
 
 	if !ez_gfx_texture_submit_upload(
 		manager,
@@ -581,13 +605,21 @@ ez_gfx_texture_upload_job :: proc(
 		&staging,
 		signal_value,
 	) {
+		ez_gfx_buffer_destroy(&staging)
 		ez_gfx_texture_clear_failed_resource(manager, ctx, job.id, image)
 		return .Vulkan_Failed
 	}
-	if !ez_gfx_ctx_wait_timeline(ctx, signal_value) {
-		ez_gfx_texture_clear_failed_resource(manager, ctx, job.id, image)
-		return .Vulkan_Failed
-	}
+	ez_gfx_texture_manager_track_submitted_upload(
+		manager,
+		job.id,
+		image,
+		width,
+		height,
+		mip_count,
+		signal_value,
+		staging,
+	)
+	ez_gfx_texture_update_descriptor(manager, ctx, job.id)
 	return .None
 }
 
@@ -763,20 +795,20 @@ ez_gfx_texture_submit_upload :: proc(
 	}
 	vk.CmdCopyBufferToImage(command_buffer, staging.handle, image, .TRANSFER_DST_OPTIMAL, 1, &region)
 
-	if mip_count > 1 {
-		ez_gfx_texture_generate_mips(command_buffer, image, width, height, mip_count)
-	} else {
-		ez_gfx_transition_texture_mips(
+	if ctx.transfer_queue_family_index != ctx.queue_family_index {
+		ez_gfx_transition_texture_mips_queue_family(
 			command_buffer,
 			image,
 			.TRANSFER_DST_OPTIMAL,
-			.SHADER_READ_ONLY_OPTIMAL,
+			.TRANSFER_DST_OPTIMAL,
 			{.TRANSFER_WRITE},
-			{.SHADER_SAMPLED_READ},
+			{},
 			{.TRANSFER},
-			{.VERTEX_SHADER, .FRAGMENT_SHADER},
+			{.ALL_COMMANDS},
 			0,
-			1,
+			mip_count,
+			ctx.transfer_queue_family_index,
+			ctx.queue_family_index,
 		)
 	}
 
@@ -802,11 +834,124 @@ ez_gfx_texture_submit_upload :: proc(
 		pSignalSemaphoreInfos = &signal_info,
 	}
 	sync.mutex_lock(&ctx.queue_mutex)
-	result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0))
+	result := vk.QueueSubmit2(ctx.transfer_queue, 1, &submit_info, vk.Fence(0))
 	sync.mutex_unlock(&ctx.queue_mutex)
 	if result != .SUCCESS do return false
 	ez_gfx_texture_manager_mark_submitted(manager, signal_value)
 	return true
+}
+
+ez_gfx_texture_manager_track_submitted_upload :: proc(
+	manager: ^Ez_Gfx_Texture_Manager,
+	id: Ez_Gfx_Texture_ID,
+	image: vk.Image,
+	width, height, mip_count: u32,
+	transfer_timeline: u64,
+	staging: Ez_Gfx_Buffer,
+) {
+	sync.mutex_lock(&manager.mutex)
+	append(&manager.pending_staging, Ez_Gfx_Texture_Staging_Retire_Job {
+		buffer = staging,
+		retire_timeline = transfer_timeline,
+	})
+	append(&manager.pending_graphics_handoffs, Ez_Gfx_Texture_Graphics_Handoff_Job {
+		id = id,
+		image = image,
+		width = width,
+		height = height,
+		mip_count = mip_count,
+		transfer_timeline = transfer_timeline,
+	})
+	sync.mutex_unlock(&manager.mutex)
+}
+
+ez_gfx_texture_manager_remove_pending_handoffs_locked :: proc(
+	manager: ^Ez_Gfx_Texture_Manager,
+	id: Ez_Gfx_Texture_ID,
+) {
+	i := 0
+	for i < len(manager.pending_graphics_handoffs) {
+		if manager.pending_graphics_handoffs[i].id == id {
+			ordered_remove(&manager.pending_graphics_handoffs, i)
+			continue
+		}
+		i += 1
+	}
+}
+
+ez_gfx_texture_manager_record_graphics_handoffs :: proc(
+	manager: ^Ez_Gfx_Texture_Manager,
+	ctx: ^Ez_Gfx_Ctx,
+	command_buffer: vk.CommandBuffer,
+	up_to_timeline: u64,
+) {
+	if manager == nil || ctx == nil || command_buffer == nil do return
+	sync.mutex_lock(&manager.mutex)
+	i := 0
+	for i < len(manager.pending_graphics_handoffs) {
+		handoff := manager.pending_graphics_handoffs[i]
+		if handoff.transfer_timeline > up_to_timeline {
+			i += 1
+			continue
+		}
+		ordered_remove(&manager.pending_graphics_handoffs, i)
+		record := ez_gfx_texture_manager_find_locked(manager, handoff.id)
+		record_valid := record != nil && record.image == handoff.image && record.state != .Empty
+		if record_valid {
+			record.layout = .SHADER_READ_ONLY_OPTIMAL
+		}
+		sync.mutex_unlock(&manager.mutex)
+		if record_valid {
+			ez_gfx_texture_record_graphics_handoff(ctx, command_buffer, handoff)
+		}
+		sync.mutex_lock(&manager.mutex)
+	}
+	sync.mutex_unlock(&manager.mutex)
+}
+
+ez_gfx_texture_record_graphics_handoff :: proc(
+	ctx: ^Ez_Gfx_Ctx,
+	command_buffer: vk.CommandBuffer,
+	handoff: Ez_Gfx_Texture_Graphics_Handoff_Job,
+) {
+	if ctx.transfer_queue_family_index != ctx.queue_family_index {
+		ez_gfx_transition_texture_mips_queue_family(
+			command_buffer,
+			handoff.image,
+			.TRANSFER_DST_OPTIMAL,
+			.TRANSFER_DST_OPTIMAL,
+			{},
+			{.TRANSFER_WRITE},
+			{.ALL_COMMANDS},
+			{.TRANSFER},
+			0,
+			handoff.mip_count,
+			ctx.transfer_queue_family_index,
+			ctx.queue_family_index,
+		)
+	}
+	if handoff.mip_count > 1 {
+		ez_gfx_texture_generate_mips(
+			command_buffer,
+			handoff.image,
+			handoff.width,
+			handoff.height,
+			handoff.mip_count,
+		)
+	} else {
+		ez_gfx_transition_texture_mips(
+			command_buffer,
+			handoff.image,
+			.TRANSFER_DST_OPTIMAL,
+			.SHADER_READ_ONLY_OPTIMAL,
+			{.TRANSFER_WRITE},
+			{.SHADER_SAMPLED_READ},
+			{.TRANSFER},
+			{.VERTEX_SHADER, .FRAGMENT_SHADER},
+			0,
+			1,
+		)
+	}
 }
 
 ez_gfx_transition_texture_mips :: proc(
@@ -817,6 +962,31 @@ ez_gfx_transition_texture_mips :: proc(
 	src_stage, dst_stage: vk.PipelineStageFlags2,
 	base_mip, mip_count: u32,
 ) {
+	ez_gfx_transition_texture_mips_queue_family(
+		command_buffer,
+		image,
+		old_layout,
+		new_layout,
+		src_access,
+		dst_access,
+		src_stage,
+		dst_stage,
+		base_mip,
+		mip_count,
+		vk.QUEUE_FAMILY_IGNORED,
+		vk.QUEUE_FAMILY_IGNORED,
+	)
+}
+
+ez_gfx_transition_texture_mips_queue_family :: proc(
+	command_buffer: vk.CommandBuffer,
+	image: vk.Image,
+	old_layout, new_layout: vk.ImageLayout,
+	src_access, dst_access: vk.AccessFlags2,
+	src_stage, dst_stage: vk.PipelineStageFlags2,
+	base_mip, mip_count: u32,
+	src_queue_family_index, dst_queue_family_index: u32,
+) {
 	barrier := vk.ImageMemoryBarrier2 {
 		sType = .IMAGE_MEMORY_BARRIER_2,
 		srcStageMask = src_stage,
@@ -825,8 +995,8 @@ ez_gfx_transition_texture_mips :: proc(
 		dstAccessMask = dst_access,
 		oldLayout = old_layout,
 		newLayout = new_layout,
-		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		srcQueueFamilyIndex = src_queue_family_index,
+		dstQueueFamilyIndex = dst_queue_family_index,
 		image = image,
 		subresourceRange = vk.ImageSubresourceRange {
 			aspectMask = {.COLOR},
@@ -1075,6 +1245,18 @@ ez_gfx_texture_load_job_destroy :: proc(job: ^Ez_Gfx_Texture_Load_Job) {
 ez_gfx_texture_manager_collect_destroyed :: proc(manager: ^Ez_Gfx_Texture_Manager, ctx: ^Ez_Gfx_Ctx) {
 	completed := ez_gfx_gpu_heap_completed_timeline()
 	sync.mutex_lock(&manager.mutex)
+	staging_index := 0
+	for staging_index < len(manager.pending_staging) {
+		if manager.pending_staging[staging_index].retire_timeline > completed {
+			staging_index += 1
+			continue
+		}
+		job := manager.pending_staging[staging_index]
+		ordered_remove(&manager.pending_staging, staging_index)
+		sync.mutex_unlock(&manager.mutex)
+		ez_gfx_buffer_destroy(&job.buffer)
+		sync.mutex_lock(&manager.mutex)
+	}
 	i := 0
 	for i < len(manager.pending_destroys) {
 		if manager.pending_destroys[i].retire_timeline > completed {

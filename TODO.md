@@ -18,7 +18,7 @@
 
 - Add stronger Vertex manager allocation ownership checks if callers start freeing arbitrary user-provided ranges. The current free-list allocator merges and reuses released chunks, but it trusts handles returned by the allocation APIs rather than tracking every live allocation for double-free diagnostics.
 
-- Add a dedicated transfer-queue upload path for textures and vertex data, including proper synchronization. Device setup still selects a graphics/present queue; the first async texture manager uses a texture upload thread and staging copies, but submits those copies on the graphics queue until transfer queue ownership is modeled.
+- Add a dedicated transfer-queue upload path for vertex data. Texture uploads now use a transfer-queue-aware staging path with graphics-queue handoff, but vertex/index data still writes directly to host-visible buffers instead of staging through the transfer queue.
 
 - Replace remaining host-side waits for managed render target timeline dependencies with queue-side timeline waits so independent frame work can overlap more effectively. Graph node dependencies use queue-side timeline waits, but frame-start target clears and begin-render synchronization still call `ez_gfx_ctx_wait_timeline` on the CPU.
 
@@ -36,7 +36,7 @@
 
 - Add a shader cache using precompiled shader modules. The current cache is an in-memory Vulkan pipeline cache keyed by shader identity and attachment formats; it does not persist Slang/SPIR-V/reflection artifacts across runs.
 
-- Add streamed texture upload. The project still has render-target and swapchain image allocation, but no external texture asset upload API or frame-synchronized streaming path.
+- Add streamed texture upload with minimal-required mip readiness. The texture manager can load external texture assets asynchronously, but it does not yet expose progressive mip uploads where a low-resolution mip can become ready before finer mips stream in later.
 
 - Support compressed texture formats. Color target parsing is still limited to uncompressed formats such as `rgba8` and `rgba16f`, with no BC/ASTC/block-compressed texture handling.
 

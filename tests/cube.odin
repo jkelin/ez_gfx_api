@@ -84,6 +84,7 @@ cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 		return
 	}
 	defer cube_test_cleanup(&app)
+	cube_test_reset_validation_counts(&app)
 
 	frames_drawn := 0
 	attempts := 0
@@ -102,7 +103,9 @@ cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 
 	gfx.ez_gfx_ctx_wait_idle()
 	expect_window_snapshot(t, &app.window, "cube")
+	testing.expect_value(t, app.validation_log.warnings, u32(0))
 	testing.expect_value(t, app.validation_log.errors, u32(0))
+	testing.expect_value(t, app.ctx.validation_counts.warning, u32(0))
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }
 
@@ -118,6 +121,7 @@ cube_push_constant_size_mismatch_fails_cleanly :: proc(t: ^testing.T) {
 	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "cube mismatch test failed to begin render") {
 		return
 	}
+	cube_test_reset_validation_counts(&app)
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
 		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
@@ -128,7 +132,9 @@ cube_push_constant_size_mismatch_fails_cleanly :: proc(t: ^testing.T) {
 	_ = gfx.ez_gfx_finish_render()
 
 	gfx.ez_gfx_ctx_wait_idle()
+	testing.expect_value(t, app.validation_log.warnings, u32(0))
 	testing.expect_value(t, app.validation_log.errors, u32(0))
+	testing.expect_value(t, app.ctx.validation_counts.warning, u32(0))
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
 }
 
@@ -291,4 +297,9 @@ cube_test_cleanup :: proc(app: ^Cube_Test_App) {
 	gfx.ez_gfx_window_destroy(&app.window)
 	gfx.ez_gfx_ctx_destroy()
 	gfx.ez_gfx_glfw_terminate()
+}
+
+cube_test_reset_validation_counts :: proc(app: ^Cube_Test_App) {
+	app.validation_log = {}
+	app.ctx.validation_counts = {}
 }
