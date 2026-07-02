@@ -109,3 +109,18 @@ vertex_allocator_recovers_capacity_after_free :: proc(t: ^testing.T) {
 	testing.expect_value(t, reused, vk.DeviceSize(0))
 	testing.expect_value(t, heap.high_water, vk.DeviceSize(16))
 }
+
+@(test)
+vertex_allocator_reserves_range_without_cpu_upload :: proc(t: ^testing.T) {
+	heap := vertex_allocator_test_heap(64, 4)
+	defer vertex_allocator_delete_test_heap(&heap)
+
+	allocation, offset, ok := gfx.ez_gfx_gpu_heap_reserve_allocation(&heap, 12, 3)
+
+	testing.expect(t, ok)
+	testing.expect_value(t, offset, vk.DeviceSize(0))
+	testing.expect_value(t, allocation.start_index, u32(0))
+	testing.expect_value(t, allocation.count, u32(3))
+	testing.expect_value(t, heap.high_water, vk.DeviceSize(12))
+	testing.expect_value(t, heap.used_bytes, vk.DeviceSize(12))
+}

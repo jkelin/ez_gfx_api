@@ -19,7 +19,7 @@ Cube_Push_Constants :: struct {
 	_padding:   [3]u32,
 }
 
-CUBE_INDICES :: [36]u32 {
+CUBE_INDICES: [36]u32 = {
 	0, 1, 2, 2, 3, 0,
 	4, 5, 6, 6, 7, 4,
 	8, 9, 10, 10, 11, 8,
@@ -28,7 +28,7 @@ CUBE_INDICES :: [36]u32 {
 	20, 21, 22, 22, 23, 20,
 }
 
-CUBE_POSITIONS :: [24][4]f32 {
+CUBE_POSITIONS: [24][4]f32 = {
 	{-1, -1, 1, 1}, {1, -1, 1, 1}, {1, 1, 1, 1}, {-1, 1, 1, 1},
 	{1, -1, -1, 1}, {-1, -1, -1, 1}, {-1, 1, -1, 1}, {1, 1, -1, 1},
 	{-1, -1, -1, 1}, {-1, -1, 1, 1}, {-1, 1, 1, 1}, {-1, 1, -1, 1},
@@ -120,20 +120,18 @@ cube_init :: proc(app: ^App) -> bool {
 		return false
 	}
 
-	indices := CUBE_INDICES
 	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
-		indices[:],
+		CUBE_INDICES[:],
 	)
 	if !index_ok do return false
 	app.cube_index = index_start
-	app.cube_index_len = u32(len(indices))
+	app.cube_index_len = u32(len(CUBE_INDICES))
 
-	positions := CUBE_POSITIONS
 	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		CUBE_POSITION_HEAP,
-		positions[:],
+		CUBE_POSITIONS[:],
 	)
 	if !vertex_ok do return false
 	app.cube_vertex = vertex_start

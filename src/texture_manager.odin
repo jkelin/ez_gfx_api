@@ -833,6 +833,9 @@ ez_gfx_texture_submit_upload :: proc(
 		signalSemaphoreInfoCount = 1,
 		pSignalSemaphoreInfos = &signal_info,
 	}
+	if signal_value > 1 && !ez_gfx_ctx_wait_timeline(ctx, signal_value - 1) {
+		return false
+	}
 	sync.mutex_lock(&ctx.queue_mutex)
 	result := vk.QueueSubmit2(ctx.transfer_queue, 1, &submit_info, vk.Fence(0))
 	sync.mutex_unlock(&ctx.queue_mutex)

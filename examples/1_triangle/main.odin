@@ -10,8 +10,8 @@ HEIGHT :: 720
 TRIANGLE_SHADER_PATH :: cstring("examples/1_triangle/triangle.slang")
 TRIANGLE_POSITION_HEAP :: "position"
 
-TRIANGLE_INDICES :: [3]u32{0, 1, 2}
-TRIANGLE_POSITIONS :: [3][4]f32 {
+TRIANGLE_INDICES: [3]u32 = {0, 1, 2}
+TRIANGLE_POSITIONS: [3][4]f32 = {
 	{-0.5, -0.5, 0.0, 1.0},
 	{0.5, -0.5, 0.0, 1.0},
 	{0.0, 0.5, 0.0, 1.0},
@@ -88,20 +88,18 @@ triangle_init :: proc(app: ^App) -> bool {
 		return false
 	}
 
-	indices := TRIANGLE_INDICES
 	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
-		indices[:],
+		TRIANGLE_INDICES[:],
 	)
 	if !index_ok do return false
 	app.triangle_index = index_start
-	app.triangle_index_len = u32(len(indices))
+	app.triangle_index_len = u32(len(TRIANGLE_INDICES))
 
-	positions := TRIANGLE_POSITIONS
 	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_POSITION_HEAP,
-		positions[:],
+		TRIANGLE_POSITIONS[:],
 	)
 	if !vertex_ok do return false
 	app.triangle_vertex = vertex_start

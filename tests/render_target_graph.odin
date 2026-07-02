@@ -157,20 +157,18 @@ render_target_graph_init_vertices :: proc(app: ^Render_Target_Graph_App) -> bool
 		return false
 	}
 
-	indices := TRIANGLE_INDICES
 	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
-		indices[:],
+		TRIANGLE_INDICES[:],
 	)
 	if !index_ok do return false
 	app.triangle_index = index_start
-	app.triangle_index_len = u32(len(indices))
+	app.triangle_index_len = u32(len(TRIANGLE_INDICES))
 
-	positions := TRIANGLE_POSITIONS
 	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_POSITION_HEAP,
-		positions[:],
+		TRIANGLE_POSITIONS[:],
 	)
 	if !vertex_ok do return false
 	app.triangle_vertex = vertex_start

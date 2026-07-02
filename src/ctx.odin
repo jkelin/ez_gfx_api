@@ -40,6 +40,8 @@ Ez_Gfx_Ctx_Desc :: struct {
 	enable_debug:         bool,
 	texture_loaded_callback:  Ez_Gfx_Texture_Loaded_Callback,
 	texture_loaded_user_data: rawptr,
+	vertex_uploaded_callback:  Ez_Gfx_Vertex_Uploaded_Callback,
+	vertex_uploaded_user_data: rawptr,
 }
 
 Ez_Gfx_Validation_Counts :: struct {
@@ -92,6 +94,8 @@ Ez_Gfx_Ctx :: struct {
 	validation_user_data:                 rawptr,
 	texture_loaded_callback:              Ez_Gfx_Texture_Loaded_Callback,
 	texture_loaded_user_data:             rawptr,
+	vertex_uploaded_callback:             Ez_Gfx_Vertex_Uploaded_Callback,
+	vertex_uploaded_user_data:            rawptr,
 	validation_counts:                    Ez_Gfx_Validation_Counts,
 }
 
@@ -125,6 +129,8 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 	ctx.validation_user_data = desc.validation_user_data
 	ctx.texture_loaded_callback = desc.texture_loaded_callback
 	ctx.texture_loaded_user_data = desc.texture_loaded_user_data
+	ctx.vertex_uploaded_callback = desc.vertex_uploaded_callback
+	ctx.vertex_uploaded_user_data = desc.vertex_uploaded_user_data
 	ctx.validation_counts = {}
 	ctx.debug_utils_enabled = desc.enable_validation || desc.enable_debug
 	ctx.swapchain_present_mode = .FIFO

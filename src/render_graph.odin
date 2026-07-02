@@ -314,6 +314,12 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 				command_buffer,
 				render.texture_upload_wait_timeline,
 			)
+			ez_gfx_vertex_manager_record_graphics_handoffs(
+				&render.ctx.vertex_manager,
+				render.ctx,
+				command_buffer,
+				render.vertex_upload_wait_timeline,
+			)
 			if !ez_gfx_render_target_manager_clear_frame_targets(
 				&render.ctx.render_target_manager,
 				render.ctx,
@@ -346,6 +352,9 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 		wait_value := ez_gfx_render_graph_node_wait_value(node)
 		if i == 0 && render.texture_upload_wait_timeline > wait_value {
 			wait_value = render.texture_upload_wait_timeline
+		}
+		if i == 0 && render.vertex_upload_wait_timeline > wait_value {
+			wait_value = render.vertex_upload_wait_timeline
 		}
 		if !ez_gfx_render_graph_submit_command(
 			render,
@@ -777,6 +786,12 @@ ez_gfx_render_graph_execute_empty_present :: proc(render: ^Ez_Gfx_Render) -> boo
 		command_buffer,
 		render.texture_upload_wait_timeline,
 	)
+	ez_gfx_vertex_manager_record_graphics_handoffs(
+		&render.ctx.vertex_manager,
+		render.ctx,
+		command_buffer,
+		render.vertex_upload_wait_timeline,
+	)
 	if !ez_gfx_render_graph_begin_node_rendering(render, &node, command_buffer) {
 		return false
 	}
@@ -791,6 +806,9 @@ ez_gfx_render_graph_execute_empty_present :: proc(render: ^Ez_Gfx_Render) -> boo
 
 	signal_value := ez_gfx_ctx_next_timeline_value(render.ctx)
 	wait_value := render.texture_upload_wait_timeline
+	if render.vertex_upload_wait_timeline > wait_value {
+		wait_value = render.vertex_upload_wait_timeline
+	}
 	if !ez_gfx_render_graph_submit_command(render, command_buffer, wait_value, signal_value, true, true) {
 		return false
 	}
