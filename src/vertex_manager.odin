@@ -70,7 +70,8 @@ Ez_Gfx_Vertex_Upload_Job :: struct {
 	allocation:       Ez_Gfx_Vertex_Allocation,
 	offset:           vk.DeviceSize,
 	byte_size:        vk.DeviceSize,
-	source:           rawptr,
+	source_bytes:     []u8,
+	source_allocator: mem.Allocator,
 	transfer_timeline: u64,
 }
 
@@ -463,6 +464,9 @@ ez_gfx_vertex_manager_destroy :: proc(manager: ^Ez_Gfx_Vertex_Manager) {
 		thread.destroy(manager.worker)
 		manager.worker = nil
 	}
+	for i in 0 ..< len(manager.jobs) {
+		ez_gfx_vertex_upload_job_release_source(&manager.jobs[i])
+	}
 	if raw_data(manager.jobs) != nil do delete(manager.jobs)
 	for i in 0 ..< len(manager.pending_staging) {
 		ez_gfx_buffer_destroy(&manager.pending_staging[i].buffer)
@@ -586,8 +590,8 @@ ez_gfx_vertex_manager_alloc_vertices :: proc(
 	)
 }
 
-// Schedules a transfer-queue upload. The source memory must remain valid until the
-// vertex_uploaded callback fires, including failure callbacks.
+// Schedules a transfer-queue upload and copies caller data so async workers never
+// observe stack memory after the upload API returns.
 ez_gfx_vertex_manager_schedule_upload :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
 	kind: Ez_Gfx_Vertex_Upload_Kind,
@@ -617,6 +621,13 @@ ez_gfx_vertex_manager_schedule_upload :: proc(
 	if !ok do return allocation, false
 	if byte_size == 0 do return allocation, true
 
+	source_bytes, alloc_err := make([]u8, int(byte_size))
+	if alloc_err != nil {
+		_ = ez_gfx_gpu_heap_free_chunk(heap, Ez_Gfx_Heap_Chunk{offset = offset, size = byte_size})
+		return allocation, false
+	}
+	mem.copy(raw_data(source_bytes), source, int(byte_size))
+
 	timeline := ez_gfx_ctx_next_timeline_value(ctx)
 	job := Ez_Gfx_Vertex_Upload_Job {
 		kind = kind,
@@ -624,11 +635,13 @@ ez_gfx_vertex_manager_schedule_upload :: proc(
 		allocation = allocation,
 		offset = offset,
 		byte_size = byte_size,
-		source = source,
+		source_bytes = source_bytes,
+		source_allocator = context.allocator,
 		transfer_timeline = timeline,
 	}
 	if kind == .Vertices {
 		if !ez_gfx_copy_heap_name(&job.heap_name, &job.heap_name_len, heap_name) {
+			ez_gfx_vertex_upload_job_release_source(&job)
 			_ = ez_gfx_gpu_heap_free_chunk(heap, Ez_Gfx_Heap_Chunk{offset = offset, size = byte_size})
 			return allocation, false
 		}
@@ -689,8 +702,7 @@ ez_gfx_vertex_upload_job :: proc(
 	)
 	if !staging_ok do return .Vulkan_Failed
 
-	source_bytes := ([^]u8)(job.source)[:int(job.byte_size)]
-	if !ez_gfx_buffer_write(&staging, source_bytes) {
+	if !ez_gfx_buffer_write(&staging, job.source_bytes) {
 		ez_gfx_buffer_destroy(&staging)
 		return .Vulkan_Failed
 	}
@@ -828,6 +840,14 @@ ez_gfx_vertex_finish_job :: proc(
 			ctx.vertex_uploaded_user_data,
 		)
 	}
+	ez_gfx_vertex_upload_job_release_source(job)
+}
+
+ez_gfx_vertex_upload_job_release_source :: proc(job: ^Ez_Gfx_Vertex_Upload_Job) {
+	if raw_data(job.source_bytes) == nil do return
+	delete(job.source_bytes, job.source_allocator)
+	job.source_bytes = nil
+	job.source_allocator = {}
 }
 
 ez_gfx_vertex_manager_latest_scheduled_timeline :: proc(manager: ^Ez_Gfx_Vertex_Manager) -> u64 {
