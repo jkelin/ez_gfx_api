@@ -28,6 +28,16 @@ Ez_Gfx_Vertex_Pipeline_Descriptor :: struct {
 	ok:                 bool,
 }
 
+Ez_Gfx_Compute_Pipeline_Descriptor :: struct {
+	pipeline:           ^Ez_Gfx_Pipeline_Record,
+	dispatch_x:         u32,
+	dispatch_y:         u32,
+	dispatch_z:         u32,
+	push_constant_size: u32,
+	push_constant_data: [EZ_GFX_MAX_PUSH_CONSTANT_BYTES]byte,
+	ok:                 bool,
+}
+
 ez_gfx_indirect_buffer_manager_acquire :: proc(
 	manager: ^Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
 	stride: vk.DeviceSize,
@@ -75,7 +85,7 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 	size := stride * vk.DeviceSize(capacity + 1)
 	created, create_ok := ez_gfx_buffer_create(
 		size,
-		{.INDIRECT_BUFFER},
+		{.INDIRECT_BUFFER, .STORAGE_BUFFER, .TRANSFER_SRC, .TRANSFER_DST},
 		{.HOST_VISIBLE, .HOST_COHERENT},
 		"ez_gfx multi-draw indirect buffer",
 		0.4,

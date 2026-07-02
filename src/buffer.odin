@@ -76,6 +76,66 @@ ez_gfx_buffer_create :: proc(
 	return buffer, true
 }
 
+ez_gfx_buffer_create_mapped :: proc(
+	size: vk.DeviceSize,
+	usage: vk.BufferUsageFlags,
+	debug_name: cstring = nil,
+	memory_priority: f32 = 0.4,
+) -> (
+	buffer: Ez_Gfx_Buffer,
+	mapped: rawptr,
+	ok: bool,
+) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return buffer, nil, false
+	if ctx.vma_allocator == vma.Allocator(nil) {
+		fmt.eprintln("Vulkan memory allocator is not initialized")
+		return buffer, nil, false
+	}
+	buffer_info := vk.BufferCreateInfo {
+		sType       = .BUFFER_CREATE_INFO,
+		size        = size,
+		usage       = usage,
+		sharingMode = .EXCLUSIVE,
+	}
+	alloc_info := vma.Allocation_Create_Info {
+		flags          = {.Mapped, .Host_Access_Random},
+		usage          = .Auto_Prefer_Host,
+		required_flags = {.HOST_VISIBLE, .HOST_COHERENT},
+		priority       = memory_priority,
+	}
+	result := vma.create_buffer(
+		ctx.vma_allocator,
+		buffer_info,
+		alloc_info,
+		&buffer.handle,
+		&buffer.allocation,
+		&buffer.allocation_info,
+	)
+	if result != .SUCCESS {
+		fmt.eprintln("failed to create persistently mapped buffer")
+		return buffer, nil, false
+	}
+	if buffer.allocation_info.mapped_data == nil {
+		fmt.eprintln("persistently mapped buffer did not return a CPU pointer")
+		ez_gfx_buffer_destroy(&buffer)
+		return buffer, nil, false
+	}
+	if debug_name != nil {
+		ez_gfx_debug_set_object_name(ctx, .BUFFER, ez_gfx_debug_handle(buffer.handle), debug_name)
+		vma.set_allocation_name(ctx.vma_allocator, buffer.allocation, debug_name)
+		ez_gfx_debug_set_object_name(
+			ctx,
+			.DEVICE_MEMORY,
+			ez_gfx_debug_handle(buffer.allocation_info.device_memory),
+			debug_name,
+		)
+	}
+
+	buffer.size = size
+	return buffer, buffer.allocation_info.mapped_data, true
+}
+
 // Maps host-visible memory and copies slice data into the buffer.
 ez_gfx_buffer_write :: proc(buffer: ^Ez_Gfx_Buffer, data: []$T) -> bool {
 	return ez_gfx_buffer_write_at(buffer, 0, data)

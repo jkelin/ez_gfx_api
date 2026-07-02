@@ -99,6 +99,33 @@ swapchain_read_fails_reflection :: proc(t: ^testing.T) {
 }
 
 @(test)
+compute_structured_reflects_metadata :: proc(t: ^testing.T) {
+	program, ok := reflect_compute_shader(t, "tests/compute_structured.slang")
+	if !ok do return
+
+	testing.expect_value(t, program.structured_buffer_binding_count, 1)
+	testing.expect_value(t, program.structured_buffer_bindings[0].access, gfx.Ez_Gfx_Buffer_Access.Read_Write)
+	testing.expect(t, program.structured_buffer_bindings[0].stages == {.COMPUTE})
+}
+
+@(test)
+graphics_structured_reflects_metadata :: proc(t: ^testing.T) {
+	program, ok := reflect_shader(t, "tests/graphics_structured.slang")
+	if !ok do return
+
+	testing.expect_value(t, program.vertex_heap_binding_count, 1)
+	testing.expect_value(t, program.structured_buffer_binding_count, 1)
+	testing.expect_value(t, program.structured_buffer_bindings[0].access, gfx.Ez_Gfx_Buffer_Access.Read)
+}
+
+@(test)
+structured_unsupported_set_fails_reflection :: proc(t: ^testing.T) {
+	program, ok := reflect_shader(t, "tests/structured_unsupported_set.slang")
+	_ = program
+	testing.expect(t, !ok)
+}
+
+@(test)
 color_feedback_loop_fails_reflection :: proc(t: ^testing.T) {
 	expect_shader_case(t, {"tests/color_feedback_loop.slang", false, 0, 0})
 }
@@ -166,6 +193,26 @@ reflect_shader :: proc(
 			path = path,
 			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
 			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+		},
+		&program,
+	)
+	return
+}
+
+reflect_compute_shader :: proc(
+	t: ^testing.T,
+	path: cstring,
+) -> (
+	program: gfx.Ez_Gfx_Shader_Program,
+	ok: bool,
+) {
+	_ = t
+	gfx.ez_gfx_set_current_ctx(&shader_test_ctx)
+	ok = gfx.ez_gfx_shader_reflect(
+		{
+			path = path,
+			compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
+			kind = .Compute,
 		},
 		&program,
 	)

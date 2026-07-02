@@ -81,6 +81,7 @@ Ez_Gfx_Ctx :: struct {
 	texture_manager:                      Ez_Gfx_Texture_Manager,
 	pipeline_manager:                     Ez_Gfx_Pipeline_Manager,
 	indirect_manager:                     Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
+	structured_buffer_manager:               Ez_Gfx_Structured_Buffer_Manager,
 	render_target_manager:                Ez_Gfx_Render_Target_Manager,
 	enable_validation:                    bool,
 	enable_debug:                         bool,
@@ -305,6 +306,7 @@ ez_gfx_ctx_destroy :: proc() {
 		ez_gfx_vertex_manager_destroy(&ctx.vertex_manager)
 		ez_gfx_pipeline_manager_destroy(&ctx.pipeline_manager)
 		ez_gfx_indirect_buffer_manager_destroy(&ctx.indirect_manager)
+		ez_gfx_structured_buffer_manager_destroy(&ctx.structured_buffer_manager)
 		ez_gfx_render_target_manager_destroy(&ctx.render_target_manager)
 		ez_gfx_ctx_destroy_sync_objects(ctx)
 		if ctx.command_pool != vk.CommandPool(0) {
@@ -617,6 +619,7 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		pNext = feature_chain,
 		features = {
 			multiDrawIndirect = true,
+			drawIndirectFirstInstance = true,
 			shaderInt64 = true,
 			vertexPipelineStoresAndAtomics = true,
 			fragmentStoresAndAtomics = true,
@@ -729,6 +732,7 @@ ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) 
 	vk.GetPhysicalDeviceFeatures2(device, &features)
 
 	if !features.features.multiDrawIndirect ||
+	   !features.features.drawIndirectFirstInstance ||
 	   !features.features.shaderInt64 ||
 	   !features.features.vertexPipelineStoresAndAtomics ||
 	   !features.features.fragmentStoresAndAtomics ||

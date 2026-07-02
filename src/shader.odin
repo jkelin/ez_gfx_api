@@ -10,15 +10,18 @@ import vk "vendor:vulkan"
 
 EZ_GFX_DEFAULT_VERTEX_ENTRY :: cstring("vertexmain")
 EZ_GFX_DEFAULT_FRAGMENT_ENTRY :: cstring("fragmentmain")
+EZ_GFX_DEFAULT_COMPUTE_ENTRY :: cstring("computemain")
 // Slang resolves `import ez_gfx;` against this directory (src/ez_gfx.slang).
 EZ_GFX_SLANG_MODULE_SEARCH_PATH :: cstring("src")
 SLANG_VERTEX_HEAP_ATTRIBUTE :: "VertexHeap"
+SLANG_STRUCTURED_BUFFER_ATTRIBUTE :: "StructuredBuffer"
 SLANG_COLOR_TARGET_ATTRIBUTE :: "ColorTarget"
 SLANG_DEPTH_TARGET_ATTRIBUTE :: "DepthTarget"
 SLANG_RELATIVE_SCALE_ATTRIBUTE :: "RelativeScale"
 SLANG_TARGET_LAYOUT_ATTRIBUTE :: "TargetLayout"
 SLANG_LOAD_TARGET_ATTRIBUTE :: "LoadTarget"
 EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS :: 8
+EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS :: 16
 EZ_GFX_MAX_SHADER_TARGET_USAGES :: 8
 EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS :: 8
 EZ_GFX_SHADER_TARGET_NAME_MAX :: 32
@@ -27,6 +30,12 @@ EZ_GFX_MAX_PUSH_CONSTANT_BYTES :: 128
 Ez_Gfx_Shader_Stage :: enum u8 {
 	Vertex,
 	Fragment,
+	Compute,
+}
+
+Ez_Gfx_Shader_Kind :: enum u8 {
+	Graphics,
+	Compute,
 }
 
 Ez_Gfx_Target_Access :: enum u8 {
@@ -45,6 +54,15 @@ Ez_Gfx_Vertex_Heap_Binding :: struct {
 	name_len: int,
 	binding:  u32,
 	set:      u32,
+}
+
+Ez_Gfx_Structured_Buffer_Binding :: struct {
+	name:     [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
+	name_len: int,
+	binding:  u32,
+	set:      u32,
+	access:   Ez_Gfx_Buffer_Access,
+	stages:   vk.ShaderStageFlags,
 }
 
 Ez_Gfx_Shader_Target_Usage :: struct {
@@ -74,6 +92,8 @@ Ez_Gfx_Shader_Program :: struct {
 	module:                    vk.ShaderModule,
 	vertex_heap_bindings:      [EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS]Ez_Gfx_Vertex_Heap_Binding,
 	vertex_heap_binding_count: int,
+	structured_buffer_bindings:      [EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS]Ez_Gfx_Structured_Buffer_Binding,
+	structured_buffer_binding_count: int,
 	target_usages:             [EZ_GFX_MAX_SHADER_TARGET_USAGES]Ez_Gfx_Shader_Target_Usage,
 	target_usage_count:        int,
 	target_declarations:       [EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS]Ez_Gfx_Shader_Target_Declaration,
@@ -85,6 +105,8 @@ Ez_Gfx_Shader_Desc :: struct {
 	path:           cstring,
 	vertex_entry:   cstring,
 	fragment_entry: cstring,
+	compute_entry:  cstring,
+	kind:           Ez_Gfx_Shader_Kind,
 }
 
 @(private)
@@ -93,6 +115,7 @@ Ez_Gfx_Slang_Linked_Program :: struct {
 	slang_module:   ^sp.IModule,
 	vertex_entry:   ^sp.IEntryPoint,
 	fragment_entry: ^sp.IEntryPoint,
+	compute_entry:  ^sp.IEntryPoint,
 	linked_program: ^sp.IComponentType,
 }
 
@@ -135,6 +158,7 @@ ez_gfx_slang_linked_program_release :: proc(program: ^Ez_Gfx_Slang_Linked_Progra
 		program.session = nil
 	}
 	program.linked_program = nil
+	program.compute_entry = nil
 	program.fragment_entry = nil
 	program.vertex_entry = nil
 	program.slang_module = nil
@@ -161,8 +185,12 @@ ez_gfx_shader_destroy_session :: proc(ctx: ^Ez_Gfx_Ctx) {
 
 ez_gfx_shader_prepare_desc :: proc(desc: Ez_Gfx_Shader_Desc) -> Ez_Gfx_Shader_Desc {
 	shader_desc := desc
-	if shader_desc.vertex_entry == nil do shader_desc.vertex_entry = EZ_GFX_DEFAULT_VERTEX_ENTRY
-	if shader_desc.fragment_entry == nil do shader_desc.fragment_entry = EZ_GFX_DEFAULT_FRAGMENT_ENTRY
+	if shader_desc.kind == .Compute {
+		if shader_desc.compute_entry == nil do shader_desc.compute_entry = EZ_GFX_DEFAULT_COMPUTE_ENTRY
+	} else {
+		if shader_desc.vertex_entry == nil do shader_desc.vertex_entry = EZ_GFX_DEFAULT_VERTEX_ENTRY
+		if shader_desc.fragment_entry == nil do shader_desc.fragment_entry = EZ_GFX_DEFAULT_FRAGMENT_ENTRY
+	}
 	return shader_desc
 }
 
@@ -321,42 +349,62 @@ ez_gfx_shader_create_linked_program :: proc(
 	}
 	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
 
-	if !ez_gfx_slang_check(
-		program.slang_module->findEntryPointByName(
-			shader_desc.vertex_entry,
-			&program.vertex_entry,
-		),
-	) {
-		return
-	}
-	if program.vertex_entry == nil {
-		fmt.eprintf("missing Slang entry point: %v\n", shader_desc.vertex_entry)
-		return
-	}
+	components: [3]^sp.IComponentType
+	component_count := 0
+	components[component_count] = program.slang_module
+	component_count += 1
 
-	if !ez_gfx_slang_check(
-		program.slang_module->findEntryPointByName(
-			shader_desc.fragment_entry,
-			&program.fragment_entry,
-		),
-	) {
-		return
-	}
-	if program.fragment_entry == nil {
-		fmt.eprintf("missing Slang entry point: %v\n", shader_desc.fragment_entry)
-		return
-	}
+	if shader_desc.kind == .Compute {
+		if !ez_gfx_slang_check(
+			program.slang_module->findEntryPointByName(
+				shader_desc.compute_entry,
+				&program.compute_entry,
+			),
+		) {
+			return
+		}
+		if program.compute_entry == nil {
+			fmt.eprintf("missing Slang entry point: %v\n", shader_desc.compute_entry)
+			return
+		}
+		components[component_count] = program.compute_entry
+		component_count += 1
+	} else {
+		if !ez_gfx_slang_check(
+			program.slang_module->findEntryPointByName(
+				shader_desc.vertex_entry,
+				&program.vertex_entry,
+			),
+		) {
+			return
+		}
+		if program.vertex_entry == nil {
+			fmt.eprintf("missing Slang entry point: %v\n", shader_desc.vertex_entry)
+			return
+		}
 
-	components: [3]^sp.IComponentType = {
-		program.slang_module,
-		program.vertex_entry,
-		program.fragment_entry,
+		if !ez_gfx_slang_check(
+			program.slang_module->findEntryPointByName(
+				shader_desc.fragment_entry,
+				&program.fragment_entry,
+			),
+		) {
+			return
+		}
+		if program.fragment_entry == nil {
+			fmt.eprintf("missing Slang entry point: %v\n", shader_desc.fragment_entry)
+			return
+		}
+		components[component_count] = program.vertex_entry
+		component_count += 1
+		components[component_count] = program.fragment_entry
+		component_count += 1
 	}
 	diagnostics^ = nil
 	if !ez_gfx_slang_check(
 		program.session->createCompositeComponentType(
 			&components[0],
-			len(components),
+			component_count,
 			&program.linked_program,
 			diagnostics,
 		),
@@ -557,6 +605,8 @@ ez_gfx_shader_desc_identity :: proc(desc: Ez_Gfx_Shader_Desc) -> u64 {
 	hash = ez_gfx_hash_cstring(hash, desc.path)
 	hash = ez_gfx_hash_cstring(hash, desc.vertex_entry)
 	hash = ez_gfx_hash_cstring(hash, desc.fragment_entry)
+	hash = ez_gfx_hash_cstring(hash, desc.compute_entry)
+	hash = (hash ~ u64(desc.kind)) * 1099511628211
 	return hash
 }
 
@@ -584,6 +634,9 @@ ez_gfx_shader_reflect_metadata :: proc(
 	}
 
 	if !ez_gfx_shader_reflect_vertex_heap_bindings_from_layout(program_layout, program) {
+		return false
+	}
+	if !ez_gfx_shader_reflect_structured_buffer_bindings_from_layout(program_layout, program) {
 		return false
 	}
 	if !ez_gfx_shader_reflect_push_constants_from_layout(program_layout, program) {
@@ -750,10 +803,101 @@ ez_gfx_shader_reflect_vertex_heap_bindings_from_layout :: proc(
 	return true
 }
 
+ez_gfx_shader_reflect_structured_buffer_bindings_from_layout :: proc(
+	program_layout: ^sp.ProgramLayout,
+	program: ^Ez_Gfx_Shader_Program,
+) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+
+	global_params := sp.program_layout_getGlobalParamsVarLayout(program_layout)
+	if global_params == nil do return true
+
+	global_type_layout := sp.variable_layout_getTypeLayout(global_params)
+	field_count := sp.type_layout_getFieldCount(global_type_layout)
+	for i in 0 ..< field_count {
+		field_layout := sp.type_layout_getFieldByIndex(global_type_layout, i)
+		if field_layout == nil do continue
+
+		field_variable := sp.variable_layout_getVariable(field_layout)
+		if field_variable == nil do continue
+
+		attribute := sp.variable_findAttributeByName(
+			field_variable,
+			ctx.slang_session,
+			SLANG_STRUCTURED_BUFFER_ATTRIBUTE,
+		)
+		if attribute == nil do continue
+
+		if program.structured_buffer_binding_count >= EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS {
+			fmt.eprintln("too many shader structured buffer bindings")
+			return false
+		}
+		if sp.ReflectionUserAttribute_GetArgumentCount(attribute) != 1 {
+			fmt.eprintln("StructuredBuffer attribute requires one string buffer name")
+			return false
+		}
+
+		name_len: uint
+		name := sp.ReflectionUserAttribute_GetArgumentValueString(attribute, 0, &name_len)
+		if name == nil {
+			fmt.eprintln("StructuredBuffer argument must be a string")
+			return false
+		}
+
+		binding := &program.structured_buffer_bindings[program.structured_buffer_binding_count]
+		if !ez_gfx_copy_shader_target_name(binding.name[:], &binding.name_len, name, int(name_len)) {
+			return false
+		}
+		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
+		if !ez_gfx_shader_reflect_structured_buffer_access(field_type_layout, &binding.access) {
+			return false
+		}
+		binding.binding = sp.variable_layout_getBindingIndex(field_layout)
+		binding_space_category := sp.ParameterCategory.ShaderResource
+		if binding.access == .Write || binding.access == .Read_Write {
+			binding_space_category = .UnorderedAccess
+		}
+		binding.set = u32(sp.variable_layout_getBindingSpace(field_layout, binding_space_category))
+		if binding.set != 0 {
+			fmt.eprintln("only descriptor set 0 is supported for structured buffers")
+			return false
+		}
+		binding.stages = ez_gfx_shader_desc_stage_flags(program)
+		program.structured_buffer_binding_count += 1
+	}
+
+	return true
+}
+
+ez_gfx_shader_reflect_structured_buffer_access :: proc(
+	type_layout: ^sp.TypeLayoutReflection,
+	access: ^Ez_Gfx_Buffer_Access,
+) -> bool {
+	if type_layout == nil {
+		fmt.eprintln("StructuredBuffer reflection is missing type layout")
+		return false
+	}
+	#partial switch sp.type_layout_getResourceAccess(type_layout) {
+	case .READ:
+		access^ = .Read
+		return true
+	case .READ_WRITE:
+		access^ = .Read_Write
+		return true
+	case .WRITE:
+		access^ = .Write
+		return true
+	}
+	fmt.eprintln("StructuredBuffer must reflect as StructuredBuffer or RWStructuredBuffer")
+	return false
+}
+
 ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 	program_layout: ^sp.ProgramLayout,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
+	if program.desc.kind == .Compute do return true
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return false
 
@@ -904,6 +1048,7 @@ ez_gfx_shader_reflect_target_usages_from_layout :: proc(
 	program_layout: ^sp.ProgramLayout,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
+	if program.desc.kind == .Compute do return true
 	vertex_entry := sp.program_layout_findEntryPointByName(
 		program_layout,
 		program.desc.vertex_entry,
@@ -1182,6 +1327,34 @@ ez_gfx_shader_parse_target_access :: proc(
 	}
 	fmt.eprintln("target access must be read, write, or read_write")
 	return false
+}
+
+ez_gfx_shader_parse_buffer_access :: proc(
+	value: cstring,
+	value_len: int,
+	access: ^Ez_Gfx_Buffer_Access,
+) -> bool {
+	if ez_gfx_shader_cstring_arg_equals(value, value_len, "read") {
+		access^ = .Read
+		return true
+	}
+	if ez_gfx_shader_cstring_arg_equals(value, value_len, "write") {
+		access^ = .Write
+		return true
+	}
+	if ez_gfx_shader_cstring_arg_equals(value, value_len, "read_write") {
+		access^ = .Read_Write
+		return true
+	}
+	fmt.eprintln("structured buffer access must be read, write, or read_write")
+	return false
+}
+
+ez_gfx_shader_desc_stage_flags :: proc(program: ^Ez_Gfx_Shader_Program) -> vk.ShaderStageFlags {
+	if program.desc.kind == .Compute {
+		return {.COMPUTE}
+	}
+	return {.VERTEX, .FRAGMENT}
 }
 
 ez_gfx_shader_parse_target_layout :: proc(

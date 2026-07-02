@@ -5,9 +5,12 @@ import vk "vendor:vulkan"
 
 EZ_GFX_MAX_PIPELINES :: 8
 EZ_GFX_MAX_PIPELINE_DESCRIPTOR_BINDINGS ::
-	EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS + EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS
+	EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS +
+	EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS +
+	EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS
 
 Ez_Gfx_Pipeline_Record :: struct {
+	kind:                  Ez_Gfx_Shader_Kind,
 	shader_identity:       u64,
 	shader:                ^Ez_Gfx_Shader_Program,
 	color_formats:         [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.Format,
@@ -18,8 +21,8 @@ Ez_Gfx_Pipeline_Record :: struct {
 	pipeline:              vk.Pipeline,
 	descriptor_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool:       vk.DescriptorPool,
-	descriptor_set:        vk.DescriptorSet,
-	descriptor_version:    u64,
+	descriptor_sets:       [EZ_GFX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
+	descriptor_versions:   [EZ_GFX_FRAMES_IN_FLIGHT]u64,
 	last_used:             u64,
 }
 
@@ -137,7 +140,8 @@ ez_gfx_pipeline_manager_get :: proc(
 
 	for i in 0 ..< manager.count {
 		candidate := &manager.records[i]
-		if candidate.shader_identity == shader.identity &&
+		if candidate.kind == .Graphics &&
+		   candidate.shader_identity == shader.identity &&
 		   ez_gfx_pipeline_color_formats_equal(candidate, color_formats, color_format_count) &&
 		   ez_gfx_pipeline_depth_format_equal(candidate, depth_format, has_depth) {
 			candidate.last_used = manager.clock
@@ -160,6 +164,7 @@ ez_gfx_pipeline_manager_get :: proc(
 		ez_gfx_pipeline_record_destroy(ctx, slot)
 	}
 
+	slot.kind = .Graphics
 	slot.shader_identity = shader.identity
 	slot.shader = shader
 	slot.color_formats = color_formats
@@ -168,6 +173,54 @@ ez_gfx_pipeline_manager_get :: proc(
 	slot.has_depth = has_depth
 	slot.last_used = manager.clock
 	if !ez_gfx_pipeline_record_create(ctx, slot, shader) {
+		ez_gfx_pipeline_record_destroy(ctx, slot)
+		return nil, false
+	}
+	return slot, true
+}
+
+ez_gfx_compute_pipeline_manager_get :: proc(
+	manager: ^Ez_Gfx_Pipeline_Manager,
+	shader: ^Ez_Gfx_Shader_Program,
+) -> (
+	record: ^Ez_Gfx_Pipeline_Record,
+	ok: bool,
+) {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return nil, false
+	if shader.desc.kind != .Compute {
+		fmt.eprintln("compute pipeline requires a compute shader")
+		return nil, false
+	}
+	manager.clock += 1
+	for i in 0 ..< manager.count {
+		candidate := &manager.records[i]
+		if candidate.kind == .Compute && candidate.shader_identity == shader.identity {
+			candidate.last_used = manager.clock
+			return candidate, true
+		}
+	}
+
+	slot: ^Ez_Gfx_Pipeline_Record
+	if manager.count < EZ_GFX_MAX_PIPELINES {
+		slot = &manager.records[manager.count]
+		manager.count += 1
+	} else {
+		oldest := 0
+		for i in 1 ..< manager.count {
+			if manager.records[i].last_used < manager.records[oldest].last_used {
+				oldest = i
+			}
+		}
+		slot = &manager.records[oldest]
+		ez_gfx_pipeline_record_destroy(ctx, slot)
+	}
+
+	slot.kind = .Compute
+	slot.shader_identity = shader.identity
+	slot.shader = shader
+	slot.last_used = manager.clock
+	if !ez_gfx_compute_pipeline_record_create(ctx, slot, shader) {
 		ez_gfx_pipeline_record_destroy(ctx, slot)
 		return nil, false
 	}
@@ -324,12 +377,81 @@ ez_gfx_pipeline_record_create :: proc(
 	return true
 }
 
+ez_gfx_compute_pipeline_record_create :: proc(
+	ctx: ^Ez_Gfx_Ctx,
+	record: ^Ez_Gfx_Pipeline_Record,
+	shader: ^Ez_Gfx_Shader_Program,
+) -> bool {
+	if !ez_gfx_pipeline_create_descriptors(ctx, record, shader) do return false
+
+	set_layout_count: u32
+	set_layouts := [?]vk.DescriptorSetLayout{record.descriptor_set_layout}
+	if record.descriptor_set_layout != vk.DescriptorSetLayout(0) {
+		set_layout_count = 1
+	}
+
+	push_constant_range := vk.PushConstantRange {
+		stageFlags = {.COMPUTE},
+		offset     = 0,
+		size       = shader.push_constant_size,
+	}
+	push_constant_range_count: u32
+	push_constant_ranges: ^vk.PushConstantRange
+	if shader.push_constant_size > 0 {
+		push_constant_range_count = 1
+		push_constant_ranges = &push_constant_range
+	}
+
+	layout_info := vk.PipelineLayoutCreateInfo {
+		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+		setLayoutCount         = set_layout_count,
+		pSetLayouts            = &set_layouts[0],
+		pushConstantRangeCount = push_constant_range_count,
+		pPushConstantRanges    = push_constant_ranges,
+	}
+	if vk.CreatePipelineLayout(ctx.device, &layout_info, nil, &record.pipeline_layout) !=
+	   .SUCCESS {
+		fmt.eprintln("failed to create compute pipeline layout")
+		return false
+	}
+
+	stage := vk.PipelineShaderStageCreateInfo {
+		sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+		stage  = {.COMPUTE},
+		module = shader.module,
+		pName  = shader.desc.compute_entry,
+	}
+	pipeline_info := vk.ComputePipelineCreateInfo {
+		sType  = .COMPUTE_PIPELINE_CREATE_INFO,
+		stage  = stage,
+		layout = record.pipeline_layout,
+	}
+	if vk.CreateComputePipelines(ctx.device, 0, 1, &pipeline_info, nil, &record.pipeline) !=
+	   .SUCCESS {
+		fmt.eprintln("failed to create compute pipeline")
+		return false
+	}
+	ez_gfx_debug_set_object_name(
+		ctx,
+		.PIPELINE,
+		ez_gfx_debug_handle(record.pipeline),
+		"ez_gfx compute pipeline",
+	)
+	return true
+}
+
 ez_gfx_pipeline_create_descriptors :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
 ) -> bool {
-	binding_count := shader.vertex_heap_binding_count + shader.target_declaration_count
+	binding_count :=
+		shader.vertex_heap_binding_count +
+		shader.structured_buffer_binding_count +
+		shader.target_declaration_count
+	if binding_count == 0 {
+		return true
+	}
 
 	layout_bindings: [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_BINDINGS]vk.DescriptorSetLayoutBinding
 	binding_index := 0
@@ -346,6 +468,22 @@ ez_gfx_pipeline_create_descriptors :: proc(
 			descriptorType  = .STORAGE_BUFFER,
 			descriptorCount = 1,
 			stageFlags      = {.VERTEX},
+		}
+		binding_index += 1
+	}
+
+	for i in 0 ..< shader.structured_buffer_binding_count {
+		buffer_info := &shader.structured_buffer_bindings[i]
+		if buffer_info.set != 0 {
+			fmt.eprintln("only descriptor set 0 is supported for structured buffers")
+			return false
+		}
+
+		layout_bindings[binding_index] = vk.DescriptorSetLayoutBinding {
+			binding         = buffer_info.binding,
+			descriptorType  = .STORAGE_BUFFER,
+			descriptorCount = 1,
+			stageFlags      = buffer_info.stages,
 		}
 		binding_index += 1
 	}
@@ -393,17 +531,18 @@ ez_gfx_pipeline_create_descriptors :: proc(
 
 	pool_sizes: [3]vk.DescriptorPoolSize
 	pool_size_count := 0
-	if shader.vertex_heap_binding_count > 0 {
+	structured_descriptor_count := shader.vertex_heap_binding_count + shader.structured_buffer_binding_count
+	if structured_descriptor_count > 0 {
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
 			type            = .STORAGE_BUFFER,
-			descriptorCount = u32(shader.vertex_heap_binding_count),
+			descriptorCount = u32(structured_descriptor_count * EZ_GFX_FRAMES_IN_FLIGHT),
 		}
 		pool_size_count += 1
 	}
 	if shader.target_declaration_count > 0 {
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
 			type            = .COMBINED_IMAGE_SAMPLER,
-			descriptorCount = u32(shader.target_declaration_count),
+			descriptorCount = u32(shader.target_declaration_count * EZ_GFX_FRAMES_IN_FLIGHT),
 		}
 		pool_size_count += 1
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
@@ -414,7 +553,7 @@ ez_gfx_pipeline_create_descriptors :: proc(
 	}
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-		maxSets       = 1,
+		maxSets       = EZ_GFX_FRAMES_IN_FLIGHT,
 		poolSizeCount = u32(pool_size_count),
 		pPoolSizes    = &pool_sizes[0],
 	}
@@ -429,34 +568,46 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		"ez_gfx descriptor pool",
 	)
 
+	set_layouts: [EZ_GFX_FRAMES_IN_FLIGHT]vk.DescriptorSetLayout
+	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
+		set_layouts[i] = record.descriptor_set_layout
+	}
 	allocate_info := vk.DescriptorSetAllocateInfo {
 		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
 		descriptorPool     = record.descriptor_pool,
-		descriptorSetCount = 1,
-		pSetLayouts        = &record.descriptor_set_layout,
+		descriptorSetCount = EZ_GFX_FRAMES_IN_FLIGHT,
+		pSetLayouts        = &set_layouts[0],
 	}
-	if vk.AllocateDescriptorSets(ctx.device, &allocate_info, &record.descriptor_set) != .SUCCESS {
+	if vk.AllocateDescriptorSets(ctx.device, &allocate_info, &record.descriptor_sets[0]) != .SUCCESS {
 		fmt.eprintln("failed to allocate descriptor set")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
-		ctx,
-		.DESCRIPTOR_SET,
-		ez_gfx_debug_handle(record.descriptor_set),
-		"ez_gfx descriptor set",
-	)
+	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
+		ez_gfx_debug_set_object_name(
+			ctx,
+			.DESCRIPTOR_SET,
+			ez_gfx_debug_handle(record.descriptor_sets[i]),
+			"ez_gfx descriptor set",
+		)
+	}
 
-	return ez_gfx_pipeline_update_descriptors(ctx, record, shader)
+	return ez_gfx_pipeline_update_descriptors(ctx, record, shader, ez_gfx_current_render.frame_slot)
 }
 
 ez_gfx_pipeline_update_descriptors :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
+	frame_slot: u32,
 ) -> bool {
-	if record.descriptor_set == vk.DescriptorSet(0) do return true
+	frame_index := int(frame_slot)
+	version := ez_gfx_pipeline_descriptor_version(ctx, shader)
+	if record.descriptor_sets[frame_index] == vk.DescriptorSet(0) {
+		record.descriptor_versions[frame_index] = version
+		return true
+	}
 
-	buffer_infos: [EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS]vk.DescriptorBufferInfo
+	buffer_infos: [EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS + EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS]vk.DescriptorBufferInfo
 	image_infos: [EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS]vk.DescriptorImageInfo
 	writes: [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_BINDINGS]vk.WriteDescriptorSet
 	write_count := 0
@@ -480,11 +631,41 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
-			dstSet          = record.descriptor_set,
+			dstSet          = record.descriptor_sets[frame_index],
 			dstBinding      = binding_info.binding,
 			descriptorCount = 1,
 			descriptorType  = .STORAGE_BUFFER,
 			pBufferInfo     = &buffer_infos[i],
+		}
+		write_count += 1
+	}
+
+	structured_info_base := shader.vertex_heap_binding_count
+	for i in 0 ..< shader.structured_buffer_binding_count {
+		binding_info := &shader.structured_buffer_bindings[i]
+		render_binding := ez_gfx_render_find_structured_binding(
+			&ez_gfx_current_render,
+			binding_info.name[:],
+			binding_info.name_len,
+		)
+		if render_binding == nil || render_binding.buffer == nil {
+			fmt.eprintln("shader references a missing render structured buffer")
+			return false
+		}
+
+		info_index := structured_info_base + i
+		buffer_infos[info_index] = vk.DescriptorBufferInfo {
+			buffer = render_binding.buffer.handle,
+			offset = 0,
+			range  = render_binding.size,
+		}
+		writes[write_count] = vk.WriteDescriptorSet {
+			sType           = .WRITE_DESCRIPTOR_SET,
+			dstSet          = record.descriptor_sets[frame_index],
+			dstBinding      = binding_info.binding,
+			descriptorCount = 1,
+			descriptorType  = .STORAGE_BUFFER,
+			pBufferInfo     = &buffer_infos[info_index],
 		}
 		write_count += 1
 	}
@@ -507,7 +688,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
-			dstSet          = record.descriptor_set,
+			dstSet          = record.descriptor_sets[frame_index],
 			dstBinding      = target_info.binding,
 			descriptorCount = 1,
 			descriptorType  = ez_gfx_pipeline_target_descriptor_type(target_info),
@@ -519,7 +700,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	if write_count > 0 {
 		vk.UpdateDescriptorSets(ctx.device, u32(write_count), &writes[0], 0, nil)
 	}
-	record.descriptor_version = ctx.render_target_manager.version
+	record.descriptor_versions[frame_index] = version
 	return true
 }
 
@@ -535,6 +716,49 @@ ez_gfx_pipeline_target_descriptor_layout :: proc(
 ) -> vk.ImageLayout {
 	if target_info.storage do return .GENERAL
 	return ez_gfx_render_target_descriptor_layout(target_info.kind)
+}
+
+ez_gfx_pipeline_descriptor_version :: proc(
+	ctx: ^Ez_Gfx_Ctx,
+	shader: ^Ez_Gfx_Shader_Program,
+) -> u64 {
+	version := ctx.render_target_manager.version
+	if shader.structured_buffer_binding_count > 0 {
+		version = ez_gfx_pipeline_hash_u64(version, ez_gfx_current_render.structured_binding_version)
+		version = version * 16777619 + ctx.structured_buffer_manager.version
+		for i in 0 ..< shader.structured_buffer_binding_count {
+			binding_info := &shader.structured_buffer_bindings[i]
+			render_binding := ez_gfx_render_find_structured_binding(
+				&ez_gfx_current_render,
+				binding_info.name[:],
+				binding_info.name_len,
+			)
+			version = ez_gfx_pipeline_hash_bytes(version, binding_info.name[:], binding_info.name_len)
+			version = ez_gfx_pipeline_hash_u64(version, u64(binding_info.binding))
+			version = ez_gfx_pipeline_hash_u64(version, u64(binding_info.access))
+			if render_binding != nil && render_binding.buffer != nil {
+				version = ez_gfx_pipeline_hash_u64(version, u64(uintptr(render_binding.buffer.handle)))
+				version = ez_gfx_pipeline_hash_u64(version, u64(render_binding.size))
+			}
+		}
+	}
+	return version
+}
+
+ez_gfx_pipeline_hash_u64 :: proc(hash: u64, value: u64) -> u64 {
+	result := hash
+	for shift: uint = 0; shift < 64; shift += 8 {
+		result = (result ~ ((value >> shift) & 0xff)) * 1099511628211
+	}
+	return result
+}
+
+ez_gfx_pipeline_hash_bytes :: proc(hash: u64, bytes: []byte, byte_count: int) -> u64 {
+	result := hash
+	for i in 0 ..< byte_count {
+		result = (result ~ u64(bytes[i])) * 1099511628211
+	}
+	return result
 }
 
 ez_gfx_pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipeline_Record) {
@@ -555,8 +779,9 @@ ez_gfx_pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipelin
 		vk.DestroyDescriptorSetLayout(ctx.device, record.descriptor_set_layout, nil)
 		record.descriptor_set_layout = vk.DescriptorSetLayout(0)
 	}
-	record.descriptor_set = vk.DescriptorSet(0)
-	record.descriptor_version = 0
+	record.descriptor_sets = {}
+	record.descriptor_versions = {}
+	record.kind = .Graphics
 	record.shader_identity = 0
 	record.shader = nil
 	record.color_formats = {}

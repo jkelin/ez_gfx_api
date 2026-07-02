@@ -5,11 +5,20 @@ import "core:sync"
 import vk "vendor:vulkan"
 
 EZ_GFX_MAX_RENDER_GRAPH_ACCESSES ::
-	EZ_GFX_MAX_SHADER_TARGET_USAGES + EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS + 1
+	EZ_GFX_MAX_SHADER_TARGET_USAGES +
+	EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS +
+	EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS +
+	1
 
 Ez_Gfx_Render_Graph_Resource_Kind :: enum u8 {
 	Managed,
 	Swapchain,
+	Structured_Buffer,
+}
+
+Ez_Gfx_Render_Graph_Node_Kind :: enum u8 {
+	Graphics,
+	Compute,
 }
 
 Ez_Gfx_Render_Graph_Access :: struct {
@@ -18,16 +27,21 @@ Ez_Gfx_Render_Graph_Access :: struct {
 	resource_kind:          Ez_Gfx_Render_Graph_Resource_Kind,
 	target_kind:            Ez_Gfx_Render_Target_Kind,
 	target:                 ^Ez_Gfx_Render_Target_Texture,
+	structured_binding:        ^Ez_Gfx_Render_Structured_Binding,
 	sampled_read:           bool,
 	storage_read:           bool,
 	storage_write:          bool,
+	structured_read:           bool,
+	structured_write:          bool,
 	color_write:            bool,
 	depth_write:            bool,
 	color_attachment_index: u32,
 }
 
 Ez_Gfx_Render_Graph_Node :: struct {
+	kind:            Ez_Gfx_Render_Graph_Node_Kind,
 	descriptor:      Ez_Gfx_Vertex_Pipeline_Descriptor,
+	compute:         Ez_Gfx_Compute_Pipeline_Descriptor,
 	accesses:        [EZ_GFX_MAX_RENDER_GRAPH_ACCESSES]Ez_Gfx_Render_Graph_Access,
 	access_count:    int,
 	has_color_write: bool,
@@ -46,6 +60,7 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 	descriptor: Ez_Gfx_Vertex_Pipeline_Descriptor,
 	shader: ^Ez_Gfx_Shader_Program,
 	target_manager: ^Ez_Gfx_Render_Target_Manager,
+	render: ^Ez_Gfx_Render,
 ) -> bool {
 	if graph.node_count >= EZ_GFX_MAX_RENDER_PIPELINES {
 		fmt.eprintln("too many vertex pipelines in one render graph")
@@ -54,6 +69,7 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 
 	node := &graph.nodes[graph.node_count]
 	node^ = {}
+	node.kind = .Graphics
 	node.descriptor = descriptor
 
 	for i in 0 ..< shader.target_usage_count {
@@ -148,6 +164,10 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 		}
 	}
 
+	if !ez_gfx_render_graph_node_add_Structured_Buffers(node, shader, render) {
+		return false
+	}
+
 	if !node.has_color_write {
 		if !ez_gfx_render_graph_node_add_default_swapchain_write(node) {
 			return false
@@ -155,6 +175,57 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 	}
 
 	graph.node_count += 1
+	return true
+}
+
+ez_gfx_render_graph_add_compute_pipeline :: proc(
+	graph: ^Ez_Gfx_Render_Graph,
+	descriptor: Ez_Gfx_Compute_Pipeline_Descriptor,
+	shader: ^Ez_Gfx_Shader_Program,
+	render: ^Ez_Gfx_Render,
+) -> bool {
+	if graph.node_count >= EZ_GFX_MAX_RENDER_PIPELINES {
+		fmt.eprintln("too many pipelines in one render graph")
+		return false
+	}
+
+	node := &graph.nodes[graph.node_count]
+	node^ = {}
+	node.kind = .Compute
+	node.compute = descriptor
+	if !ez_gfx_render_graph_node_add_Structured_Buffers(node, shader, render) {
+		return false
+	}
+	graph.node_count += 1
+	return true
+}
+
+ez_gfx_render_graph_node_add_Structured_Buffers :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	shader: ^Ez_Gfx_Shader_Program,
+	render: ^Ez_Gfx_Render,
+) -> bool {
+	for i in 0 ..< shader.structured_buffer_binding_count {
+		binding_info := &shader.structured_buffer_bindings[i]
+		render_binding := ez_gfx_render_find_structured_binding(
+			render,
+			binding_info.name[:],
+			binding_info.name_len,
+		)
+		if render_binding == nil {
+			fmt.eprintln("shader structured buffer was not added to the render")
+			return false
+		}
+
+		access, ok := ez_gfx_render_graph_node_next_access(node)
+		if !ok do return false
+		access.name = binding_info.name
+		access.name_len = binding_info.name_len
+		access.resource_kind = .Structured_Buffer
+		access.structured_binding = render_binding
+		access.structured_read = binding_info.access == .Read || binding_info.access == .Read_Write
+		access.structured_write = binding_info.access == .Write || binding_info.access == .Read_Write
+	}
 	return true
 }
 
@@ -334,6 +405,8 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 		if !ez_gfx_render_graph_prepare_storage_accesses(render, node, command_buffer) {
 			return false
 		}
+		ez_gfx_render_graph_prepare_Structured_Buffers(node, command_buffer)
+		ez_gfx_render_graph_prepare_indirect_buffer(node, command_buffer)
 		if !ez_gfx_render_graph_execute_node(render, node, command_buffer) {
 			return false
 		}
@@ -373,7 +446,9 @@ ez_gfx_render_graph_execute :: proc(render: ^Ez_Gfx_Render) -> bool {
 				signal_value,
 			)
 		}
-		ez_gfx_indirect_buffer_mark_submitted(node.descriptor.indirect_buffer, signal_value)
+		if node.kind == .Graphics {
+			ez_gfx_indirect_buffer_mark_submitted(node.descriptor.indirect_buffer, signal_value)
+		}
 		ez_gfx_render_graph_mark_node_writes_submitted(render, node, signal_value)
 	}
 
@@ -418,13 +493,95 @@ ez_gfx_render_graph_prepare_sampled_reads :: proc(
 	return true
 }
 
+ez_gfx_render_graph_prepare_Structured_Buffers :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	command_buffer: vk.CommandBuffer,
+) {
+	barriers: [EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS]vk.BufferMemoryBarrier2
+	barrier_count := 0
+	for i in 0 ..< node.access_count {
+		access := &node.accesses[i]
+		if access.resource_kind != .Structured_Buffer || access.structured_binding == nil do continue
+		if access.structured_binding.buffer == nil do continue
+
+		dst_access: vk.AccessFlags2
+		if access.structured_read do dst_access |= {.SHADER_STORAGE_READ}
+		if access.structured_write do dst_access |= {.SHADER_STORAGE_WRITE}
+		if dst_access == {} do continue
+
+		barriers[barrier_count] = vk.BufferMemoryBarrier2 {
+			sType               = .BUFFER_MEMORY_BARRIER_2,
+			srcStageMask        = {.HOST, .COMPUTE_SHADER, .VERTEX_SHADER, .FRAGMENT_SHADER, .DRAW_INDIRECT},
+			srcAccessMask       = {.HOST_WRITE, .SHADER_STORAGE_WRITE, .SHADER_STORAGE_READ, .INDIRECT_COMMAND_READ},
+			dstStageMask        = ez_gfx_render_graph_node_shader_stage(node),
+			dstAccessMask       = dst_access,
+			srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+			dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+			buffer              = access.structured_binding.buffer.handle,
+			offset              = 0,
+			size                = access.structured_binding.size,
+		}
+		barrier_count += 1
+	}
+	if barrier_count == 0 do return
+
+	dependency := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = u32(barrier_count),
+		pBufferMemoryBarriers    = &barriers[0],
+	}
+	vk.CmdPipelineBarrier2(command_buffer, &dependency)
+}
+
+ez_gfx_render_graph_prepare_indirect_buffer :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	command_buffer: vk.CommandBuffer,
+) {
+	if node.kind != .Graphics || node.descriptor.indirect_buffer == nil do return
+
+	barrier := vk.BufferMemoryBarrier2 {
+		sType               = .BUFFER_MEMORY_BARRIER_2,
+		srcStageMask        = {.COMPUTE_SHADER, .TRANSFER, .HOST},
+		srcAccessMask       = {.SHADER_STORAGE_WRITE, .TRANSFER_WRITE, .HOST_WRITE},
+		dstStageMask        = {.DRAW_INDIRECT},
+		dstAccessMask       = {.INDIRECT_COMMAND_READ},
+		srcQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		dstQueueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+		buffer              = node.descriptor.indirect_buffer.buffer.handle,
+		offset              = 0,
+		size                = node.descriptor.indirect_buffer.buffer.size,
+	}
+	dependency := vk.DependencyInfo {
+		sType                    = .DEPENDENCY_INFO,
+		bufferMemoryBarrierCount = 1,
+		pBufferMemoryBarriers    = &barrier,
+	}
+	vk.CmdPipelineBarrier2(command_buffer, &dependency)
+}
+
+ez_gfx_render_graph_node_shader_stage :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+) -> vk.PipelineStageFlags2 {
+	if node.kind == .Compute do return {.COMPUTE_SHADER}
+	return {.VERTEX_SHADER, .FRAGMENT_SHADER, .DRAW_INDIRECT}
+}
+
 ez_gfx_render_graph_node_wait_value :: proc(node: ^Ez_Gfx_Render_Graph_Node) -> u64 {
 	wait_value: u64
 	for i in 0 ..< node.access_count {
 		access := &node.accesses[i]
-		if access.resource_kind != .Managed || access.target == nil do continue
-		if access.target.last_write_timeline > wait_value {
+		if access.resource_kind == .Managed && access.target != nil && access.target.last_write_timeline > wait_value {
 			wait_value = access.target.last_write_timeline
+		}
+		if access.resource_kind == .Structured_Buffer && access.structured_binding != nil {
+			if access.structured_binding.structured_buffer != nil &&
+			   access.structured_binding.structured_buffer.last_write_timeline > wait_value {
+				wait_value = access.structured_binding.structured_buffer.last_write_timeline
+			}
+			if access.structured_binding.indirect_buffer != nil &&
+			   access.structured_binding.indirect_buffer.last_used_timeline > wait_value {
+				wait_value = access.structured_binding.indirect_buffer.last_used_timeline
+			}
 		}
 	}
 	return wait_value
@@ -487,6 +644,10 @@ ez_gfx_render_graph_execute_node :: proc(
 	command_buffer: vk.CommandBuffer,
 ) -> bool {
 	ctx := render.ctx
+	if node.kind == .Compute {
+		return ez_gfx_render_graph_execute_compute_node(render, node, command_buffer)
+	}
+
 	vk.CmdBindIndexBuffer(command_buffer, ctx.vertex_manager.index_heap.buffer.handle, 0, .UINT32)
 
 	if !ez_gfx_render_graph_begin_node_rendering(render, node, command_buffer) {
@@ -496,14 +657,15 @@ ez_gfx_render_graph_execute_node :: proc(
 	descriptor := &node.descriptor
 	if descriptor.ok {
 		vk.CmdBindPipeline(command_buffer, .GRAPHICS, descriptor.pipeline.pipeline)
-		if descriptor.pipeline.descriptor_set != vk.DescriptorSet(0) {
+		descriptor_set := descriptor.pipeline.descriptor_sets[render.frame_slot]
+		if descriptor_set != vk.DescriptorSet(0) {
 			vk.CmdBindDescriptorSets(
 				command_buffer,
 				.GRAPHICS,
 				descriptor.pipeline.pipeline_layout,
 				0,
 				1,
-				&descriptor.pipeline.descriptor_set,
+				&descriptor_set,
 				0,
 				nil,
 			)
@@ -542,6 +704,43 @@ ez_gfx_render_graph_execute_node :: proc(
 	}
 
 	vk.CmdEndRendering(command_buffer)
+	return true
+}
+
+ez_gfx_render_graph_execute_compute_node :: proc(
+	render: ^Ez_Gfx_Render,
+	node: ^Ez_Gfx_Render_Graph_Node,
+	command_buffer: vk.CommandBuffer,
+) -> bool {
+	_ = render
+	descriptor := &node.compute
+	if !descriptor.ok do return true
+
+	vk.CmdBindPipeline(command_buffer, .COMPUTE, descriptor.pipeline.pipeline)
+	descriptor_set := descriptor.pipeline.descriptor_sets[render.frame_slot]
+	if descriptor_set != vk.DescriptorSet(0) {
+		vk.CmdBindDescriptorSets(
+			command_buffer,
+			.COMPUTE,
+			descriptor.pipeline.pipeline_layout,
+			0,
+			1,
+			&descriptor_set,
+			0,
+			nil,
+		)
+	}
+	if descriptor.push_constant_size > 0 {
+		vk.CmdPushConstants(
+			command_buffer,
+			descriptor.pipeline.pipeline_layout,
+			{.COMPUTE},
+			0,
+			descriptor.push_constant_size,
+			&descriptor.push_constant_data[0],
+		)
+	}
+	vk.CmdDispatch(command_buffer, descriptor.dispatch_x, descriptor.dispatch_y, descriptor.dispatch_z)
 	return true
 }
 
@@ -738,6 +937,14 @@ ez_gfx_render_graph_mark_node_writes_submitted :: proc(
 		if access.resource_kind == .Managed && (access.color_write || access.depth_write || access.storage_write) {
 			access.target.initialized = true
 			access.target.last_write_timeline = timeline_value
+		}
+		if access.resource_kind == .Structured_Buffer && access.structured_write && access.structured_binding != nil {
+			if access.structured_binding.structured_buffer != nil {
+				access.structured_binding.structured_buffer.last_write_timeline = timeline_value
+			}
+			if access.structured_binding.indirect_buffer != nil {
+				access.structured_binding.indirect_buffer.last_used_timeline = timeline_value
+			}
 		}
 	}
 }

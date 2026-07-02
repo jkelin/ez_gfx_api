@@ -20,6 +20,9 @@ Ez_Gfx_Render :: struct {
 	graph:          Ez_Gfx_Render_Graph,
 	pipelines:      [EZ_GFX_MAX_RENDER_PIPELINES]Ez_Gfx_Vertex_Pipeline_Descriptor,
 	pipeline_count: int,
+	structured_bindings:        [EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS]Ez_Gfx_Render_Structured_Binding,
+	structured_binding_count:   int,
+	structured_binding_version: u64,
 	active:         bool,
 	ready:          bool,
 }
@@ -76,6 +79,7 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 	ez_gfx_texture_manager_collect_destroyed(&ctx.texture_manager, ctx)
 	ez_gfx_vertex_manager_collect_completed(&ctx.vertex_manager)
 	ez_gfx_indirect_buffer_manager_release_completed(&ctx.indirect_manager)
+	ez_gfx_structured_buffer_manager_collect_completed(&ctx.structured_buffer_manager)
 
 	acquire_result := vk.AcquireNextImageKHR(
 		ctx.device,
@@ -108,6 +112,38 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 ez_gfx_render_add_vertex_pipeline :: proc {
 	ez_gfx_render_add_vertex_pipeline_without_push_constants,
 	ez_gfx_render_add_vertex_pipeline_with_push_constants,
+}
+
+ez_gfx_render_add_compute_pipeline :: proc {
+	ez_gfx_render_add_compute_pipeline_without_push_constants,
+	ez_gfx_render_add_compute_pipeline_with_push_constants,
+}
+
+ez_gfx_render_add_vertex_pipeline_with_indirect :: proc {
+	ez_gfx_render_add_vertex_pipeline_with_indirect_without_push_constants,
+	ez_gfx_render_add_vertex_pipeline_with_indirect_with_push_constants,
+}
+
+ez_gfx_render_acquire_indirect_buffer :: proc(
+	indirect_stride: vk.DeviceSize,
+	indirect_capacity: u32,
+) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
+	render := &ez_gfx_current_render
+	if !render.active || !render.ready {
+		fmt.eprintln("ez_gfx_render_acquire_indirect_buffer called without an active render")
+		return {}
+	}
+	indirect, indirect_ok := ez_gfx_indirect_buffer_manager_acquire(
+		&render.ctx.indirect_manager,
+		indirect_stride,
+		indirect_capacity,
+	)
+	if !indirect_ok do return {}
+	return Ez_Gfx_Vertex_Pipeline_Descriptor {
+		indirect_buffer = indirect,
+		indirect_stride = indirect_stride,
+		ok              = true,
+	}
 }
 
 ez_gfx_render_add_vertex_pipeline_without_push_constants :: proc(
@@ -176,8 +212,9 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 		render.window.swapchain.format,
 	)
 	if !pipeline_ok do return {}
-	if pipeline.descriptor_version != render.ctx.render_target_manager.version {
-		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader) {
+	frame_index := int(render.frame_slot)
+	if pipeline.descriptor_versions[frame_index] != ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
+		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot) {
 			return {}
 		}
 	}
@@ -207,7 +244,175 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 		descriptor,
 		shader,
 		&render.ctx.render_target_manager,
+		render,
 	) {
+		return {}
+	}
+	return descriptor
+}
+
+ez_gfx_render_add_vertex_pipeline_with_indirect_without_push_constants :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	descriptor: ^Ez_Gfx_Vertex_Pipeline_Descriptor,
+) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
+	return ez_gfx_render_add_vertex_pipeline_with_indirect_impl(shader, descriptor, nil, 0)
+}
+
+ez_gfx_render_add_vertex_pipeline_with_indirect_with_push_constants :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	descriptor: ^Ez_Gfx_Vertex_Pipeline_Descriptor,
+	push_constants: $T,
+) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
+	data := push_constants
+	return ez_gfx_render_add_vertex_pipeline_with_indirect_impl(
+		shader,
+		descriptor,
+		rawptr(&data),
+		u32(size_of(T)),
+	)
+}
+
+ez_gfx_render_add_vertex_pipeline_with_indirect_impl :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	descriptor: ^Ez_Gfx_Vertex_Pipeline_Descriptor,
+	push_constant_data: rawptr,
+	push_constant_size: u32,
+) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
+	render := &ez_gfx_current_render
+	if descriptor == nil || !descriptor.ok || descriptor.indirect_buffer == nil {
+		fmt.eprintln("vertex pipeline indirect descriptor is not valid")
+		return {}
+	}
+	if !render.active || !render.ready {
+		fmt.eprintln("ez_gfx_render_add_vertex_pipeline_with_indirect called without an active render")
+		return {}
+	}
+	if render.pipeline_count >= EZ_GFX_MAX_RENDER_PIPELINES {
+		fmt.eprintln("too many vertex pipelines in one render")
+		return {}
+	}
+	if shader.push_constant_size != push_constant_size {
+		fmt.eprintf(
+			"push constant size mismatch: shader expects %v bytes, caller passed %v bytes\n",
+			shader.push_constant_size,
+			push_constant_size,
+		)
+		return {}
+	}
+	if !ez_gfx_render_target_manager_acquire_shader_targets(
+		&render.ctx.render_target_manager,
+		shader,
+		render.window.swapchain.extent,
+	) {
+		return {}
+	}
+	pipeline, pipeline_ok := ez_gfx_pipeline_manager_get(
+		&render.ctx.pipeline_manager,
+		shader,
+		render.window.swapchain.format,
+	)
+	if !pipeline_ok do return {}
+	frame_index := int(render.frame_slot)
+	if pipeline.descriptor_versions[frame_index] != ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
+		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot) {
+			return {}
+		}
+	}
+
+	result := descriptor^
+	result.pipeline = pipeline
+	result.push_constant_size = push_constant_size
+	if push_constant_size > 0 {
+		mem.copy(&result.push_constant_data[0], push_constant_data, int(push_constant_size))
+	}
+	render.pipelines[render.pipeline_count] = result
+	render.pipeline_count += 1
+	if !ez_gfx_render_graph_add_vertex_pipeline(
+		&render.graph,
+		result,
+		shader,
+		&render.ctx.render_target_manager,
+		render,
+	) {
+		return {}
+	}
+	descriptor^ = result
+	return result
+}
+
+ez_gfx_render_add_compute_pipeline_without_push_constants :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	dispatch_x, dispatch_y, dispatch_z: u32,
+) -> Ez_Gfx_Compute_Pipeline_Descriptor {
+	return ez_gfx_render_add_compute_pipeline_impl(shader, dispatch_x, dispatch_y, dispatch_z, nil, 0)
+}
+
+ez_gfx_render_add_compute_pipeline_with_push_constants :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	dispatch_x, dispatch_y, dispatch_z: u32,
+	push_constants: $T,
+) -> Ez_Gfx_Compute_Pipeline_Descriptor {
+	data := push_constants
+	return ez_gfx_render_add_compute_pipeline_impl(
+		shader,
+		dispatch_x,
+		dispatch_y,
+		dispatch_z,
+		rawptr(&data),
+		u32(size_of(T)),
+	)
+}
+
+ez_gfx_render_add_compute_pipeline_impl :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	dispatch_x, dispatch_y, dispatch_z: u32,
+	push_constant_data: rawptr,
+	push_constant_size: u32,
+) -> Ez_Gfx_Compute_Pipeline_Descriptor {
+	render := &ez_gfx_current_render
+	if !render.active || !render.ready {
+		fmt.eprintln("ez_gfx_render_add_compute_pipeline called without an active render")
+		return {}
+	}
+	if render.pipeline_count >= EZ_GFX_MAX_RENDER_PIPELINES {
+		fmt.eprintln("too many pipelines in one render")
+		return {}
+	}
+	if shader.push_constant_size != push_constant_size {
+		fmt.eprintf(
+			"push constant size mismatch: shader expects %v bytes, caller passed %v bytes\n",
+			shader.push_constant_size,
+			push_constant_size,
+		)
+		return {}
+	}
+	if push_constant_size > EZ_GFX_MAX_PUSH_CONSTANT_BYTES {
+		fmt.eprintln("push constant data exceeds ez_gfx limit")
+		return {}
+	}
+
+	pipeline, pipeline_ok := ez_gfx_compute_pipeline_manager_get(&render.ctx.pipeline_manager, shader)
+	if !pipeline_ok do return {}
+	frame_index := int(render.frame_slot)
+	if pipeline.descriptor_versions[frame_index] != ez_gfx_pipeline_descriptor_version(render.ctx, shader) {
+		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot) {
+			return {}
+		}
+	}
+
+	descriptor := Ez_Gfx_Compute_Pipeline_Descriptor {
+		pipeline           = pipeline,
+		dispatch_x         = dispatch_x,
+		dispatch_y         = dispatch_y,
+		dispatch_z         = dispatch_z,
+		push_constant_size = push_constant_size,
+		ok                 = true,
+	}
+	if push_constant_size > 0 {
+		mem.copy(&descriptor.push_constant_data[0], push_constant_data, int(push_constant_size))
+	}
+	render.pipeline_count += 1
+	if !ez_gfx_render_graph_add_compute_pipeline(&render.graph, descriptor, shader, render) {
 		return {}
 	}
 	return descriptor

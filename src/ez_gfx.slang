@@ -5,6 +5,12 @@ struct VertexHeapAttribute
 };
 
 [__AttributeUsage(_AttributeTargets.Var)]
+struct StructuredBufferAttribute
+{
+    string name;
+};
+
+[__AttributeUsage(_AttributeTargets.Var)]
 struct ColorTargetAttribute
 {
     string name;
