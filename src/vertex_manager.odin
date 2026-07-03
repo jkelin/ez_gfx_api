@@ -361,13 +361,12 @@ ez_gfx_gpu_heap_retire_timeline :: proc() -> u64 {
 	return ctx.timeline_counter
 }
 
-ez_gfx_vertex_manager_create :: proc(
-	manager: ^Ez_Gfx_Vertex_Manager,
-	vertex_heap_names: []string,
-	vertex_stride: vk.DeviceSize,
-) -> bool {
+ez_gfx_vertex_manager_begin :: proc(manager: ^Ez_Gfx_Vertex_Manager) -> bool {
 	ctx := ez_gfx_get_current_ctx()
-	if ctx == nil do return false
+	if ctx == nil {
+		fmt.eprintln("ez_gfx_vertex_manager_begin called without a current context")
+		return false
+	}
 	manager^ = {}
 	manager.jobs = make([dynamic]Ez_Gfx_Vertex_Upload_Job)
 	manager.pending_staging = make([dynamic]Ez_Gfx_Vertex_Staging_Retire_Job)
@@ -377,6 +376,24 @@ ez_gfx_vertex_manager_create :: proc(
 		ez_gfx_vertex_manager_destroy(manager)
 		return false
 	}
+
+	manager.worker = thread.create(ez_gfx_vertex_upload_thread)
+	if manager.worker == nil {
+		fmt.eprintln("failed to create vertex upload thread")
+		ez_gfx_vertex_manager_destroy(manager)
+		return false
+	}
+	manager.worker.data = manager
+	thread.start(manager.worker)
+	return true
+}
+
+ez_gfx_vertex_manager_create :: proc(
+	manager: ^Ez_Gfx_Vertex_Manager,
+	vertex_heap_names: []string,
+	vertex_stride: vk.DeviceSize,
+) -> bool {
+	if !ez_gfx_vertex_manager_begin(manager) do return false
 	if !ez_gfx_gpu_heap_create(
 		&manager.index_heap,
 		EZ_GFX_DEFAULT_INDEX_HEAP_BYTES,
@@ -400,14 +417,6 @@ ez_gfx_vertex_manager_create :: proc(
 		}
 	}
 
-	manager.worker = thread.create(ez_gfx_vertex_upload_thread)
-	if manager.worker == nil {
-		fmt.eprintln("failed to create vertex upload thread")
-		ez_gfx_vertex_manager_destroy(manager)
-		return false
-	}
-	manager.worker.data = manager
-	thread.start(manager.worker)
 	return true
 }
 
@@ -607,7 +616,10 @@ ez_gfx_vertex_manager_schedule_upload :: proc(
 ) {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil || manager == nil || heap == nil do return allocation, false
-	if manager.worker == nil do return allocation, false
+	if manager.worker == nil {
+		fmt.eprintln("vertex upload worker is not running; call ez_gfx_vertex_manager_begin or ez_gfx_vertex_manager_create first")
+		return allocation, false
+	}
 	if heap.stride == 0 || element_size != heap.stride {
 		fmt.eprintln("heap upload element size does not match heap stride")
 		return allocation, false

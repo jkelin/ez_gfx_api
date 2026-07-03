@@ -55,8 +55,7 @@ App :: struct {
 main :: proc() {
 	app: App
 
-	ok := init_app(&app)
-	if !ok {
+	if !init_app(&app) {
 		cleanup(&app)
 		return
 	}
@@ -67,7 +66,7 @@ main :: proc() {
 
 init_app :: proc(app: ^App) -> bool {
 	fmt.println("checkpoint: glfw init")
-	if !gfx.ez_gfx_glfw_init() do return false
+	if !shared.example_step("glfw init", gfx.ez_gfx_glfw_init()) do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	app.window_count = 1
@@ -75,47 +74,56 @@ init_app :: proc(app: ^App) -> bool {
 	main_window := &app.windows[0]
 
 	fmt.println("checkpoint: window create")
-	if !gfx.ez_gfx_window_create(main_window, "ez_gfx_api cube", WIDTH, HEIGHT) do return false
+	if !shared.example_step(
+		"window create",
+		gfx.ez_gfx_window_create(main_window, "ez_gfx_api cube", WIDTH, HEIGHT),
+	) {
+		return false
+	}
 	fmt.println("checkpoint: instance create")
-	if !gfx.ez_gfx_ctx_create_instance(
-		&app.ctx,
-		{
-			enable_debug = true,
-		},
+	if !shared.example_step(
+		"instance create",
+		gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}),
 	) {
 		return false
 	}
 	fmt.println("checkpoint: surface create")
-	if !gfx.ez_gfx_window_create_surface(main_window) do return false
+	if !shared.example_step("surface create", gfx.ez_gfx_window_create_surface(main_window)) do return false
 	fmt.println("checkpoint: device init")
-	if !gfx.ez_gfx_ctx_init_device(main_window.surface) do return false
+	if !shared.example_step("device init", gfx.ez_gfx_ctx_init_device(main_window.surface)) do return false
 	fmt.println("checkpoint: swapchain recreate")
-	if !gfx.ez_gfx_window_recreate_swapchain(main_window) do return false
+	if !shared.example_step("swapchain recreate", gfx.ez_gfx_window_recreate_swapchain(main_window)) do return false
 	fmt.println("checkpoint: cube data init")
-	if !cube_init(app) do return false
+	if !shared.example_step("cube data init", cube_init(app)) do return false
 
 	fmt.println("checkpoint: init done")
 	return true
 }
 
 cube_init :: proc(app: ^App) -> bool {
-	if !gfx.ez_gfx_shader_compile(
-		{
-			path = CUBE_SHADER_PATH,
-			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
-			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
-		},
-		&app.shader,
+	if !shared.example_step(
+		"cube shader compile",
+		gfx.ez_gfx_shader_compile(
+			{
+				path = CUBE_SHADER_PATH,
+				vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+				fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+			},
+			&app.shader,
+		),
 	) {
 		return false
 	}
 	app.shader_loaded = true
 
 	vertex_heap_names := [?]string{CUBE_POSITION_HEAP}
-	if !gfx.ez_gfx_vertex_manager_create(
-		&app.ctx.vertex_manager,
-		vertex_heap_names[:],
-		vk.DeviceSize(size_of(CUBE_POSITIONS[0])),
+	if !shared.example_step(
+		"vertex manager create",
+		gfx.ez_gfx_vertex_manager_create(
+			&app.ctx.vertex_manager,
+			vertex_heap_names[:],
+			vk.DeviceSize(size_of(CUBE_POSITIONS[0])),
+		),
 	) {
 		return false
 	}
@@ -124,7 +132,7 @@ cube_init :: proc(app: ^App) -> bool {
 		&app.ctx.vertex_manager,
 		CUBE_INDICES[:],
 	)
-	if !index_ok do return false
+	if !shared.example_step("cube index upload", index_ok) do return false
 	app.cube_index = index_start
 	app.cube_index_len = u32(len(CUBE_INDICES))
 
@@ -133,10 +141,10 @@ cube_init :: proc(app: ^App) -> bool {
 		CUBE_POSITION_HEAP,
 		CUBE_POSITIONS[:],
 	)
-	if !vertex_ok do return false
+	if !shared.example_step("cube vertex upload", vertex_ok) do return false
 	app.cube_vertex = vertex_start
 
-	return cube_load_texture(app)
+	return shared.example_step("cube texture load", cube_load_texture(app))
 }
 
 cube_load_texture :: proc(app: ^App) -> bool {

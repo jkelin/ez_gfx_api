@@ -77,7 +77,7 @@ main :: proc() {
 
 init_app :: proc(app: ^App) -> bool {
 	fmt.println("checkpoint: glfw init")
-	if !gfx.ez_gfx_glfw_init() do return false
+	if !shared.example_step("glfw init", gfx.ez_gfx_glfw_init()) do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	app.window_count = 1
@@ -89,47 +89,64 @@ init_app :: proc(app: ^App) -> bool {
 	main_window := &app.windows[0]
 
 	fmt.println("checkpoint: window create")
-	if !gfx.ez_gfx_window_create(main_window, "ez_gfx_api compute structured buffer", WIDTH, HEIGHT) do return false
+	if !shared.example_step(
+		"window create",
+		gfx.ez_gfx_window_create(main_window, "ez_gfx_api compute structured buffer", WIDTH, HEIGHT),
+	) {
+		return false
+	}
 	fmt.println("checkpoint: instance create")
-	if !gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}) do return false
+	if !shared.example_step(
+		"instance create",
+		gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}),
+	) {
+		return false
+	}
 	fmt.println("checkpoint: surface create")
-	if !gfx.ez_gfx_window_create_surface(main_window) do return false
+	if !shared.example_step("surface create", gfx.ez_gfx_window_create_surface(main_window)) do return false
 	fmt.println("checkpoint: device init")
-	if !gfx.ez_gfx_ctx_init_device(main_window.surface) do return false
+	if !shared.example_step("device init", gfx.ez_gfx_ctx_init_device(main_window.surface)) do return false
 	fmt.println("checkpoint: swapchain recreate")
-	if !gfx.ez_gfx_window_recreate_swapchain(main_window) do return false
+	if !shared.example_step("swapchain recreate", gfx.ez_gfx_window_recreate_swapchain(main_window)) do return false
 	fmt.println("checkpoint: example data init")
-	if !example_init(app) do return false
+	if !shared.example_step("example data init", example_init(app)) do return false
+	fmt.println("checkpoint: init done")
 	return true
 }
 
 example_init :: proc(app: ^App) -> bool {
-	if !gfx.ez_gfx_shader_compile(
-		{
-			path = COMPUTE_SHADER_PATH,
-			compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
-			kind = .Compute,
-		},
-		&app.compute_shader,
+	if !shared.example_step(
+		"compute shader compile",
+		gfx.ez_gfx_shader_compile(
+			{
+				path = COMPUTE_SHADER_PATH,
+				compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
+				kind = .Compute,
+			},
+			&app.compute_shader,
+		),
 	) {
 		return false
 	}
 	app.compute_shader_loaded = true
 
-	if !gfx.ez_gfx_shader_compile(
-		{
-			path = DRAW_SHADER_PATH,
-			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
-			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
-		},
-		&app.draw_shader,
+	if !shared.example_step(
+		"draw shader compile",
+		gfx.ez_gfx_shader_compile(
+			{
+				path = DRAW_SHADER_PATH,
+				vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+				fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+			},
+			&app.draw_shader,
+		),
 	) {
 		return false
 	}
 	app.draw_shader_loaded = true
 
 	mesh, mesh_ok := load_gltf_meshes(GLTF_PATH)
-	if !mesh_ok do return false
+	if !shared.example_step("glTF mesh load", mesh_ok) do return false
 	defer {
 		delete(mesh.positions)
 		delete(mesh.normals)
@@ -140,28 +157,43 @@ example_init :: proc(app: ^App) -> bool {
 
 	index_heap_bytes := vk.DeviceSize(len(mesh.indices) * size_of(mesh.indices[0]) + 4096)
 	vertex_heap_bytes := vk.DeviceSize(len(mesh.positions) * size_of(mesh.positions[0]) + 4096)
-	if !gfx.ez_gfx_gpu_heap_create(
-		&app.ctx.vertex_manager.index_heap,
-		index_heap_bytes,
-		vk.DeviceSize(size_of(u32)),
-		{.INDEX_BUFFER},
-		"example 3 index heap",
+	if !shared.example_step(
+		"vertex manager begin",
+		gfx.ez_gfx_vertex_manager_begin(&app.ctx.vertex_manager),
 	) {
 		return false
 	}
-	if !gfx.ez_gfx_vertex_manager_add_heap(
-		&app.ctx.vertex_manager,
-		POSITION_HEAP,
-		vertex_heap_bytes,
-		vk.DeviceSize(size_of(mesh.positions[0])),
+	if !shared.example_step(
+		"index heap create",
+		gfx.ez_gfx_gpu_heap_create(
+			&app.ctx.vertex_manager.index_heap,
+			index_heap_bytes,
+			vk.DeviceSize(size_of(u32)),
+			{.INDEX_BUFFER},
+			"example 3 index heap",
+		),
 	) {
 		return false
 	}
-	if !gfx.ez_gfx_vertex_manager_add_heap(
-		&app.ctx.vertex_manager,
-		NORMAL_HEAP,
-		vertex_heap_bytes,
-		vk.DeviceSize(size_of(mesh.normals[0])),
+	if !shared.example_step(
+		"position heap create",
+		gfx.ez_gfx_vertex_manager_add_heap(
+			&app.ctx.vertex_manager,
+			POSITION_HEAP,
+			vertex_heap_bytes,
+			vk.DeviceSize(size_of(mesh.positions[0])),
+		),
+	) {
+		return false
+	}
+	if !shared.example_step(
+		"normal heap create",
+		gfx.ez_gfx_vertex_manager_add_heap(
+			&app.ctx.vertex_manager,
+			NORMAL_HEAP,
+			vertex_heap_bytes,
+			vk.DeviceSize(size_of(mesh.normals[0])),
+		),
 	) {
 		return false
 	}
@@ -170,20 +202,20 @@ example_init :: proc(app: ^App) -> bool {
 		&app.ctx.vertex_manager,
 		mesh.indices[:],
 	)
-	if !index_ok do return false
+	if !shared.example_step("index upload", index_ok) do return false
 
 	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		POSITION_HEAP,
 		mesh.positions[:],
 	)
-	if !vertex_ok do return false
+	if !shared.example_step("position upload", vertex_ok) do return false
 	_, normal_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		NORMAL_HEAP,
 		mesh.normals[:],
 	)
-	if !normal_ok do return false
+	if !shared.example_step("normal upload", normal_ok) do return false
 
 	for &descriptor in mesh.descriptors {
 		descriptor.first_index += index_start
@@ -255,13 +287,19 @@ append_gltf_node :: proc(
 	parent_transform: shared.Mat4,
 	mesh: ^Loaded_Mesh,
 ) -> bool {
-	if int(node_index) >= len(data.nodes) do return false
+	if int(node_index) >= len(data.nodes) {
+		shared.example_exit("glTF node index out of range")
+		return false
+	}
 	node := data.nodes[node_index]
 	local := gltf_node_matrix(node)
 	transform := shared.mat4_mul(parent_transform, local)
 
 	if mesh_index, has_mesh := node.mesh.?; has_mesh {
-		if int(mesh_index) >= len(data.meshes) do return false
+		if int(mesh_index) >= len(data.meshes) {
+			shared.example_exit("glTF mesh index out of range")
+			return false
+		}
 		if !append_gltf_mesh(data, data.meshes[mesh_index], transform, mesh) {
 			return false
 		}
@@ -292,7 +330,10 @@ append_gltf_mesh :: proc(
 			transform,
 			&mesh.positions,
 		)
-		if !positions_ok do return false
+		if !positions_ok {
+			shared.example_exit("glTF position append")
+			return false
+		}
 		if !append_gltf_normals(data, primitive, position_count, transform, &mesh.normals) {
 			append_default_normals(position_count, transform, &mesh.normals)
 		}
@@ -303,7 +344,10 @@ append_gltf_mesh :: proc(
 			position_count,
 			&mesh.indices,
 		)
-		if !indices_ok do return false
+		if !indices_ok {
+			shared.example_exit("glTF index append")
+			return false
+		}
 		if index_count == 0 do continue
 		for i in int(first_index) ..< int(first_index + index_count) {
 			mesh.indices[i] += vertex_offset
