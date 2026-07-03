@@ -458,6 +458,15 @@ ez_gfx_render_submit_and_present :: proc(render: ^Ez_Gfx_Render) -> bool {
 	swapchain := &window.swapchain
 	swapchain.last_write_timeline[render.image_index] = render.timeline_end
 
+	if window.cache_presented_snapshots {
+		if !ez_gfx_ctx_wait_timeline(render.ctx, render.timeline_end) {
+			return false
+		}
+		if !ez_gfx_swapchain_cache_presented_snapshot(swapchain, render.image_index) {
+			return false
+		}
+	}
+
 	present_info := vk.PresentInfoKHR {
 		sType              = .PRESENT_INFO_KHR,
 		waitSemaphoreCount = 1,

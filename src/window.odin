@@ -8,10 +8,11 @@ import vk "vendor:vulkan"
 MAX_WINDOWS :: 4
 
 Ez_Gfx_Window :: struct {
-	handle:              glfw.WindowHandle,
-	surface:             vk.SurfaceKHR,
-	framebuffer_resized: bool,
-	swapchain:           Ez_Gfx_Swapchain,
+	handle:                   glfw.WindowHandle,
+	surface:                  vk.SurfaceKHR,
+	framebuffer_resized:      bool,
+	cache_presented_snapshots: bool,
+	swapchain:                Ez_Gfx_Swapchain,
 }
 
 ez_gfx_glfw_init :: proc() -> bool {
@@ -67,6 +68,7 @@ ez_gfx_window_create :: proc(
 	glfw.SetWindowUserPointer(window.handle, window)
 	glfw.SetFramebufferSizeCallback(window.handle, ez_gfx_window_framebuffer_size_callback)
 	glfw.SwapInterval(1)
+	window.cache_presented_snapshots = hidden
 	return true
 }
 
@@ -122,6 +124,7 @@ ez_gfx_window_poll_events :: proc() {
 ez_gfx_window_destroy :: proc(window: ^Ez_Gfx_Window) {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return
+	ez_gfx_swapchain_destroy_snapshot_cache(&window.swapchain)
 	if ctx.device != nil {
 		ez_gfx_swapchain_destroy(&window.swapchain)
 	}

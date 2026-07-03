@@ -52,6 +52,10 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 	swapchain: ^Ez_Gfx_Swapchain,
 	pixels: ^[]u8,
 ) -> bool {
+	if swapchain != nil && swapchain.presented_snapshot_valid {
+		return ez_gfx_screenshot_clone_pixels(swapchain.presented_snapshot_pixels, pixels)
+	}
+
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil do return false
 
@@ -329,4 +333,168 @@ ez_gfx_screenshot_bgra_to_rgb :: proc(bgra: []u8, width, height: int) -> (rgb: [
 		out[dst + 2] = bgra[src + 0]
 	}
 	return out, true
+}
+
+ez_gfx_screenshot_clone_pixels :: proc(source: []u8, pixels: ^[]u8) -> bool {
+	if len(source) == 0 do return false
+	cloned, alloc_err := make([]u8, len(source))
+	if alloc_err != nil {
+		fmt.eprintf("failed to allocate screenshot pixel clone: %v\n", alloc_err)
+		return false
+	}
+	copy(cloned, source)
+	pixels^ = cloned
+	return true
+}
+
+// Copies the rendered swapchain image to CPU memory before present so hidden test windows
+// can read back the exact frame that was just rendered.
+ez_gfx_swapchain_cache_presented_snapshot :: proc(
+	swapchain: ^Ez_Gfx_Swapchain,
+	image_index: u32,
+) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil || swapchain == nil do return false
+
+	width := int(swapchain.extent.width)
+	height := int(swapchain.extent.height)
+	if width <= 0 || height <= 0 do return false
+	if image_index >= swapchain.image_count do return false
+
+	row_stride := width * 4
+	byte_count := row_stride * height
+	buffer_size := vk.DeviceSize(byte_count)
+
+	command_buffer := ctx.frame_slots[0].command_buffers[EZ_GFX_MAX_RENDER_PIPELINES]
+	staging, staging_ok := ez_gfx_buffer_create(
+		buffer_size,
+		{.TRANSFER_DST},
+		{.HOST_VISIBLE, .HOST_COHERENT},
+		"ez_gfx snapshot staging buffer",
+		0.3,
+	)
+	if !staging_ok do return false
+	defer ez_gfx_buffer_destroy(&staging)
+
+	image := swapchain.images[image_index]
+	old_layout := swapchain.image_layouts[image_index]
+	vk.ResetCommandBuffer(command_buffer, {})
+
+	begin_info := vk.CommandBufferBeginInfo {
+		sType = .COMMAND_BUFFER_BEGIN_INFO,
+		flags = {.ONE_TIME_SUBMIT},
+	}
+	if vk.BeginCommandBuffer(command_buffer, &begin_info) != .SUCCESS {
+		fmt.eprintln("failed to begin snapshot cache command buffer")
+		return false
+	}
+
+	ez_gfx_transition_image(
+		command_buffer,
+		image,
+		old_layout,
+		.TRANSFER_SRC_OPTIMAL,
+		ez_gfx_image_layout_src_access(old_layout),
+		{.TRANSFER_READ},
+		ez_gfx_image_layout_src_stage(old_layout),
+		{.TRANSFER},
+	)
+
+	region := vk.BufferImageCopy {
+		bufferOffset = 0,
+		bufferRowLength = 0,
+		bufferImageHeight = 0,
+		imageSubresource = vk.ImageSubresourceLayers {
+			aspectMask = {.COLOR},
+			mipLevel = 0,
+			baseArrayLayer = 0,
+			layerCount = 1,
+		},
+		imageOffset = {x = 0, y = 0, z = 0},
+		imageExtent = {
+			width = swapchain.extent.width,
+			height = swapchain.extent.height,
+			depth = 1,
+		},
+	}
+	vk.CmdCopyImageToBuffer(
+		command_buffer,
+		image,
+		.TRANSFER_SRC_OPTIMAL,
+		staging.handle,
+		1,
+		&region,
+	)
+
+	ez_gfx_transition_image(
+		command_buffer,
+		image,
+		.TRANSFER_SRC_OPTIMAL,
+		.PRESENT_SRC_KHR,
+		{.TRANSFER_READ},
+		{},
+		{.TRANSFER},
+		{.BOTTOM_OF_PIPE},
+	)
+	swapchain.image_layouts[image_index] = .PRESENT_SRC_KHR
+
+	if vk.EndCommandBuffer(command_buffer) != .SUCCESS {
+		fmt.eprintln("failed to end snapshot cache command buffer")
+		return false
+	}
+
+	signal_value := ez_gfx_ctx_next_timeline_value(ctx)
+	if !ez_gfx_screenshot_submit_copy_no_wait(ctx, command_buffer, signal_value) {
+		fmt.eprintln("failed to submit snapshot cache copy")
+		return false
+	}
+	if !ez_gfx_ctx_wait_timeline(ctx, signal_value) {
+		fmt.eprintln("failed to wait for snapshot cache copy")
+		return false
+	}
+	swapchain.last_write_timeline[image_index] = signal_value
+
+	if len(swapchain.presented_snapshot_pixels) != byte_count {
+		delete(swapchain.presented_snapshot_pixels)
+		pixels, alloc_err := make([]u8, byte_count)
+		if alloc_err != nil {
+			fmt.eprintf("failed to allocate cached snapshot pixels: %v\n", alloc_err)
+			return false
+		}
+		swapchain.presented_snapshot_pixels = pixels
+	}
+	if !ez_gfx_buffer_read_at(&staging, 0, swapchain.presented_snapshot_pixels) {
+		fmt.eprintln("failed to read cached snapshot staging buffer")
+		return false
+	}
+	swapchain.presented_snapshot_valid = true
+	return true
+}
+
+ez_gfx_screenshot_submit_copy_no_wait :: proc(
+	ctx: ^Ez_Gfx_Ctx,
+	command_buffer: vk.CommandBuffer,
+	signal_value: u64,
+) -> bool {
+	command_submit := vk.CommandBufferSubmitInfo {
+		sType         = .COMMAND_BUFFER_SUBMIT_INFO,
+		commandBuffer = command_buffer,
+	}
+	signal_info := vk.SemaphoreSubmitInfo {
+		sType     = .SEMAPHORE_SUBMIT_INFO,
+		semaphore = ctx.timeline_semaphore,
+		value     = signal_value,
+		stageMask = {.ALL_COMMANDS},
+	}
+	submit_info := vk.SubmitInfo2 {
+		sType                    = .SUBMIT_INFO_2,
+		commandBufferInfoCount   = 1,
+		pCommandBufferInfos      = &command_submit,
+		signalSemaphoreInfoCount = 1,
+		pSignalSemaphoreInfos    = &signal_info,
+	}
+	sync.mutex_lock(&ctx.queue_mutex)
+	result := vk.QueueSubmit2(ctx.graphics_queue, 1, &submit_info, vk.Fence(0))
+	sync.mutex_unlock(&ctx.queue_mutex)
+	return result == .SUCCESS
 }

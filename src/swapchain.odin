@@ -20,6 +20,8 @@ Ez_Gfx_Swapchain :: struct {
 	image_count:          u32,
 	last_presented_index: u32,
 	has_presented_image:  bool,
+	presented_snapshot_pixels: []u8,
+	presented_snapshot_valid:  bool,
 }
 
 ez_gfx_swapchain_recreate :: proc(
@@ -151,6 +153,14 @@ ez_gfx_swapchain_destroy_image_resources :: proc(swapchain: ^Ez_Gfx_Swapchain) {
 	swapchain.image_count = 0
 	swapchain.last_presented_index = 0
 	swapchain.has_presented_image = false
+	ez_gfx_swapchain_destroy_snapshot_cache(swapchain)
+}
+
+ez_gfx_swapchain_destroy_snapshot_cache :: proc(swapchain: ^Ez_Gfx_Swapchain) {
+	if swapchain == nil do return
+	delete(swapchain.presented_snapshot_pixels)
+	swapchain.presented_snapshot_pixels = nil
+	swapchain.presented_snapshot_valid = false
 }
 
 ez_gfx_swapchain_choose_surface_format :: proc(
