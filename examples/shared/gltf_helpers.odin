@@ -504,3 +504,48 @@ gltf_component_count :: proc(accessor_type: gltf.Accessor_Type) -> int {
 	}
 	return 0
 }
+
+Gltf_World_Bounds :: struct {
+	ground_y:            f32,
+	height:              f32,
+	horizontal_extent:   f32,
+	x_extent:            f32,
+	z_extent:            f32,
+}
+
+// Converts loaded glTF vertex positions into example world units while
+// preserving the source model's proportions and node transforms.
+gltf_finalize_example_world_positions :: proc(positions: [][4]f32) -> Gltf_World_Bounds {
+	if len(positions) == 0 do return {}
+
+	for &p in positions {
+		p.x *= EXAMPLE_WORLD_UNITS_PER_METER
+		p.y *= EXAMPLE_WORLD_UNITS_PER_METER
+		p.z *= EXAMPLE_WORLD_UNITS_PER_METER
+	}
+
+	min_p := [3]f32{positions[0].x, positions[0].y, positions[0].z}
+	max_p := min_p
+	for p in positions {
+		if p.x < min_p.x do min_p.x = p.x
+		if p.y < min_p.y do min_p.y = p.y
+		if p.z < min_p.z do min_p.z = p.z
+		if p.x > max_p.x do max_p.x = p.x
+		if p.y > max_p.y do max_p.y = p.y
+		if p.z > max_p.z do max_p.z = p.z
+	}
+
+	center_x := (min_p.x + max_p.x) * 0.5
+	center_z := (min_p.z + max_p.z) * 0.5
+	for &p in positions {
+		p.x -= center_x
+		p.z -= center_z
+	}
+
+	ground_y := min_p.y
+	height := max_p.y - min_p.y
+	x_extent := max_p.x - min_p.x
+	z_extent := max_p.z - min_p.z
+	horizontal_extent := max_f32(x_extent, z_extent)
+	return {ground_y, height, horizontal_extent, x_extent, z_extent}
+}

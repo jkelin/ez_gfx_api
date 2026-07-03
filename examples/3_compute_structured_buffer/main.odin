@@ -15,6 +15,17 @@ GLTF_PATH :: "examples/shared/assets/sponza.glb"
 POSITION_HEAP :: "position"
 NORMAL_HEAP :: "normal"
 
+// Tuned starting view for the Sponza atrium (see window debug title).
+SPONZA_ORBIT_CENTER :: shared.Vec3{0.0, 1.3884, 0.0}
+
+sponza_camera_start :: proc() -> shared.Orbit_Camera_Start {
+	return shared.Orbit_Camera_Start {
+		yaw      = math.to_radians_f32(90.2),
+		pitch    = math.to_radians_f32(31.1),
+		distance = 16.73,
+	}
+}
+
 Compute_Push_Constants :: struct {
 	instance_count: u32,
 }
@@ -35,7 +46,8 @@ App :: struct {
 	mesh_instances:        []shared.Mesh_Instance,
 	mesh_count:            u32,
 	camera:                shared.Orbit_Camera,
-	input:                 shared.Example_Input,
+	orbit_center:          shared.Vec3,
+	camera_start:          shared.Orbit_Camera_Start,
 }
 
 main :: proc() {
@@ -52,16 +64,13 @@ init_app :: proc(app: ^App) {
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	app.window_count = 1
 	app.camera = shared.orbit_camera_default()
-	app.camera.target = {0.0, 0.55, 0.0}
-	app.camera.yaw = math.to_radians_f32(-30)
-	app.camera.pitch = math.to_radians_f32(52)
-	app.camera.distance = 2.2
 	main_window := &app.windows[0]
 
 	fmt.println("checkpoint: window create")
 	assert(
 		gfx.ez_gfx_window_create(main_window, "ez_gfx_api compute structured buffer", WIDTH, HEIGHT),
 	)
+	shared.orbit_camera_install_callbacks(main_window)
 	fmt.println("checkpoint: instance create")
 	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}))
 	fmt.println("checkpoint: surface create")
@@ -105,6 +114,10 @@ example_init :: proc(app: ^App) {
 	mesh, mesh_ok := shared.gltf_load_meshes(GLTF_PATH)
 	assert(mesh_ok, "glTF mesh load failed")
 	defer shared.gltf_loaded_mesh_destroy(&mesh)
+
+	app.orbit_center = SPONZA_ORBIT_CENTER
+	app.camera_start = sponza_camera_start()
+	shared.orbit_camera_apply_start(&app.camera, app.orbit_center, app.camera_start)
 
 	vertex_stride := vk.DeviceSize(size_of([4]f32))
 	index_heap_bytes := shared.gltf_mesh_index_heap_bytes(&mesh) + 4096
@@ -182,12 +195,18 @@ run :: proc(app: ^App) {
 
 	for !gfx.ez_gfx_window_should_close(main_window) {
 		gfx.ez_gfx_window_poll_events()
-		shared.example_input_begin_frame(&app.input, main_window)
+		shared.example_handle_window_input(main_window)
 
 		now := glfw.GetTime()
 		delta_time := f32(now - previous_time)
 		previous_time = now
-		shared.orbit_camera_update(&app.camera, &app.input, delta_time)
+		shared.orbit_camera_update(
+			&app.camera,
+			main_window,
+			app.orbit_center,
+			app.camera_start,
+			delta_time,
+		)
 
 		if run_seconds > 0 && now - start_time >= run_seconds do break
 		draw_frame(app, main_window)
@@ -202,6 +221,7 @@ run :: proc(app: ^App) {
 		}
 	}
 }
+
 draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	if !gfx.ez_gfx_begin_render(window) do return
 
@@ -268,7 +288,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		math.to_radians_f32(60),
 		shared.window_aspect(window),
 		0.1,
-		100.0,
+		500.0,
 	)
 	draw_push := Draw_Push_Constants {
 		mvp = shared.mat4_mul(projection, view),

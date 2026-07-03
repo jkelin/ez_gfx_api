@@ -49,7 +49,6 @@ App :: struct {
 	cube_index_len:    u32,
 	cube_vertex:       u32,
 	camera:            shared.Orbit_Camera,
-	input:             shared.Example_Input,
 }
 
 main :: proc() {
@@ -70,6 +69,7 @@ init_app :: proc(app: ^App) {
 
 	fmt.println("checkpoint: window create")
 	assert(gfx.ez_gfx_window_create(main_window, "ez_gfx_api cube", WIDTH, HEIGHT))
+	shared.orbit_camera_install_callbacks(main_window)
 	fmt.println("checkpoint: instance create")
 	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}))
 	fmt.println("checkpoint: surface create")
@@ -144,12 +144,18 @@ run :: proc(app: ^App) {
 
 	for !gfx.ez_gfx_window_should_close(main_window) {
 		gfx.ez_gfx_window_poll_events()
-		shared.example_input_begin_frame(&app.input, main_window)
+		shared.example_handle_window_input(main_window)
 
 		now := glfw.GetTime()
 		delta_time := f32(now - previous_time)
 		previous_time = now
-		shared.orbit_camera_update(&app.camera, &app.input, delta_time)
+		shared.orbit_camera_update(
+			&app.camera,
+			main_window,
+			{0, 0, 0},
+			shared.orbit_camera_default_start(),
+			delta_time,
+		)
 
 		if run_seconds > 0 && now - start_time >= run_seconds do break
 		draw_frame(app, main_window)

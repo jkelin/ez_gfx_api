@@ -8,37 +8,38 @@ import "vendor:glfw"
 Mat4 :: [4][4]f32
 Vec3 :: linalg.Vector3f32
 
-Example_Input :: struct {
-	previous_cursor_valid: bool,
-	previous_cursor:       [2]f64,
-	cursor_delta:          [2]f32,
-	right_mouse_down:      bool,
-}
+// glTF coordinates are in meters. Example 2's cube spans [-1, 1] per axis,
+// which is treated as a 1 meter cube (2 world units across).
+EXAMPLE_WORLD_UNITS_PER_METER :: 2.0
 
 Orbit_Camera :: struct {
-	target:   Vec3,
+	target:                Vec3,
+	yaw:                   f32,
+	pitch:                 f32,
+	distance:              f32,
+	previous_cursor_valid: bool,
+	previous_cursor:       [2]f64,
+}
+
+ORBIT_CAMERA_MIN_DISTANCE :: 0.1
+ORBIT_CAMERA_MAX_DISTANCE :: 100.0
+
+Orbit_Camera_Start :: struct {
 	yaw:      f32,
 	pitch:    f32,
 	distance: f32,
 }
 
-example_input_begin_frame :: proc(input: ^Example_Input, window: ^gfx.Ez_Gfx_Window) {
-	input.cursor_delta = {}
+orbit_camera_scroll_y: f64
 
-	x, y := glfw.GetCursorPos(window.handle)
-	if input.previous_cursor_valid {
-		input.cursor_delta = {
-			f32(x - input.previous_cursor.x),
-			f32(y - input.previous_cursor.y),
-		}
-	}
-	input.previous_cursor = {x, y}
-	input.previous_cursor_valid = true
-	input.right_mouse_down = glfw.GetMouseButton(window.handle, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
-
+example_handle_window_input :: proc(window: ^gfx.Ez_Gfx_Window) {
 	if glfw.GetKey(window.handle, glfw.KEY_ESCAPE) == glfw.PRESS {
 		gfx.ez_gfx_window_set_should_close(window, true)
 	}
+}
+
+orbit_camera_install_callbacks :: proc(window: ^gfx.Ez_Gfx_Window) {
+	glfw.SetScrollCallback(window.handle, orbit_camera_scroll_callback)
 }
 
 orbit_camera_default :: proc() -> Orbit_Camera {
@@ -50,19 +51,77 @@ orbit_camera_default :: proc() -> Orbit_Camera {
 	}
 }
 
-orbit_camera_update :: proc(camera: ^Orbit_Camera, input: ^Example_Input, delta_time: f32) {
-	camera.yaw += delta_time * 0.35
-	if input.right_mouse_down {
-		mouse_sensitivity := math.to_radians_f32(0.18)
-		camera.yaw += input.cursor_delta.x * mouse_sensitivity
-		camera.pitch -= input.cursor_delta.y * mouse_sensitivity
+orbit_camera_default_start :: proc() -> Orbit_Camera_Start {
+	return Orbit_Camera_Start {
+		yaw      = math.to_radians_f32(35),
+		pitch    = math.to_radians_f32(22),
+		distance = 5.0,
 	}
+}
+
+orbit_camera_apply_start :: proc(camera: ^Orbit_Camera, center: Vec3, start: Orbit_Camera_Start) {
+	camera.target = center
+	camera.yaw = start.yaw
+	camera.pitch = start.pitch
+	camera.distance = start.distance
+	camera.previous_cursor_valid = false
+}
+
+orbit_camera_update :: proc(
+	camera: ^Orbit_Camera,
+	window: ^gfx.Ez_Gfx_Window,
+	center: Vec3,
+	start: Orbit_Camera_Start,
+	delta_time: f32,
+) {
+	_ = delta_time
+	camera.target = center
+
+	if !camera.previous_cursor_valid {
+		camera.yaw = start.yaw
+		camera.pitch = start.pitch
+		camera.distance = start.distance
+	}
+
+	x, y := glfw.GetCursorPos(window.handle)
+	cursor_delta: [2]f32
+	if camera.previous_cursor_valid {
+		cursor_delta = {
+			f32(x - camera.previous_cursor.x),
+			f32(y - camera.previous_cursor.y),
+		}
+	}
+	camera.previous_cursor = {x, y}
+	camera.previous_cursor_valid = true
+
+	if glfw.GetMouseButton(window.handle, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS {
+		mouse_sensitivity := math.to_radians_f32(0.18)
+		camera.yaw -= cursor_delta.x * mouse_sensitivity
+		camera.pitch += cursor_delta.y * mouse_sensitivity
+	}
+
+	if orbit_camera_scroll_y != 0 {
+		zoom_factor := f32(math.pow(0.85, orbit_camera_scroll_y))
+		camera.distance *= zoom_factor
+		orbit_camera_scroll_y = 0
+	}
+
 	camera.pitch = clamp_f32(
 		camera.pitch,
 		math.to_radians_f32(-80),
 		math.to_radians_f32(80),
 	)
-	camera.distance = max_f32(camera.distance, 0.5)
+	camera.distance = clamp_f32(
+		camera.distance,
+		ORBIT_CAMERA_MIN_DISTANCE,
+		ORBIT_CAMERA_MAX_DISTANCE,
+	)
+}
+
+orbit_camera_scroll_callback :: proc "c" (window: glfw.WindowHandle, xoffset, yoffset: f64) {
+	_ = window
+	_ = xoffset
+	orbit_camera_scroll_y += yoffset
 }
 
 orbit_camera_view :: proc(camera: ^Orbit_Camera) -> Mat4 {
