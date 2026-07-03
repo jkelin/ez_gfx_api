@@ -364,7 +364,7 @@ append_gltf_mesh :: proc(
 		)
 		append(
 			&mesh.instances,
-			Mesh_Instance{mesh_index = mesh_index, color = example_color(mesh_index)},
+			Mesh_Instance{mesh_index = mesh_index},
 		)
 	}
 	return true
@@ -489,18 +489,6 @@ normalize_positions :: proc(positions: [][4]f32) {
 		p.y = (p.y - center.y) * scale
 		p.z = (p.z - center.z) * scale
 	}
-}
-
-example_color :: proc(index: u32) -> [4]f32 {
-	palette := [?][4]f32 {
-		{0.80, 0.25, 0.20, 1.0},
-		{0.20, 0.70, 0.95, 1.0},
-		{0.35, 0.85, 0.35, 1.0},
-		{0.95, 0.75, 0.25, 1.0},
-		{0.75, 0.35, 0.95, 1.0},
-		{0.95, 0.45, 0.70, 1.0},
-	}
-	return palette[index % u32(len(palette))]
 }
 
 max_f32 :: proc(a, b: f32) -> f32 {
