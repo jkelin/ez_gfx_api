@@ -64,6 +64,8 @@ build_example_2: (build_example "2_textured_cube" "example_2")
 
 build_example_3: (build_example "3_compute_structured_buffer" "example_3")
 
+build_example_5: (build_example "5_helmet_cgltf" "example_5")
+
 example folder_name name: copy_slang_dll
   odin run examples/{{ folder_name }} -keep-executable -out:out/{{ name }}.exe
 
@@ -72,6 +74,8 @@ example_1: (example "1_triangle" "example_1")
 example_2: (example "2_textured_cube" "example_2")
 
 example_3: (example "3_compute_structured_buffer" "example_3")
+
+example_5: (example "5_helmet_cgltf" "example_5")
 
 [env("EZ_GFX_MAX_SECONDS", "2")]
 [env("EZ_GFX_SCREENSHOT", "1")]
@@ -83,3 +87,5 @@ example_1_agent: (example_agent "1_triangle" "example_1")
 example_2_agent: (example_agent "2_textured_cube" "example_2")
 
 example_3_agent: (example_agent "3_compute_structured_buffer" "example_3")
+
+example_5_agent: (example_agent "5_helmet_cgltf" "example_5")

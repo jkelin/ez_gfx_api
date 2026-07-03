@@ -1,5 +1,7 @@
 # TODO
 
+- Example 5 (`examples/5_helmet_cgltf`) expects `examples/shared/assets/helmet.glb` (not committed). Place a glTF binary there before running `just example_5`.
+
 - Decouple graphics pipeline caching from descriptor set/pool ownership. `Ez_Gfx_Pipeline_Record` still owns both `VkPipeline` and descriptor resources; `render_target_manager.version` mitigates stale render-target image views on resize, but vertex heap rebinding and per-frame descriptor lifetimes are still tied to cached pipeline records.
 
 - Expand the pipeline cache key to include topology, blend, and rasterization options instead of only shader identity, color formats, and depth format. The current Vulkan pipeline state is hardcoded, so this is not a live bug yet, but the cache will return incompatible pipelines as soon as those states become configurable.
@@ -62,4 +64,4 @@
 
 - Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
 
-- `examples/shared/assets/sponza.glb` uses KTX2/Basis Universal textures via `KHR_texture_basisu` (18.8 MB, down from 52.6 MB). Regenerate with `npx @gltf-transform/cli etc1s examples/shared/assets/sponza.glb <output.glb>`. KTX2 image parsing is provided by `vendor/patches/glTF2/ktx2-image-type.patch` (applied during `just setup`); runtime KTX2 decode is not implemented yet.
+- `examples/shared/assets/sponza.glb` uses KTX2/Basis Universal textures via `KHR_texture_basisu` (18.8 MB, down from 52.6 MB). Regenerate with `npx @gltf-transform/cli etc1s examples/shared/assets/sponza.glb <output.glb>`. Runtime KTX2 decode is not implemented yet; cgltf loads mesh geometry only.

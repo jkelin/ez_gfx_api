@@ -4,6 +4,3 @@
 [submodule "vendor/odin-vma"]
 	path = vendor/odin-vma
 	url = https://github.com/Capati/odin-vma
-[submodule "vendor/glTF2"]
-	path = vendor/glTF2
-	url = https://github.com/Pawel82S/glTF2
