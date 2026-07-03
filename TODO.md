@@ -2,7 +2,11 @@
 
 - Decouple graphics pipeline caching from descriptor set/pool ownership. `Ez_Gfx_Pipeline_Record` still owns both `VkPipeline` and descriptor resources; `render_target_manager.version` mitigates stale render-target image views on resize, but vertex heap rebinding and per-frame descriptor lifetimes are still tied to cached pipeline records.
 
-- Expand the pipeline cache key to include topology, blend, and rasterization options instead of only shader identity, color formats, and depth format. The current Vulkan pipeline state is hardcoded, so this is not a live bug yet, but the cache will return incompatible pipelines as soon as those states become configurable.
+- Expand the pipeline cache key to include topology and rasterization options instead of only shader identity, color formats, depth format, and blend mode. Blend mode is now reflected from the `[BlendMode]` Slang attribute; topology and rasterization are still hardcoded.
+
+- Add hardware per-draw scissor support for ImGui and other UI renderers. Example 4 currently enforces clip rectangles in the fragment shader via `discard`, which is correct but less efficient than dynamic scissor state.
+
+- Example 4 handles ImGui 1.92 font atlas uploads through `Renderer_Has_Textures` and `DrawData.textures` status callbacks. Follow-up: add `ez_gfx_update_texture_region` for partial `Want_Updates` uploads instead of full atlas reloads.
 
 - Support arbitrary sampled and writable access to managed render targets. The renderer supports attachment writes, declaration-based sampled reads, and managed storage-image writes, but still rejects attachment feedback/read-write color targets and lacks a fully general hazard model. The swapchain is intentionally shader write-only through `ColorTarget("swapchain", "write")`; shader reads from the swapchain are not supported.
 

@@ -7,3 +7,6 @@
 [submodule "vendor/glTF2"]
 	path = vendor/glTF2
 	url = https://github.com/Pawel82S/glTF2
+[submodule "vendor/odin-imgui"]
+	path = vendor/odin-imgui
+	url = https://github.com/Capati/odin-imgui

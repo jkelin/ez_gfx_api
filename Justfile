@@ -6,6 +6,7 @@ setup:
   git submodule update --init --recursive
   just apply_vendor_patches
   just premake "vendor\odin-vma" "--vk-version=3"
+  just premake "vendor\odin-imgui" "--backends=glfw"
 
 # Applies git-format patches from vendor/patches/<submodule>/*.patch into vendor/<submodule>.
 [script]
@@ -64,6 +65,8 @@ build_example_2: (build_example "2_textured_cube" "example_2")
 
 build_example_3: (build_example "3_compute_structured_buffer" "example_3")
 
+build_example_4: (build_example "4_imgui" "example_4")
+
 example folder_name name: copy_slang_dll
   odin run examples/{{ folder_name }} -keep-executable -out:out/{{ name }}.exe
 
@@ -72,6 +75,8 @@ example_1: (example "1_triangle" "example_1")
 example_2: (example "2_textured_cube" "example_2")
 
 example_3: (example "3_compute_structured_buffer" "example_3")
+
+example_4: (example "4_imgui" "example_4")
 
 [env("EZ_GFX_MAX_SECONDS", "2")]
 [env("EZ_GFX_SCREENSHOT", "1")]
@@ -83,3 +88,5 @@ example_1_agent: (example_agent "1_triangle" "example_1")
 example_2_agent: (example_agent "2_textured_cube" "example_2")
 
 example_3_agent: (example_agent "3_compute_structured_buffer" "example_3")
+
+example_4_agent: (example_agent "4_imgui" "example_4")

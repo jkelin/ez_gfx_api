@@ -20,6 +20,7 @@ SLANG_DEPTH_TARGET_ATTRIBUTE :: "DepthTarget"
 SLANG_RELATIVE_SCALE_ATTRIBUTE :: "RelativeScale"
 SLANG_TARGET_LAYOUT_ATTRIBUTE :: "TargetLayout"
 SLANG_LOAD_TARGET_ATTRIBUTE :: "LoadTarget"
+SLANG_BLEND_MODE_ATTRIBUTE :: "BlendMode"
 EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS :: 8
 EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS :: 16
 EZ_GFX_MAX_SHADER_TARGET_USAGES :: 8
@@ -47,6 +48,11 @@ Ez_Gfx_Target_Access :: enum u8 {
 Ez_Gfx_Render_Target_Kind :: enum u8 {
 	Color,
 	Depth,
+}
+
+Ez_Gfx_Blend_Mode :: enum u8 {
+	None,
+	Alpha,
 }
 
 Ez_Gfx_Vertex_Heap_Binding :: struct {
@@ -99,6 +105,7 @@ Ez_Gfx_Shader_Program :: struct {
 	target_declarations:       [EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS]Ez_Gfx_Shader_Target_Declaration,
 	target_declaration_count:  int,
 	push_constant_size:        u32,
+	blend_mode:                Ez_Gfx_Blend_Mode,
 }
 
 Ez_Gfx_Shader_Desc :: struct {
@@ -1245,6 +1252,9 @@ ez_gfx_shader_reflect_target_usages_from_layout :: proc(
 	if !ez_gfx_shader_reflect_fragment_color_targets(fragment_entry, program) {
 		return false
 	}
+	if !ez_gfx_shader_reflect_fragment_blend_mode(fragment_entry, program) {
+		return false
+	}
 	if !ez_gfx_shader_reflect_entry_function_target_usage(
 		fragment_entry,
 		program,
@@ -1255,6 +1265,38 @@ ez_gfx_shader_reflect_target_usages_from_layout :: proc(
 		return false
 	}
 	return true
+}
+
+ez_gfx_shader_reflect_fragment_blend_mode :: proc(
+	entry: ^sp.EntryPointReflection,
+	program: ^Ez_Gfx_Shader_Program,
+) -> bool {
+	ctx := ez_gfx_get_current_ctx()
+	if ctx == nil do return false
+
+	function := sp.entry_point_getFunction(entry)
+	if function == nil do return true
+
+	attribute := sp.function_findAttributeByName(function, ctx.slang_session, SLANG_BLEND_MODE_ATTRIBUTE)
+	if attribute == nil do return true
+	if sp.ReflectionUserAttribute_GetArgumentCount(attribute) != 1 {
+		fmt.eprintln("BlendMode attribute requires one string mode argument")
+		return false
+	}
+
+	mode_len: uint
+	mode := sp.ReflectionUserAttribute_GetArgumentValueString(attribute, 0, &mode_len)
+	if mode == nil {
+		fmt.eprintln("BlendMode attribute argument must be a string")
+		return false
+	}
+	mode_bytes := cast([^]byte)mode
+	if ez_gfx_shader_target_name_equals_cstring(mode_bytes[:mode_len], int(mode_len), "alpha") {
+		program.blend_mode = .Alpha
+		return true
+	}
+	fmt.eprintf("unsupported BlendMode value: %.*s\n", mode_len, mode)
+	return false
 }
 
 ez_gfx_shader_reflect_entry_function_target_usage :: proc(

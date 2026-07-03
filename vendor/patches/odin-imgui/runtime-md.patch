@@ -1,0 +1,21 @@
+diff --git a/premake5.lua b/premake5.lua
+--- a/premake5.lua
++++ b/premake5.lua
+@@ -435,7 +435,7 @@
+ 
+     -- Compiler flags based on configuration
+     file:write(":: Compiler flags based on configuration\n")
+-    file:write("set CFLAGS=/MT /EHsc ")
++    file:write("set CFLAGS=/MD /EHsc ")
+     file:write("/D \"IMGUI_DISABLE_OBSOLETE_FUNCTIONS\" ")
+     file:write("/D \"IMGUI_DISABLE_OBSOLETE_KEYIO\" ")
+     file:write("/D \"IMGUI_IMPL_API=extern \\\"C\\\"\"")
+@@ -700,7 +700,7 @@
+ 	end
+ 
+ 	filter { "system:windows", "configurations:Debug or Release" }
+-    	buildoptions { "/MT" }
++    	buildoptions { "/MD" }
+ 
+ 	filter "configurations:Debug"
+ 		defines { "DEBUG" }

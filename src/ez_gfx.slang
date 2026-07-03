@@ -140,3 +140,9 @@ struct TargetLayoutAttribute
 struct LoadTargetAttribute
 {
 };
+
+[__AttributeUsage(_AttributeTargets.Function)]
+struct BlendModeAttribute
+{
+    string mode;
+};

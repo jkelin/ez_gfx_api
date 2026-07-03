@@ -13,6 +13,7 @@ Ez_Gfx_Pipeline_Record :: struct {
 	kind:                  Ez_Gfx_Shader_Kind,
 	shader_identity:       u64,
 	shader:                ^Ez_Gfx_Shader_Program,
+	blend_mode:            Ez_Gfx_Blend_Mode,
 	color_formats:         [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.Format,
 	color_format_count:    int,
 	depth_format:          vk.Format,
@@ -128,7 +129,7 @@ ez_gfx_pipeline_depth_format_equal :: proc(
 	return record.has_depth == has_depth && record.depth_format == format
 }
 
-// TODO: Add topology, blend, and rasterization options to the cache key.
+// TODO: Add topology and rasterization options to the cache key.
 ez_gfx_pipeline_manager_get :: proc(
 	manager: ^Ez_Gfx_Pipeline_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
@@ -152,6 +153,7 @@ ez_gfx_pipeline_manager_get :: proc(
 		candidate := &manager.records[i]
 		if candidate.kind == .Graphics &&
 		   candidate.shader_identity == shader.identity &&
+		   candidate.blend_mode == shader.blend_mode &&
 		   ez_gfx_pipeline_color_formats_equal(candidate, color_formats, color_format_count) &&
 		   ez_gfx_pipeline_depth_format_equal(candidate, depth_format, has_depth) {
 			candidate.last_used = manager.clock
@@ -177,6 +179,7 @@ ez_gfx_pipeline_manager_get :: proc(
 	slot.kind = .Graphics
 	slot.shader_identity = shader.identity
 	slot.shader = shader
+	slot.blend_mode = shader.blend_mode
 	slot.color_formats = color_formats
 	slot.color_format_count = color_format_count
 	slot.depth_format = depth_format
@@ -316,10 +319,20 @@ ez_gfx_pipeline_record_create :: proc(
 
 	color_blend_attachments: [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.PipelineColorBlendAttachmentState
 	for i in 0 ..< record.color_format_count {
-		color_blend_attachments[i] = vk.PipelineColorBlendAttachmentState {
+		attachment := vk.PipelineColorBlendAttachmentState {
 			colorWriteMask = {.R, .G, .B, .A},
 			blendEnable    = false,
 		}
+		if record.blend_mode == .Alpha {
+			attachment.blendEnable = true
+			attachment.srcColorBlendFactor = .SRC_ALPHA
+			attachment.dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA
+			attachment.colorBlendOp = .ADD
+			attachment.srcAlphaBlendFactor = .ONE
+			attachment.dstAlphaBlendFactor = .ONE_MINUS_SRC_ALPHA
+			attachment.alphaBlendOp = .ADD
+		}
+		color_blend_attachments[i] = attachment
 	}
 	color_blend_state := vk.PipelineColorBlendStateCreateInfo {
 		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
