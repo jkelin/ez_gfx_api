@@ -4,7 +4,39 @@ build: build_example_1
 
 setup:
   git submodule update --init --recursive
+  just apply_vendor_patches
   just premake "vendor\odin-vma" "--vk-version=3"
+
+# Applies git-format patches from vendor/patches/<submodule>/*.patch into vendor/<submodule>.
+[script]
+apply_vendor_patches:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  patches_root="vendor/patches"
+  if [[ ! -d "$patches_root" ]]; then
+    exit 0
+  fi
+  for patch_dir in "$patches_root"/*/; do
+    [[ -d "$patch_dir" ]] || continue
+    submodule="$(basename "$patch_dir")"
+    vendor_dir="vendor/$submodule"
+    if [[ ! -d "$vendor_dir" ]]; then
+      echo "vendor patch target does not exist: vendor/$submodule" >&2
+      exit 1
+    fi
+    while IFS= read -r -d '' patch; do
+      patch_name="$(basename "$patch")"
+      if git apply --directory="$vendor_dir" --check "$patch" 2>/dev/null; then
+        git apply --directory="$vendor_dir" "$patch"
+        echo "applied $submodule/$patch_name"
+      elif git apply --directory="$vendor_dir" --reverse --check "$patch" 2>/dev/null; then
+        echo "already applied $submodule/$patch_name"
+      else
+        echo "failed to apply vendor patch: $submodule/$patch_name" >&2
+        exit 1
+      fi
+    done < <(find "$patch_dir" -maxdepth 1 -type f -name '*.patch' -print0 | sort -z)
+  done
 
 test: copy_slang_dll
   odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1

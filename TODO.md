@@ -62,4 +62,4 @@
 
 - Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
 
-- `examples/shared/assets/sponza.glb` is a 52 MB binary committed directly to the repo. Replace it with a much smaller asset or move it to Git LFS.
+- `examples/shared/assets/sponza.glb` uses KTX2/Basis Universal textures via `KHR_texture_basisu` (18.8 MB, down from 52.6 MB). Regenerate with `npx @gltf-transform/cli etc1s examples/shared/assets/sponza.glb <output.glb>`. KTX2 image parsing is provided by `vendor/patches/glTF2/ktx2-image-type.patch` (applied during `just setup`); runtime KTX2 decode is not implemented yet.

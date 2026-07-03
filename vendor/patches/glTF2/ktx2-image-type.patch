@@ -1,0 +1,25 @@
+diff --git a/gltf.odin b/gltf.odin
+index 5863406..d935223 100644
+--- a/gltf.odin
++++ b/gltf.odin
+@@ -1088,6 +1088,8 @@ images_parse :: proc(object: json.Object, gltf_dir: string, allocator: runtime.A
+                     res[idx].type = .JPEG
+                 case "image/png":
+                     res[idx].type = .PNG
++                case "image/ktx2":
++                    res[idx].type = .KTX2
+                 case:
+                     return res,
+                         GLTF_Error{type = .Unknown_File_Type, proc_name = #procedure, param = {name = v.(string), index = idx}}
+diff --git a/types.odin b/types.odin
+index e7f910d..52e7d66 100644
+--- a/types.odin
++++ b/types.odin
+@@ -308,6 +308,7 @@ Image :: struct {
+ Image_Type :: enum {
+     JPEG,
+     PNG,
++    KTX2,
+ }
+ 
+ 
