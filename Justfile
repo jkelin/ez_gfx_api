@@ -1,21 +1,13 @@
-set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+set unstable
 
 build: build_example_1
 
-build_example_1: copy_slang_dll
-  odin build examples/1_triangle -out:out\example_1.exe
-
-build_example_2: copy_slang_dll
-  odin build examples/2_textured_cube -out:out\example_2.exe
-
-build_example_3: copy_slang_dll
-  odin build examples/3_compute_structured_buffer -out:out\example_3.exe
+setup:
+  git submodule update --init --recursive
+  just premake "vendor\odin-vma" "--vk-version=3"
 
 test: copy_slang_dll
   odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
-
-setup:
-  just premake "vendor\odin-vma" "--vk-version=3"
 
 [windows]
 premake dir args mode='':
@@ -26,24 +18,36 @@ premake dir args mode='':
     cd build
     ./build.bat {{ mode }}
 
+[script]
+[cache(inputs = "vendor/odin-slang/slang/bin/slang.dll", outputs = "out/slang.dll")]
 copy_slang_dll:
-  New-Item -ItemType Directory -Force out | Out-Null
-  if ((Test-Path "vendor\odin-slang\slang\bin\slang.dll") -and !(Test-Path "out\slang.dll")) { copy vendor\odin-slang\slang\bin\slang.dll out\slang.dll | Out-Null }
+  cp vendor/odin-slang/slang/bin/slang.dll out/slang.dll
 
-example_1: build_example_1
-  .\out\example_1.exe
+build_example folder_name name: copy_slang_dll
+  odin build examples/{{ folder_name }} -out:out/{{ name }}.exe
 
-example_2: build_example_2
-  .\out\example_2.exe
+build_example_1: (build_example "1_triangle" "example_1")
 
-example_3: build_example_3
-  .\out\example_3.exe
+build_example_2: (build_example "2_textured_cube" "example_2")
 
-example_1_agent: build_example_1
-  $env:EZ_GFX_MAX_SECONDS = "2"; $env:EZ_GFX_SCREENSHOT = "1"; .\out\example_1.exe
+build_example_3: (build_example "3_compute_structured_buffer" "example_3")
 
-example_2_agent: build_example_2
-  $env:EZ_GFX_MAX_SECONDS = "2"; $env:EZ_GFX_SCREENSHOT = "1"; .\out\example_2.exe
+example folder_name name: copy_slang_dll
+  odin run examples/{{ folder_name }} -keep-executable -out:out/{{ name }}.exe
 
-example_3_agent: build_example_3
-  $env:EZ_GFX_MAX_SECONDS = "2"; $env:EZ_GFX_SCREENSHOT = "1"; .\out\example_3.exe
+example_1: (example "1_triangle" "example_1")
+
+example_2: (example "2_textured_cube" "example_2")
+
+example_3: (example "3_compute_structured_buffer" "example_3")
+
+[env("EZ_GFX_MAX_SECONDS", "2")]
+[env("EZ_GFX_SCREENSHOT", "1")]
+example_agent folder_name name: copy_slang_dll
+  odin run examples/{{ folder_name }} -keep-executable -out:out/{{ name }}.exe
+
+example_1_agent: (example_agent "1_triangle" "example_1")
+
+example_2_agent: (example_agent "2_textured_cube" "example_2")
+
+example_3_agent: (example_agent "3_compute_structured_buffer" "example_3")
