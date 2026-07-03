@@ -63,15 +63,17 @@ Ez_Gfx_Gpu_Heap :: struct {
 }
 
 Ez_Gfx_Vertex_Upload_Job :: struct {
-	kind:             Ez_Gfx_Vertex_Upload_Kind,
-	heap:             ^Ez_Gfx_Gpu_Heap,
-	heap_name:        [EZ_GFX_VERTEX_HEAP_NAME_MAX]byte,
-	heap_name_len:    int,
-	allocation:       Ez_Gfx_Vertex_Allocation,
-	offset:           vk.DeviceSize,
-	byte_size:        vk.DeviceSize,
-	source_bytes:     []u8,
-	source_allocator: mem.Allocator,
+	kind:              Ez_Gfx_Vertex_Upload_Kind,
+	heap:              ^Ez_Gfx_Gpu_Heap,
+	heap_name:         [EZ_GFX_VERTEX_HEAP_NAME_MAX]byte,
+	heap_name_len:     int,
+	allocation:        Ez_Gfx_Vertex_Allocation,
+	offset:            vk.DeviceSize,
+	byte_size:         vk.DeviceSize,
+	// Staging buffer already filled with the caller's data at schedule time, so the
+	// worker only records and submits the GPU copy. Ownership moves to the retire
+	// queue once the transfer is submitted.
+	staging:           Ez_Gfx_Buffer,
 	transfer_timeline: u64,
 }
 
@@ -110,13 +112,19 @@ Ez_Gfx_Vertex_Manager :: struct {
 	latest_submitted_vertex_timeline: u64,
 }
 
+@(private)
+ez_gfx_vertex_manager_fault :: proc(message: string) {
+	fmt.eprintln(message)
+	panic(message)
+}
+
 ez_gfx_gpu_heap_create :: proc(
 	heap: ^Ez_Gfx_Gpu_Heap,
 	capacity: vk.DeviceSize,
 	stride: vk.DeviceSize,
 	usage: vk.BufferUsageFlags,
 	debug_name: cstring = nil,
-) -> bool {
+) {
 	buffer, ok := ez_gfx_buffer_create(
 		capacity,
 		usage | {.TRANSFER_DST},
@@ -124,7 +132,9 @@ ez_gfx_gpu_heap_create :: proc(
 		debug_name,
 		0.7,
 	)
-	if !ok do return false
+	if !ok {
+		ez_gfx_vertex_manager_fault("failed to create GPU heap buffer")
+	}
 
 	heap.buffer = buffer
 	heap.capacity = capacity
@@ -133,7 +143,6 @@ ez_gfx_gpu_heap_create :: proc(
 	heap.used_bytes = 0
 	heap.free_chunks = make([dynamic]Ez_Gfx_Heap_Chunk)
 	heap.pending_free_chunks = make([dynamic]Ez_Gfx_Pending_Free_Chunk)
-	return true
 }
 
 ez_gfx_gpu_heap_destroy :: proc(heap: ^Ez_Gfx_Gpu_Heap) {
@@ -361,11 +370,12 @@ ez_gfx_gpu_heap_retire_timeline :: proc() -> u64 {
 	return ctx.timeline_counter
 }
 
-ez_gfx_vertex_manager_begin :: proc(manager: ^Ez_Gfx_Vertex_Manager) -> bool {
+ez_gfx_vertex_manager_begin :: proc(manager: ^Ez_Gfx_Vertex_Manager) {
 	ctx := ez_gfx_get_current_ctx()
 	if ctx == nil {
-		fmt.eprintln("ez_gfx_vertex_manager_begin called without a current context")
-		return false
+		ez_gfx_vertex_manager_fault(
+			"ez_gfx_vertex_manager_begin called without a current context",
+		)
 	}
 	manager^ = {}
 	manager.jobs = make([dynamic]Ez_Gfx_Vertex_Upload_Job)
@@ -374,50 +384,40 @@ ez_gfx_vertex_manager_begin :: proc(manager: ^Ez_Gfx_Vertex_Manager) -> bool {
 
 	if !ez_gfx_vertex_manager_create_upload_commands(manager, ctx) {
 		ez_gfx_vertex_manager_destroy(manager)
-		return false
+		ez_gfx_vertex_manager_fault("failed to create vertex upload command pool")
 	}
 
 	manager.worker = thread.create(ez_gfx_vertex_upload_thread)
 	if manager.worker == nil {
-		fmt.eprintln("failed to create vertex upload thread")
 		ez_gfx_vertex_manager_destroy(manager)
-		return false
+		ez_gfx_vertex_manager_fault("failed to create vertex upload thread")
 	}
 	manager.worker.data = manager
 	thread.start(manager.worker)
-	return true
 }
 
 ez_gfx_vertex_manager_create :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
 	vertex_heap_names: []string,
 	vertex_stride: vk.DeviceSize,
-) -> bool {
-	if !ez_gfx_vertex_manager_begin(manager) do return false
-	if !ez_gfx_gpu_heap_create(
+) {
+	ez_gfx_vertex_manager_begin(manager)
+	ez_gfx_gpu_heap_create(
 		&manager.index_heap,
 		EZ_GFX_DEFAULT_INDEX_HEAP_BYTES,
 		vk.DeviceSize(size_of(u32)),
 		{.INDEX_BUFFER},
 		"ez_gfx index heap",
-	) {
-		ez_gfx_vertex_manager_destroy(manager)
-		return false
-	}
+	)
 
 	for name in vertex_heap_names {
-		if !ez_gfx_vertex_manager_add_heap(
+		ez_gfx_vertex_manager_add_heap(
 			manager,
 			name,
 			EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES,
 			vertex_stride,
-		) {
-			ez_gfx_vertex_manager_destroy(manager)
-			return false
-		}
+		)
 	}
-
-	return true
 }
 
 ez_gfx_vertex_manager_add_heap :: proc(
@@ -425,19 +425,14 @@ ez_gfx_vertex_manager_add_heap :: proc(
 	name: string,
 	capacity: vk.DeviceSize,
 	stride: vk.DeviceSize,
-) -> bool {
+) {
 	if manager.vertex_heap_count >= EZ_GFX_MAX_VERTEX_HEAPS {
-		fmt.eprintln("too many vertex heaps")
-		return false
+		ez_gfx_vertex_manager_fault("too many vertex heaps")
 	}
 
 	slot := &manager.vertex_heaps[manager.vertex_heap_count]
-	if !ez_gfx_copy_heap_name(&slot.name, &slot.name_len, name) {
-		return false
-	}
-	if !ez_gfx_gpu_heap_create(&slot.heap, capacity, stride, {.STORAGE_BUFFER}) {
-		return false
-	}
+	ez_gfx_copy_heap_name(&slot.name, &slot.name_len, name)
+	ez_gfx_gpu_heap_create(&slot.heap, capacity, stride, {.STORAGE_BUFFER})
 	ctx := ez_gfx_get_current_ctx()
 	if ctx != nil {
 		ez_gfx_debug_set_named_object(
@@ -459,7 +454,6 @@ ez_gfx_vertex_manager_add_heap :: proc(
 	}
 
 	manager.vertex_heap_count += 1
-	return true
 }
 
 ez_gfx_vertex_manager_destroy :: proc(manager: ^Ez_Gfx_Vertex_Manager) {
@@ -511,20 +505,27 @@ ez_gfx_vertex_manager_create_upload_commands :: proc(
 	return true
 }
 
+// `source_stride` is the byte distance between consecutive source indices; 0 means
+// tightly packed. A non-zero stride lets callers reference index data in place (for
+// example inside a parsed glTF buffer) so it is copied straight into the staging
+// buffer without an intermediate packed array.
 ez_gfx_vertex_manager_upload_indices :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
 	indices: []u32,
-) -> (
-	start_index: u32,
-	ok: bool,
-) {
-	allocation, alloc_ok := ez_gfx_vertex_manager_alloc_indices(manager, indices)
-	return allocation.start_index, alloc_ok
+	source_stride: vk.DeviceSize = 0,
+) -> u32 {
+	allocation, alloc_ok := ez_gfx_vertex_manager_alloc_indices(manager, indices, source_stride)
+	if !alloc_ok {
+		fmt.eprintln("index upload failed")
+		panic("index upload failed")
+	}
+	return allocation.start_index
 }
 
 ez_gfx_vertex_manager_alloc_indices :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
 	indices: []u32,
+	source_stride: vk.DeviceSize = 0,
 ) -> (
 	allocation: Ez_Gfx_Vertex_Allocation,
 	ok: bool,
@@ -535,9 +536,9 @@ ez_gfx_vertex_manager_alloc_indices :: proc(
 		"",
 		&manager.index_heap,
 		raw_data(indices),
-		vk.DeviceSize(len(indices) * size_of(u32)),
 		u32(len(indices)),
 		vk.DeviceSize(size_of(u32)),
+		source_stride,
 	)
 }
 
@@ -548,36 +549,38 @@ ez_gfx_vertex_manager_free_indices :: proc(
 	return ez_gfx_gpu_heap_free_allocation(&manager.index_heap, allocation)
 }
 
+// `source_stride` is the byte distance between consecutive source vertices; 0 means
+// tightly packed (size_of(T)). With a non-zero stride `vertices` acts as a strided
+// view: raw_data(vertices) is the base pointer, len(vertices) is the element count,
+// and only size_of(T) payload bytes are read per element. This lets callers upload
+// attributes straight out of interleaved source data (such as glTF buffer views)
+// with a single copy into the staging buffer. When size_of(T) is smaller than the
+// heap stride the remaining destination bytes are zero-filled. Panics on failure
+// after logging to stderr.
 ez_gfx_vertex_manager_upload_vertices :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
 	heap_name: string,
 	vertices: []$T,
-) -> (
-	start_index: u32,
-	ok: bool,
-) {
-	heap := ez_gfx_vertex_manager_find_heap(manager, heap_name)
-	if heap == nil {
-		fmt.eprintf("missing vertex heap: %v\n", heap_name)
-		return 0, false
-	}
-	allocation, alloc_ok := ez_gfx_vertex_manager_schedule_upload(
+	source_stride: vk.DeviceSize = 0,
+) -> u32 {
+	allocation, alloc_ok := ez_gfx_vertex_manager_alloc_vertices(
 		manager,
-		.Vertices,
 		heap_name,
-		heap,
-		raw_data(vertices),
-		vk.DeviceSize(len(vertices) * size_of(T)),
-		u32(len(vertices)),
-		vk.DeviceSize(size_of(T)),
+		vertices,
+		source_stride,
 	)
-	return allocation.start_index, alloc_ok
+	if !alloc_ok {
+		fmt.eprintln("vertex upload failed")
+		panic("vertex upload failed")
+	}
+	return allocation.start_index
 }
 
 ez_gfx_vertex_manager_alloc_vertices :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
 	heap_name: string,
 	vertices: []$T,
+	source_stride: vk.DeviceSize = 0,
 ) -> (
 	allocation: Ez_Gfx_Vertex_Allocation,
 	ok: bool,
@@ -593,23 +596,103 @@ ez_gfx_vertex_manager_alloc_vertices :: proc(
 		heap_name,
 		heap,
 		raw_data(vertices),
-		vk.DeviceSize(len(vertices) * size_of(T)),
 		u32(len(vertices)),
 		vk.DeviceSize(size_of(T)),
+		source_stride,
 	)
 }
 
-// Schedules a transfer-queue upload and copies caller data so async workers never
-// observe stack memory after the upload API returns.
+// Copies `element_count` elements of `element_size` payload bytes from a source
+// laid out with `src_stride` into a destination laid out with `dst_stride`. Strides
+// are byte distances between consecutive elements and must be at least
+// `element_size`; bytes between payloads are left untouched. Pure: reads only from
+// src, writes only into dst, never allocates. Collapses to a single memcpy when both
+// sides are tightly packed and uses unaligned SIMD/scalar-register moves for the
+// common vertex payload sizes so per-element gathers stay fast.
+ez_gfx_vertex_copy_strided :: proc "contextless" (
+	dst: rawptr,
+	dst_stride: int,
+	src: rawptr,
+	src_stride: int,
+	element_size: int,
+	element_count: int,
+) -> bool {
+	if element_size <= 0 || element_count < 0 do return false
+	if dst_stride < element_size || src_stride < element_size do return false
+	if element_count == 0 do return true
+	if dst == nil || src == nil do return false
+
+	if dst_stride == element_size && src_stride == element_size {
+		intrinsics.mem_copy_non_overlapping(dst, src, element_size * element_count)
+		return true
+	}
+
+	dst_bytes := ([^]u8)(dst)
+	src_bytes := ([^]u8)(src)
+	switch element_size {
+	case 16:
+		// Full float4/uint4 payloads move as one unaligned 128-bit SIMD lane.
+		for i in 0 ..< element_count {
+			value := intrinsics.unaligned_load(cast(^#simd[16]u8)&src_bytes[i * src_stride])
+			intrinsics.unaligned_store(cast(^#simd[16]u8)&dst_bytes[i * dst_stride], value)
+		}
+	case 12:
+		// float3 payloads (typical glTF positions/normals) move as a 64-bit and a
+		// 32-bit register pair instead of a per-element memcpy call.
+		for i in 0 ..< element_count {
+			src_element := i * src_stride
+			dst_element := i * dst_stride
+			low := intrinsics.unaligned_load(cast(^u64)&src_bytes[src_element])
+			high := intrinsics.unaligned_load(cast(^u32)&src_bytes[src_element + 8])
+			intrinsics.unaligned_store(cast(^u64)&dst_bytes[dst_element], low)
+			intrinsics.unaligned_store(cast(^u32)&dst_bytes[dst_element + 8], high)
+		}
+	case 8:
+		for i in 0 ..< element_count {
+			value := intrinsics.unaligned_load(cast(^u64)&src_bytes[i * src_stride])
+			intrinsics.unaligned_store(cast(^u64)&dst_bytes[i * dst_stride], value)
+		}
+	case 4:
+		for i in 0 ..< element_count {
+			value := intrinsics.unaligned_load(cast(^u32)&src_bytes[i * src_stride])
+			intrinsics.unaligned_store(cast(^u32)&dst_bytes[i * dst_stride], value)
+		}
+	case 2:
+		for i in 0 ..< element_count {
+			value := intrinsics.unaligned_load(cast(^u16)&src_bytes[i * src_stride])
+			intrinsics.unaligned_store(cast(^u16)&dst_bytes[i * dst_stride], value)
+		}
+	case 1:
+		for i in 0 ..< element_count {
+			dst_bytes[i * dst_stride] = src_bytes[i * src_stride]
+		}
+	case:
+		for i in 0 ..< element_count {
+			intrinsics.mem_copy_non_overlapping(
+				&dst_bytes[i * dst_stride],
+				&src_bytes[i * src_stride],
+				element_size,
+			)
+		}
+	}
+	return true
+}
+
+// Schedules a transfer-queue upload. The caller's data is copied straight into the
+// staging buffer here (honoring `source_stride`), so async workers never observe
+// caller memory after this returns and no intermediate CPU packing buffer exists.
+// `element_size` is the payload copied per element and may be smaller than the heap
+// stride (destination padding is zero-filled); `source_stride` of 0 means tightly
+// packed source data.
 ez_gfx_vertex_manager_schedule_upload :: proc(
 	manager: ^Ez_Gfx_Vertex_Manager,
 	kind: Ez_Gfx_Vertex_Upload_Kind,
 	heap_name: string,
 	heap: ^Ez_Gfx_Gpu_Heap,
 	source: rawptr,
-	byte_size: vk.DeviceSize,
 	element_count: u32,
 	element_size: vk.DeviceSize,
+	source_stride: vk.DeviceSize = 0,
 ) -> (
 	allocation: Ez_Gfx_Vertex_Allocation,
 	ok: bool,
@@ -620,10 +703,18 @@ ez_gfx_vertex_manager_schedule_upload :: proc(
 		fmt.eprintln("vertex upload worker is not running; call ez_gfx_vertex_manager_begin or ez_gfx_vertex_manager_create first")
 		return allocation, false
 	}
-	if heap.stride == 0 || element_size != heap.stride {
-		fmt.eprintln("heap upload element size does not match heap stride")
+	if heap.stride == 0 || element_size == 0 || element_size > heap.stride {
+		fmt.eprintln("heap upload element size does not fit heap stride")
 		return allocation, false
 	}
+	stride := source_stride
+	if stride == 0 do stride = element_size
+	if stride < element_size {
+		fmt.eprintln("heap upload source stride is smaller than the element size")
+		return allocation, false
+	}
+
+	byte_size := vk.DeviceSize(element_count) * heap.stride
 
 	sync.mutex_lock(&manager.mutex)
 	defer sync.mutex_unlock(&manager.mutex)
@@ -633,12 +724,33 @@ ez_gfx_vertex_manager_schedule_upload :: proc(
 	if !ok do return allocation, false
 	if byte_size == 0 do return allocation, true
 
-	source_bytes, alloc_err := make([]u8, int(byte_size))
-	if alloc_err != nil {
+	staging, mapped, staging_ok := ez_gfx_buffer_create_mapped(
+		byte_size,
+		{.TRANSFER_SRC},
+		"ez_gfx vertex staging buffer",
+		0.2,
+	)
+	if !staging_ok {
 		_ = ez_gfx_gpu_heap_free_chunk(heap, Ez_Gfx_Heap_Chunk{offset = offset, size = byte_size})
 		return allocation, false
 	}
-	mem.copy(raw_data(source_bytes), source, int(byte_size))
+	if element_size < heap.stride {
+		// Freshly created staging memory is uninitialized; clear it so destination
+		// padding lanes (e.g. the w component of float3 payloads) are deterministic.
+		mem.zero(mapped, int(byte_size))
+	}
+	if !ez_gfx_vertex_copy_strided(
+		mapped,
+		int(heap.stride),
+		source,
+		int(stride),
+		int(element_size),
+		int(element_count),
+	) {
+		ez_gfx_buffer_destroy(&staging)
+		_ = ez_gfx_gpu_heap_free_chunk(heap, Ez_Gfx_Heap_Chunk{offset = offset, size = byte_size})
+		return allocation, false
+	}
 
 	timeline := ez_gfx_ctx_next_timeline_value(ctx)
 	job := Ez_Gfx_Vertex_Upload_Job {
@@ -647,16 +759,11 @@ ez_gfx_vertex_manager_schedule_upload :: proc(
 		allocation = allocation,
 		offset = offset,
 		byte_size = byte_size,
-		source_bytes = source_bytes,
-		source_allocator = context.allocator,
+		staging = staging,
 		transfer_timeline = timeline,
 	}
 	if kind == .Vertices {
-		if !ez_gfx_copy_heap_name(&job.heap_name, &job.heap_name_len, heap_name) {
-			ez_gfx_vertex_upload_job_release_source(&job)
-			_ = ez_gfx_gpu_heap_free_chunk(heap, Ez_Gfx_Heap_Chunk{offset = offset, size = byte_size})
-			return allocation, false
-		}
+		ez_gfx_copy_heap_name(&job.heap_name, &job.heap_name_len, heap_name)
 	}
 	append(&manager.jobs, job)
 	intrinsics.atomic_store_explicit(&manager.latest_scheduled_vertex_timeline, timeline, .Seq_Cst)
@@ -705,28 +812,17 @@ ez_gfx_vertex_upload_job :: proc(
 	job: ^Ez_Gfx_Vertex_Upload_Job,
 ) -> Ez_Gfx_Vertex_Upload_Error {
 	if job.byte_size == 0 do return .None
-	staging, staging_ok := ez_gfx_buffer_create(
-		job.byte_size,
-		{.TRANSFER_SRC},
-		{.HOST_VISIBLE, .HOST_COHERENT},
-		"ez_gfx vertex staging buffer",
-		0.2,
-	)
-	if !staging_ok do return .Vulkan_Failed
-
-	if !ez_gfx_buffer_write(&staging, job.source_bytes) {
-		ez_gfx_buffer_destroy(&staging)
-		return .Vulkan_Failed
-	}
-
+	// The staging buffer was filled at schedule time; the worker only records the
+	// GPU-side copy and hands the buffer to the retire queue.
 	command_buffer: vk.CommandBuffer
 	upload_ok: bool
-	command_buffer, upload_ok = ez_gfx_vertex_submit_upload(manager, ctx, job, &staging)
+	command_buffer, upload_ok = ez_gfx_vertex_submit_upload(manager, ctx, job, &job.staging)
 	if !upload_ok {
-		ez_gfx_buffer_destroy(&staging)
 		return .Vulkan_Failed
 	}
 
+	staging := job.staging
+	job.staging = {}
 	sync.mutex_lock(&manager.mutex)
 	append(&manager.pending_staging, Ez_Gfx_Vertex_Staging_Retire_Job {
 		buffer = staging,
@@ -856,10 +952,9 @@ ez_gfx_vertex_finish_job :: proc(
 }
 
 ez_gfx_vertex_upload_job_release_source :: proc(job: ^Ez_Gfx_Vertex_Upload_Job) {
-	if raw_data(job.source_bytes) == nil do return
-	delete(job.source_bytes, job.source_allocator)
-	job.source_bytes = nil
-	job.source_allocator = {}
+	if job.staging.handle == vk.Buffer(0) do return
+	ez_gfx_buffer_destroy(&job.staging)
+	job.staging = {}
 }
 
 ez_gfx_vertex_manager_latest_scheduled_timeline :: proc(manager: ^Ez_Gfx_Vertex_Manager) -> u64 {
@@ -1038,10 +1133,10 @@ ez_gfx_copy_heap_name :: proc(
 	dst: ^[EZ_GFX_VERTEX_HEAP_NAME_MAX]byte,
 	dst_len: ^int,
 	name: string,
-) -> bool {
+) {
 	if len(name) > EZ_GFX_VERTEX_HEAP_NAME_MAX {
 		fmt.eprintf("vertex heap name is too long: %v\n", name)
-		return false
+		panic("vertex heap name is too long")
 	}
 
 	for i in 0 ..< EZ_GFX_VERTEX_HEAP_NAME_MAX {
@@ -1051,7 +1146,6 @@ ez_gfx_copy_heap_name :: proc(
 		dst[i] = name[i]
 	}
 	dst_len^ = len(name)
-	return true
 }
 
 ez_gfx_heap_name_equals_string :: proc(name: []byte, name_len: int, other: string) -> bool {

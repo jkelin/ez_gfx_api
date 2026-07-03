@@ -189,36 +189,28 @@ cube_test_init_resources :: proc(app: ^Cube_Test_App) -> bool {
 	app.shader_loaded = true
 
 	vertex_heap_names := [?]string{CUBE_TEST_POSITION_HEAP, CUBE_TEST_COLOR_HEAP}
-	if !gfx.ez_gfx_vertex_manager_create(
+	gfx.ez_gfx_vertex_manager_create(
 		&app.ctx.vertex_manager,
 		vertex_heap_names[:],
 		vk.DeviceSize(size_of(CUBE_TEST_POSITIONS[0])),
-	) {
-		return false
-	}
+	)
 
-	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
+	app.cube_index = gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
 		CUBE_TEST_INDICES[:],
 	)
-	if !index_ok do return false
-	app.cube_index = index_start
 	app.cube_index_len = u32(len(CUBE_TEST_INDICES))
-
-	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
+	app.cube_vertex = gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		CUBE_TEST_POSITION_HEAP,
 		CUBE_TEST_POSITIONS[:],
 	)
-	if !vertex_ok do return false
-	app.cube_vertex = vertex_start
 
-	_, color_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
+	_ = gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		CUBE_TEST_COLOR_HEAP,
 		CUBE_TEST_COLORS[:],
 	)
-	if !color_ok do return false
 
 	region := gfx.Ez_Gfx_Texture_Memory_Region{data = CUBE_TEST_TEXTURE_BYTES[:]}
 	texture_id, texture_err := gfx.ez_gfx_load_texture(

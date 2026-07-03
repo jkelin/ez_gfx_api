@@ -31,54 +31,38 @@ App :: struct {
 
 main :: proc() {
 	app: App
-
-	if !init_app(&app) {
-		cleanup(&app)
-		return
-	}
-
+	defer cleanup(&app)
+	init_app(&app)
 	run(&app)
-	cleanup(&app)
 }
 
-init_app :: proc(app: ^App) -> bool {
+init_app :: proc(app: ^App) {
 	fmt.println("checkpoint: glfw init")
-	if !shared.example_step("glfw init", gfx.ez_gfx_glfw_init()) do return false
+	assert(gfx.ez_gfx_glfw_init())
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	app.window_count = 1
 	main_window := &app.windows[0]
 
 	fmt.println("checkpoint: window create")
-	if !shared.example_step(
-		"window create",
+	assert(
 		gfx.ez_gfx_window_create(main_window, "ez_gfx_api Vulkan", WIDTH, HEIGHT),
-	) {
-		return false
-	}
+	)
 	fmt.println("checkpoint: instance create")
-	if !shared.example_step(
-		"instance create",
-		gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}),
-	) {
-		return false
-	}
+	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}))
 	fmt.println("checkpoint: surface create")
-	if !shared.example_step("surface create", gfx.ez_gfx_window_create_surface(main_window)) do return false
+	assert(gfx.ez_gfx_window_create_surface(main_window))
 	fmt.println("checkpoint: device init")
-	if !shared.example_step("device init", gfx.ez_gfx_ctx_init_device(main_window.surface)) do return false
+	assert(gfx.ez_gfx_ctx_init_device(main_window.surface))
 	fmt.println("checkpoint: swapchain recreate")
-	if !shared.example_step("swapchain recreate", gfx.ez_gfx_window_recreate_swapchain(main_window)) do return false
+	assert(gfx.ez_gfx_window_recreate_swapchain(main_window))
 	fmt.println("checkpoint: triangle data init")
-	if !shared.example_step("triangle data init", triangle_init(app)) do return false
-
+	triangle_init(app)
 	fmt.println("checkpoint: init done")
-	return true
 }
 
-triangle_init :: proc(app: ^App) -> bool {
-	if !shared.example_step(
-		"triangle shader compile",
+triangle_init :: proc(app: ^App) {
+	assert(
 		gfx.ez_gfx_shader_compile(
 			{
 				path = TRIANGLE_SHADER_PATH,
@@ -87,39 +71,26 @@ triangle_init :: proc(app: ^App) -> bool {
 			},
 			&app.shader,
 		),
-	) {
-		return false
-	}
+	)
 	app.shader_loaded = true
 
 	vertex_heap_names := [?]string{TRIANGLE_POSITION_HEAP}
-	if !shared.example_step(
-		"vertex manager create",
-		gfx.ez_gfx_vertex_manager_create(
-			&app.ctx.vertex_manager,
-			vertex_heap_names[:],
-			vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
-		),
-	) {
-		return false
-	}
+	gfx.ez_gfx_vertex_manager_create(
+		&app.ctx.vertex_manager,
+		vertex_heap_names[:],
+		vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
+	)
 
-	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
+	app.triangle_index = gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_INDICES[:],
 	)
-	if !shared.example_step("triangle index upload", index_ok) do return false
-	app.triangle_index = index_start
 	app.triangle_index_len = u32(len(TRIANGLE_INDICES))
-
-	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
+	app.triangle_vertex = gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_POSITION_HEAP,
 		TRIANGLE_POSITIONS[:],
 	)
-	if !shared.example_step("triangle vertex upload", vertex_ok) do return false
-	app.triangle_vertex = vertex_start
-	return true
 }
 
 run :: proc(app: ^App) {

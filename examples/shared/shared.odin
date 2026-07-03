@@ -1,20 +1,9 @@
 package shared
 
 import gfx "../../src"
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "vendor:glfw"
-
-// Logs a warning when an example exits early during initialization or shutdown.
-example_exit :: proc(step: string) {
-	fmt.eprintf("example exiting early at %s\n", step)
-}
-
-example_step :: proc(step: string, ok: bool) -> bool {
-	if !ok do example_exit(step)
-	return ok
-}
 
 Mat4 :: [4][4]f32
 Vec3 :: linalg.Vector3f32

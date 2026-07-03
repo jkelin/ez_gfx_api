@@ -5,6 +5,15 @@ struct PushConstants
     row_major float4x4 mvp;
 };
 
+struct MeshDescriptor
+{
+    uint index_count;
+    uint first_index;
+    uint vertex_offset;
+    uint normal_vertex_offset;
+    row_major float4x4 transform;
+};
+
 struct MeshInstance
 {
     uint mesh_index;
@@ -12,6 +21,7 @@ struct MeshInstance
     uint _pad1;
     uint _pad2;
     float4 color;
+    row_major float4x4 transform;
 };
 
 [[vk::push_constant]]
@@ -29,9 +39,13 @@ StructuredBuffer<float4> normals;
 [[vk::binding(2, 0)]]
 StructuredBuffer<MeshInstance> mesh_instances;
 
+[StructuredBuffer("mesh_descriptors")]
+[[vk::binding(3, 0)]]
+StructuredBuffer<MeshDescriptor> mesh_descriptors;
+
 [RelativeScale(1.0)]
 [TargetLayout("depth", "d32_float")]
-[[vk::binding(3, 0)]]
+[[vk::binding(4, 0)]]
 Texture2D<float> depth;
 
 struct V2P
@@ -46,8 +60,17 @@ struct V2P
 V2P vertexmain(uint vertex_index: SV_VertexID, uint instance_index: SV_InstanceID)
 {
     V2P output;
-    output.pos = mul(push_constants.mvp, float4(positions[vertex_index].xyz, 1.0));
-    float3 normal = normalize(normals[vertex_index].xyz);
+    // Vertex data is uploaded untouched from the glTF buffers; node transforms
+    // (with scene normalization) live in the mesh descriptor and per-instance
+    // transforms in the mesh instance.
+    MeshInstance instance = mesh_instances[instance_index];
+    MeshDescriptor mesh = mesh_descriptors[instance.mesh_index];
+    float4x4 world = mul(instance.transform, mesh.transform);
+    output.pos = mul(push_constants.mvp, mul(world, float4(positions[vertex_index].xyz, 1.0)));
+    // Position and normal heaps allocate independently; indirect vertex_offset
+    // indexes the position heap, normal_vertex_offset indexes the normal heap.
+    uint local_vertex = vertex_index - mesh.vertex_offset;
+    float3 normal = normalize(mul((float3x3)world, normals[local_vertex + mesh.normal_vertex_offset].xyz));
     output.color = float4(normal * 0.5 + 0.5, 1.0);
     return output;
 }

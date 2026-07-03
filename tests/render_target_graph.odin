@@ -345,29 +345,22 @@ render_target_graph_init_shaders :: proc(
 
 render_target_graph_init_vertices :: proc(app: ^Render_Target_Graph_App) -> bool {
 	vertex_heap_names := [?]string{TRIANGLE_POSITION_HEAP}
-	if !gfx.ez_gfx_vertex_manager_create(
+	gfx.ez_gfx_vertex_manager_create(
 		&app.ctx.vertex_manager,
 		vertex_heap_names[:],
 		vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
-	) {
-		return false
-	}
+	)
 
-	index_start, index_ok := gfx.ez_gfx_vertex_manager_upload_indices(
+	app.triangle_index = gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_INDICES[:],
 	)
-	if !index_ok do return false
-	app.triangle_index = index_start
 	app.triangle_index_len = u32(len(TRIANGLE_INDICES))
-
-	vertex_start, vertex_ok := gfx.ez_gfx_vertex_manager_upload_vertices(
+	app.triangle_vertex = gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_POSITION_HEAP,
 		TRIANGLE_POSITIONS[:],
 	)
-	if !vertex_ok do return false
-	app.triangle_vertex = vertex_start
 	return true
 }
 

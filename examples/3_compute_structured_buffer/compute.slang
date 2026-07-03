@@ -5,7 +5,8 @@ struct MeshDescriptor
     uint index_count;
     uint first_index;
     uint vertex_offset;
-    uint _pad0;
+    uint normal_vertex_offset;
+    row_major float4x4 transform;
 };
 
 struct MeshInstance
@@ -15,6 +16,7 @@ struct MeshInstance
     uint _pad1;
     uint _pad2;
     float4 color;
+    row_major float4x4 transform;
 };
 
 struct ComputePushConstants
