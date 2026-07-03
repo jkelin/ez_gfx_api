@@ -19,6 +19,14 @@ Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager :: struct {
 	count:   int,
 }
 
+Ez_Gfx_Indirect_Buffer_Handle :: struct {
+	buffer:   ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
+	stride:   vk.DeviceSize,
+	capacity: u32,
+	frame_id: u64,
+	ok:       bool,
+}
+
 Ez_Gfx_Vertex_Pipeline_Descriptor :: struct {
 	pipeline:           ^Ez_Gfx_Pipeline_Record,
 	indirect_buffer:    ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
@@ -64,7 +72,7 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 		   candidate.draw_offset == draw_offset &&
 		   candidate.capacity >= capacity {
 			candidate.in_use = true
-			ez_gfx_vertex_pipeline_clear_buffer(candidate)
+			ez_gfx_indirect_buffer_clear(candidate)
 			return candidate, true
 		}
 	}
@@ -93,7 +101,7 @@ ez_gfx_indirect_buffer_manager_acquire :: proc(
 		return nil, false
 	}
 	slot.buffer = created
-	ez_gfx_vertex_pipeline_clear_buffer(slot)
+	ez_gfx_indirect_buffer_clear(slot)
 	return slot, true
 }
 
@@ -107,7 +115,7 @@ ez_gfx_indirect_completed_timeline :: proc() -> u64 {
 	return value
 }
 
-ez_gfx_vertex_pipeline_clear_buffer :: proc(buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer) {
+ez_gfx_indirect_buffer_clear :: proc(buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer) {
 	draw_count := [?]u32{0}
 	_ = ez_gfx_buffer_write_at(&buffer.buffer, 0, draw_count[:])
 }
@@ -146,58 +154,57 @@ ez_gfx_indirect_buffer_manager_destroy :: proc(
 	manager.count = 0
 }
 
-ez_gfx_vertex_pipeline_set_draw_count :: proc(
-	descriptor: ^Ez_Gfx_Vertex_Pipeline_Descriptor,
+ez_gfx_indirect_buffer_set_draw_count :: proc(
+	handle: ^Ez_Gfx_Indirect_Buffer_Handle,
 	count: u32,
 ) -> bool {
-	if !descriptor.ok || descriptor.indirect_buffer == nil do return false
-	if count > descriptor.indirect_buffer.capacity {
+	if handle == nil || !handle.ok || handle.buffer == nil do return false
+	if count > handle.buffer.capacity {
 		fmt.eprintln("draw count exceeds indirect buffer capacity")
 		return false
 	}
 	draw_count := [?]u32{count}
-	if !ez_gfx_buffer_write_at(&descriptor.indirect_buffer.buffer, 0, draw_count[:]) {
+	if !ez_gfx_buffer_write_at(&handle.buffer.buffer, 0, draw_count[:]) {
 		return false
 	}
-	descriptor.indirect_count = count
 	return true
 }
 
-ez_gfx_vertex_pipeline_write_draw :: proc(
-	descriptor: ^Ez_Gfx_Vertex_Pipeline_Descriptor,
+ez_gfx_indirect_buffer_write_draw :: proc(
+	handle: ^Ez_Gfx_Indirect_Buffer_Handle,
 	index: u32,
 	command: vk.DrawIndexedIndirectCommand,
 ) -> bool {
-	if !descriptor.ok || descriptor.indirect_buffer == nil do return false
-	if index >= descriptor.indirect_buffer.capacity {
+	if handle == nil || !handle.ok || handle.buffer == nil do return false
+	if index >= handle.buffer.capacity {
 		fmt.eprintln("draw command index exceeds indirect buffer capacity")
 		return false
 	}
 	commands := [?]vk.DrawIndexedIndirectCommand{command}
-	offset := descriptor.indirect_buffer.draw_offset + descriptor.indirect_stride * vk.DeviceSize(index)
-	return ez_gfx_buffer_write_at(&descriptor.indirect_buffer.buffer, offset, commands[:])
+	offset := handle.buffer.draw_offset + handle.stride * vk.DeviceSize(index)
+	return ez_gfx_buffer_write_at(&handle.buffer.buffer, offset, commands[:])
 }
 
-ez_gfx_vertex_pipeline_write_draw_payload :: proc(
-	descriptor: ^Ez_Gfx_Vertex_Pipeline_Descriptor,
+ez_gfx_indirect_buffer_write_draw_payload :: proc(
+	handle: ^Ez_Gfx_Indirect_Buffer_Handle,
 	index: u32,
 	payload: []$T,
 ) -> bool {
-	if !descriptor.ok || descriptor.indirect_buffer == nil do return false
-	if index >= descriptor.indirect_buffer.capacity {
+	if handle == nil || !handle.ok || handle.buffer == nil do return false
+	if index >= handle.buffer.capacity {
 		fmt.eprintln("draw payload index exceeds indirect buffer capacity")
 		return false
 	}
 	payload_bytes := vk.DeviceSize(len(payload) * size_of(T))
 	command_bytes := vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand))
-	if command_bytes + payload_bytes > descriptor.indirect_stride {
+	if command_bytes + payload_bytes > handle.stride {
 		fmt.eprintln("draw payload exceeds per-draw indirect stride")
 		return false
 	}
-	offset := descriptor.indirect_buffer.draw_offset +
-		descriptor.indirect_stride * vk.DeviceSize(index) +
+	offset := handle.buffer.draw_offset +
+		handle.stride * vk.DeviceSize(index) +
 		command_bytes
-	return ez_gfx_buffer_write_at(&descriptor.indirect_buffer.buffer, offset, payload)
+	return ez_gfx_buffer_write_at(&handle.buffer.buffer, offset, payload)
 }
 
 ez_gfx_align_device_size :: proc(value, alignment: vk.DeviceSize) -> vk.DeviceSize {

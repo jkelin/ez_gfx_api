@@ -147,10 +147,20 @@ run :: proc(app: ^App) {
 draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	if !gfx.ez_gfx_begin_render(window) do return
 
+	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+		vk.DrawIndexedIndirectCommand,
+		1,
+		"triangle draw commands",
+	)
+	if !indirect.ok {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
-		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
-		1,
+		indirect,
+		nil,
 	)
 	if !pipeline.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -164,11 +174,11 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		vertexOffset  = i32(app.triangle_vertex),
 		firstInstance = 0,
 	}
-	if !gfx.ez_gfx_vertex_pipeline_write_draw(&pipeline, 0, draw) {
+	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
-	if !gfx.ez_gfx_vertex_pipeline_set_draw_count(&pipeline, 1) {
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}

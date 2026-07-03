@@ -72,6 +72,7 @@ Ez_Gfx_Ctx :: struct {
 	command_pool:                         vk.CommandPool,
 	frame_slots:                          [EZ_GFX_FRAMES_IN_FLIGHT]Ez_Gfx_Frame_Slot,
 	current_frame_slot:                   u32,
+	render_frame_counter:                 u64,
 	timeline_semaphore:                   vk.Semaphore,
 	timeline_counter:                     u64,
 	vma_vulkan_functions:                 vma.Vulkan_Functions,

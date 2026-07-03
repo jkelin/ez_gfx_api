@@ -597,7 +597,7 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		)
 	}
 
-	return ez_gfx_pipeline_update_descriptors(ctx, record, shader, ez_gfx_current_render.frame_slot)
+	return true
 }
 
 ez_gfx_pipeline_update_descriptors :: proc(
@@ -605,9 +605,10 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
 	frame_slot: u32,
+	node: ^Ez_Gfx_Render_Graph_Node,
 ) -> bool {
 	frame_index := int(frame_slot)
-	version := ez_gfx_pipeline_descriptor_version(ctx, shader)
+	version := ez_gfx_pipeline_descriptor_version(ctx, shader, node)
 	if record.descriptor_sets[frame_index] == vk.DescriptorSet(0) {
 		record.descriptor_versions[frame_index] = version
 		return true
@@ -649,21 +650,21 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	structured_info_base := shader.vertex_heap_binding_count
 	for i in 0 ..< shader.structured_buffer_binding_count {
 		binding_info := &shader.structured_buffer_bindings[i]
-		render_binding := ez_gfx_render_find_structured_binding(
-			&ez_gfx_current_render,
+		node_binding := ez_gfx_render_graph_find_buffer_binding(
+			node,
 			binding_info.name[:],
 			binding_info.name_len,
 		)
-		if render_binding == nil || render_binding.buffer == nil {
+		if node_binding == nil || node_binding.buffer == nil {
 			fmt.eprintln("shader references a missing render structured buffer")
 			return false
 		}
 
 		info_index := structured_info_base + i
 		buffer_infos[info_index] = vk.DescriptorBufferInfo {
-			buffer = render_binding.buffer.handle,
-			offset = render_binding.offset,
-			range  = render_binding.size,
+			buffer = node_binding.buffer.handle,
+			offset = node_binding.offset,
+			range  = node_binding.size,
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
@@ -678,8 +679,8 @@ ez_gfx_pipeline_update_descriptors :: proc(
 
 	for i in 0 ..< shader.target_declaration_count {
 		target_info := &shader.target_declarations[i]
-		target := ez_gfx_render_target_manager_find(
-			&ctx.render_target_manager,
+		target := ez_gfx_render_graph_find_node_target(
+			node,
 			target_info.name[:],
 			target_info.name_len,
 		)
@@ -727,26 +728,36 @@ ez_gfx_pipeline_target_descriptor_layout :: proc(
 ez_gfx_pipeline_descriptor_version :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	shader: ^Ez_Gfx_Shader_Program,
+	node: ^Ez_Gfx_Render_Graph_Node,
 ) -> u64 {
 	version := ctx.render_target_manager.version
 	if shader.structured_buffer_binding_count > 0 {
-		version = ez_gfx_pipeline_hash_u64(version, ez_gfx_current_render.structured_binding_version)
 		version = version * 16777619 + ctx.structured_buffer_manager.version
 		for i in 0 ..< shader.structured_buffer_binding_count {
 			binding_info := &shader.structured_buffer_bindings[i]
-			render_binding := ez_gfx_render_find_structured_binding(
-				&ez_gfx_current_render,
+			node_binding := ez_gfx_render_graph_find_buffer_binding(
+				node,
 				binding_info.name[:],
 				binding_info.name_len,
 			)
 			version = ez_gfx_pipeline_hash_bytes(version, binding_info.name[:], binding_info.name_len)
 			version = ez_gfx_pipeline_hash_u64(version, u64(binding_info.binding))
 			version = ez_gfx_pipeline_hash_u64(version, u64(binding_info.access))
-			if render_binding != nil && render_binding.buffer != nil {
-				version = ez_gfx_pipeline_hash_u64(version, u64(uintptr(render_binding.buffer.handle)))
-				version = ez_gfx_pipeline_hash_u64(version, u64(render_binding.offset))
-				version = ez_gfx_pipeline_hash_u64(version, u64(render_binding.size))
+			if node_binding != nil && node_binding.buffer != nil {
+				version = ez_gfx_pipeline_hash_u64(version, u64(uintptr(node_binding.buffer.handle)))
+				version = ez_gfx_pipeline_hash_u64(version, u64(node_binding.offset))
+				version = ez_gfx_pipeline_hash_u64(version, u64(node_binding.size))
 			}
+		}
+	}
+	if shader.target_declaration_count > 0 {
+		for i in 0 ..< shader.target_declaration_count {
+			declaration := &shader.target_declarations[i]
+			target := ez_gfx_render_graph_find_node_target(node, declaration.name[:], declaration.name_len)
+			if target == nil do continue
+			version = ez_gfx_pipeline_hash_bytes(version, declaration.name[:], declaration.name_len)
+			version = ez_gfx_pipeline_hash_u64(version, u64(uintptr(target.image_view)))
+			version = ez_gfx_pipeline_hash_u64(version, u64(target.generation))
 		}
 	}
 	return version

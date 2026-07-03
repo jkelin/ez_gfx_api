@@ -122,10 +122,15 @@ cube_push_constant_size_mismatch_fails_cleanly :: proc(t: ^testing.T) {
 		return
 	}
 	cube_test_reset_validation_counts(&app)
+	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+		vk.DrawIndexedIndirectCommand,
+		1,
+		"cube mismatch draw commands",
+	)
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
-		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
-		1,
+		indirect,
+		nil,
 		Cube_Test_Bad_Push_Constants{},
 	)
 	testing.expect(t, !pipeline.ok, "push constant size mismatch unexpectedly succeeded")
@@ -252,10 +257,20 @@ cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
 		texture_id = u32(app.texture_id),
 	}
 
+	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+		vk.DrawIndexedIndirectCommand,
+		1,
+		"cube test draw commands",
+	)
+	if !indirect.ok {
+		_ = gfx.ez_gfx_finish_render()
+		return false
+	}
+
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
-		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
-		1,
+		indirect,
+		nil,
 		push_constants,
 	)
 	if !pipeline.ok {
@@ -270,11 +285,11 @@ cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
 		vertexOffset  = i32(app.cube_vertex),
 		firstInstance = 0,
 	}
-	if !gfx.ez_gfx_vertex_pipeline_write_draw(&pipeline, 0, draw) {
+	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
-	if !gfx.ez_gfx_vertex_pipeline_set_draw_count(&pipeline, 1) {
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}

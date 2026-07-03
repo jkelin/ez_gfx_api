@@ -27,7 +27,7 @@ Ez_Gfx_Render_Graph_Access :: struct {
 	resource_kind:          Ez_Gfx_Render_Graph_Resource_Kind,
 	target_kind:            Ez_Gfx_Render_Target_Kind,
 	target:                 ^Ez_Gfx_Render_Target_Texture,
-	structured_binding:     ^Ez_Gfx_Render_Structured_Binding,
+	structured_binding:     ^Ez_Gfx_Node_Buffer_Binding,
 	sampled_read:           bool,
 	storage_read:           bool,
 	storage_write:          bool,
@@ -40,8 +40,11 @@ Ez_Gfx_Render_Graph_Access :: struct {
 
 Ez_Gfx_Render_Graph_Node :: struct {
 	kind:            Ez_Gfx_Render_Graph_Node_Kind,
+	shader:          ^Ez_Gfx_Shader_Program,
 	descriptor:      Ez_Gfx_Vertex_Pipeline_Descriptor,
 	compute:         Ez_Gfx_Compute_Pipeline_Descriptor,
+	buffer_bindings: [EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS]Ez_Gfx_Node_Buffer_Binding,
+	buffer_binding_count: int,
 	accesses:        [EZ_GFX_MAX_RENDER_GRAPH_ACCESSES]Ez_Gfx_Render_Graph_Access,
 	access_count:    int,
 	has_color_write: bool,
@@ -61,6 +64,7 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	target_manager: ^Ez_Gfx_Render_Target_Manager,
 	render: ^Ez_Gfx_Render,
+	bindings: []Ez_Gfx_Render_Binding,
 ) -> bool {
 	if graph.node_count >= EZ_GFX_MAX_RENDER_PIPELINES {
 		fmt.eprintln("too many vertex pipelines in one render graph")
@@ -70,6 +74,7 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 	node := &graph.nodes[graph.node_count]
 	node^ = {}
 	node.kind = .Graphics
+	node.shader = shader
 	node.descriptor = descriptor
 
 	for i in 0 ..< shader.target_usage_count {
@@ -86,10 +91,11 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 				continue
 			}
 
-			target := ez_gfx_render_target_manager_find(
+			target := ez_gfx_render_find_target_for_binding(
 				target_manager,
 				usage.name[:],
 				usage.name_len,
+				bindings,
 			)
 			if target == nil {
 				fmt.eprintln("ColorTarget was not acquired before graph construction")
@@ -99,10 +105,11 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 				return false
 			}
 		} else {
-			target := ez_gfx_render_target_manager_find(
+			target := ez_gfx_render_find_target_for_binding(
 				target_manager,
 				usage.name[:],
 				usage.name_len,
+				bindings,
 			)
 			if target == nil {
 				fmt.eprintln("DepthTarget was not acquired before graph construction")
@@ -132,10 +139,11 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 	for i in 0 ..< shader.target_declaration_count {
 		declaration := &shader.target_declarations[i]
 		if declaration.storage {
-			target := ez_gfx_render_target_manager_find(
+			target := ez_gfx_render_find_target_for_binding(
 				target_manager,
 				declaration.name[:],
 				declaration.name_len,
+				bindings,
 			)
 			if target == nil {
 				fmt.eprintln(
@@ -152,10 +160,11 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 			continue
 		}
 
-		target := ez_gfx_render_target_manager_find(
+		target := ez_gfx_render_find_target_for_binding(
 			target_manager,
 			declaration.name[:],
 			declaration.name_len,
+			bindings,
 		)
 		if target == nil {
 			fmt.eprintln("shader target declaration was not acquired before graph construction")
@@ -166,7 +175,7 @@ ez_gfx_render_graph_add_vertex_pipeline :: proc(
 		}
 	}
 
-	if !ez_gfx_render_graph_node_add_structured_buffers(node, shader, render) {
+	if !ez_gfx_render_graph_node_add_structured_buffers(node, shader, render, bindings) {
 		return false
 	}
 
@@ -185,6 +194,7 @@ ez_gfx_render_graph_add_compute_pipeline :: proc(
 	descriptor: Ez_Gfx_Compute_Pipeline_Descriptor,
 	shader: ^Ez_Gfx_Shader_Program,
 	render: ^Ez_Gfx_Render,
+	bindings: []Ez_Gfx_Render_Binding,
 ) -> bool {
 	if graph.node_count >= EZ_GFX_MAX_RENDER_PIPELINES {
 		fmt.eprintln("too many pipelines in one render graph")
@@ -194,8 +204,9 @@ ez_gfx_render_graph_add_compute_pipeline :: proc(
 	node := &graph.nodes[graph.node_count]
 	node^ = {}
 	node.kind = .Compute
+	node.shader = shader
 	node.compute = descriptor
-	if !ez_gfx_render_graph_node_add_structured_buffers(node, shader, render) {
+	if !ez_gfx_render_graph_node_add_structured_buffers(node, shader, render, bindings) {
 		return false
 	}
 	graph.node_count += 1
@@ -206,16 +217,19 @@ ez_gfx_render_graph_node_add_structured_buffers :: proc(
 	node: ^Ez_Gfx_Render_Graph_Node,
 	shader: ^Ez_Gfx_Shader_Program,
 	render: ^Ez_Gfx_Render,
+	bindings: []Ez_Gfx_Render_Binding,
 ) -> bool {
 	for i in 0 ..< shader.structured_buffer_binding_count {
 		binding_info := &shader.structured_buffer_bindings[i]
-		render_binding := ez_gfx_render_find_structured_binding(
-			render,
+		node_binding := ez_gfx_render_graph_resolve_buffer_binding(
+			node,
 			binding_info.name[:],
 			binding_info.name_len,
+			render,
+			bindings,
 		)
-		if render_binding == nil {
-			fmt.eprintln("shader structured buffer was not added to the render")
+		if node_binding == nil {
+			fmt.eprintln("shader structured buffer was not explicitly bound to the pipeline")
 			return false
 		}
 
@@ -224,11 +238,141 @@ ez_gfx_render_graph_node_add_structured_buffers :: proc(
 		access.name = binding_info.name
 		access.name_len = binding_info.name_len
 		access.resource_kind = .Structured_Buffer
-		access.structured_binding = render_binding
+		access.structured_binding = node_binding
 		access.structured_read = binding_info.access == .Read || binding_info.access == .Read_Write
 		access.structured_write =
 			binding_info.access == .Write || binding_info.access == .Read_Write
 	}
+	return true
+}
+
+ez_gfx_render_graph_resolve_buffer_binding :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	name: []byte,
+	name_len: int,
+	render: ^Ez_Gfx_Render,
+	bindings: []Ez_Gfx_Render_Binding,
+) -> ^Ez_Gfx_Node_Buffer_Binding {
+	_ = render
+	for i in 0 ..< node.buffer_binding_count {
+		binding := &node.buffer_bindings[i]
+		if ez_gfx_shader_target_name_equals_bytes(binding.name[:], binding.name_len, name, name_len) {
+			return binding
+		}
+	}
+	if node.buffer_binding_count >= EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS {
+		fmt.eprintln("too many structured buffers bound to this pipeline")
+		return nil
+	}
+	for i in 0 ..< len(bindings) {
+		explicit := &bindings[i]
+		if explicit.name == nil do continue
+		if explicit.structured.ok {
+			explicit_name_len := ez_gfx_cstring_len(explicit.name)
+			explicit_name := cast([^]byte)explicit.name
+			if !ez_gfx_shader_target_name_equals_bytes(
+				name,
+				name_len,
+				explicit_name[:explicit_name_len],
+				explicit_name_len,
+			) {
+				continue
+			}
+			if explicit.structured.buffer == nil {
+				fmt.eprintln("structured buffer binding is missing a buffer")
+				return nil
+			}
+			node_binding := &node.buffer_bindings[node.buffer_binding_count]
+			node.buffer_binding_count += 1
+			if !ez_gfx_copy_shader_target_name(
+				node_binding.name[:],
+				&node_binding.name_len,
+				cast(cstring)raw_data(name),
+				name_len,
+			) {
+				node.buffer_binding_count -= 1
+				return nil
+			}
+			node_binding.kind = .Structured
+			node_binding.buffer = &explicit.structured.buffer.buffer
+			node_binding.offset = 0
+			node_binding.size = explicit.structured.size
+			node_binding.frame_id = explicit.structured.frame_id
+			node_binding.structured_buffer = explicit.structured.buffer
+			return node_binding
+		}
+		if explicit.indirect.ok {
+			if ez_gfx_render_graph_match_indirect_binding(
+				node,
+				name,
+				name_len,
+				render,
+				explicit,
+				".count",
+				.Indirect_Count,
+			) {
+				return &node.buffer_bindings[node.buffer_binding_count - 1]
+			}
+			if ez_gfx_render_graph_match_indirect_binding(
+				node,
+				name,
+				name_len,
+				render,
+				explicit,
+				".elements",
+				.Indirect_Elements,
+			) {
+				return &node.buffer_bindings[node.buffer_binding_count - 1]
+			}
+		}
+	}
+	return nil
+}
+
+ez_gfx_render_graph_match_indirect_binding :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	name: []byte,
+	name_len: int,
+	render: ^Ez_Gfx_Render,
+	binding: ^Ez_Gfx_Render_Binding,
+	suffix: string,
+	kind: Ez_Gfx_Node_Buffer_Binding_Kind,
+) -> bool {
+	_ = render
+	if binding.name == nil do return false
+	if binding.indirect.buffer == nil {
+		return false
+	}
+	indirect_name: [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte
+	indirect_name_len: int
+	if !ez_gfx_indirect_structured_name(binding.name, suffix, &indirect_name, &indirect_name_len) {
+		return false
+	}
+	if !ez_gfx_shader_target_name_equals_bytes(
+		name,
+		name_len,
+		indirect_name[:],
+		indirect_name_len,
+	) {
+		return false
+	}
+	node_binding := &node.buffer_bindings[node.buffer_binding_count]
+	node.buffer_binding_count += 1
+	node_binding.name = indirect_name
+	node_binding.name_len = indirect_name_len
+	node_binding.kind = kind
+	node_binding.buffer = &binding.indirect.buffer.buffer
+	if kind == .Indirect_Count {
+		node_binding.offset = 0
+		node_binding.size = vk.DeviceSize(size_of(u32))
+	} else {
+		node_binding.offset = binding.indirect.buffer.draw_offset
+		node_binding.size = binding.indirect.buffer.buffer.size - binding.indirect.buffer.draw_offset
+	}
+	node_binding.frame_id = binding.indirect.frame_id
+	node_binding.indirect_buffer = binding.indirect.buffer
+	node_binding.indirect_stride = binding.indirect.stride
+	node_binding.indirect_capacity = binding.indirect.capacity
 	return true
 }
 
@@ -345,6 +489,113 @@ ez_gfx_render_graph_node_next_access :: proc(
 	access = &node.accesses[node.access_count]
 	node.access_count += 1
 	return access, true
+}
+
+ez_gfx_render_graph_find_buffer_binding :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	name: []byte,
+	name_len: int,
+) -> ^Ez_Gfx_Node_Buffer_Binding {
+	if node == nil do return nil
+	for i in 0 ..< node.buffer_binding_count {
+		binding := &node.buffer_bindings[i]
+		if ez_gfx_shader_target_name_equals_bytes(
+			binding.name[:],
+			binding.name_len,
+			name,
+			name_len,
+		) {
+			return binding
+		}
+	}
+	return nil
+}
+
+ez_gfx_render_graph_find_node_target :: proc(
+	node: ^Ez_Gfx_Render_Graph_Node,
+	name: []byte,
+	name_len: int,
+) -> ^Ez_Gfx_Render_Target_Texture {
+	if node == nil do return nil
+	for i in 0 ..< node.access_count {
+		access := &node.accesses[i]
+		if access.resource_kind != .Managed || access.target == nil do continue
+		if ez_gfx_shader_target_name_equals_bytes(access.name[:], access.name_len, name, name_len) {
+			return access.target
+		}
+	}
+	return nil
+}
+
+ez_gfx_render_graph_validate :: proc(render: ^Ez_Gfx_Render) -> bool {
+	graph := &render.graph
+	for node_index in 0 ..< graph.node_count {
+		node := &graph.nodes[node_index]
+		if node.shader != nil {
+			for i in 0 ..< node.shader.structured_buffer_binding_count {
+				expected := &node.shader.structured_buffer_bindings[i]
+				binding := ez_gfx_render_graph_find_buffer_binding(
+					node,
+					expected.name[:],
+					expected.name_len,
+				)
+				if binding == nil || binding.buffer == nil {
+					fmt.eprintf(
+						"render graph node %v is missing a required buffer binding\n",
+						node_index,
+					)
+					return false
+				}
+				if binding.frame_id != render.frame_id {
+					fmt.eprintf("render graph node %v uses a stale buffer handle\n", node_index)
+					return false
+				}
+				if binding.structured_buffer != nil &&
+				   binding.structured_buffer.size != binding.size {
+					fmt.eprintf("render graph node %v structured buffer size changed before submit\n", node_index)
+					return false
+				}
+				if binding.indirect_buffer != nil {
+					if binding.indirect_buffer.stride != binding.indirect_stride ||
+					   binding.indirect_buffer.capacity < binding.indirect_capacity {
+						fmt.eprintf("render graph node %v indirect buffer capacity changed before submit\n", node_index)
+						return false
+					}
+				}
+			}
+			for i in 0 ..< node.shader.target_declaration_count {
+				declaration := &node.shader.target_declarations[i]
+				target := ez_gfx_render_graph_find_node_target(
+					node,
+					declaration.name[:],
+					declaration.name_len,
+				)
+				if target == nil do continue
+				if !target.has_image ||
+				   target.format != declaration.format ||
+				   target.kind != declaration.kind {
+					fmt.eprintf("render graph node %v render target binding does not match shader declaration\n", node_index)
+					return false
+				}
+			}
+		}
+		if node.kind == .Graphics {
+			descriptor := &node.descriptor
+			if !descriptor.ok || descriptor.indirect_buffer == nil {
+				fmt.eprintf("render graph node %v is missing a draw indirect buffer\n", node_index)
+				return false
+			}
+			if descriptor.indirect_stride != descriptor.indirect_buffer.stride {
+				fmt.eprintf("render graph node %v draw indirect stride mismatch\n", node_index)
+				return false
+			}
+			if descriptor.indirect_count > descriptor.indirect_buffer.capacity {
+				fmt.eprintf("render graph node %v draw indirect count exceeds capacity\n", node_index)
+				return false
+			}
+		}
+	}
+	return true
 }
 
 ez_gfx_render_graph_node_writes_name :: proc(
@@ -770,8 +1021,6 @@ ez_gfx_render_graph_begin_node_rendering :: proc(
 	node: ^Ez_Gfx_Render_Graph_Node,
 	command_buffer: vk.CommandBuffer,
 ) -> bool {
-	swapchain := &render.window.swapchain
-
 	color_attachments: [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.RenderingAttachmentInfo
 	color_clear_values: [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.ClearValue
 	color_attachment_count := 0
@@ -827,7 +1076,7 @@ ez_gfx_render_graph_begin_node_rendering :: proc(
 
 	render_info := vk.RenderingInfo {
 		sType = .RENDERING_INFO,
-		renderArea = vk.Rect2D{extent = swapchain.extent},
+		renderArea = vk.Rect2D{extent = ez_gfx_render_graph_node_render_extent(render, node)},
 		layerCount = 1,
 		colorAttachmentCount = u32(color_attachment_count),
 		pColorAttachments = color_attachments_ptr,
@@ -835,8 +1084,29 @@ ez_gfx_render_graph_begin_node_rendering :: proc(
 		pStencilAttachment = stencil_attachment_ptr,
 	}
 	vk.CmdBeginRendering(command_buffer, &render_info)
-	ez_gfx_render_graph_set_viewport_and_scissor(render, command_buffer)
+	ez_gfx_render_graph_set_viewport_and_scissor(render_info.renderArea.extent, command_buffer)
 	return true
+}
+
+ez_gfx_render_graph_node_render_extent :: proc(
+	render: ^Ez_Gfx_Render,
+	node: ^Ez_Gfx_Render_Graph_Node,
+) -> vk.Extent2D {
+	for i in 0 ..< node.access_count {
+		access := &node.accesses[i]
+		if access.resource_kind == .Swapchain && access.color_write {
+			return render.window.swapchain.extent
+		}
+	}
+	for i in 0 ..< node.access_count {
+		access := &node.accesses[i]
+		if access.resource_kind == .Managed &&
+		   access.target != nil &&
+		   (access.color_write || access.depth_write || access.storage_write) {
+			return access.target.extent
+		}
+	}
+	return render.window.swapchain.extent
 }
 
 ez_gfx_render_graph_prepare_color_attachment :: proc(
@@ -979,10 +1249,9 @@ ez_gfx_render_graph_mark_node_writes_submitted :: proc(
 }
 
 ez_gfx_render_graph_set_viewport_and_scissor :: proc(
-	render: ^Ez_Gfx_Render,
+	extent: vk.Extent2D,
 	command_buffer: vk.CommandBuffer,
 ) {
-	extent := render.window.swapchain.extent
 	viewport := vk.Viewport {
 		x        = 0,
 		y        = 0,

@@ -11,6 +11,8 @@ WIDTH :: 640
 HEIGHT :: 480
 TRIANGLE_FRAMES :: 2
 TRIANGLE_SHADER_PATH :: cstring("examples/1_triangle/triangle.slang")
+GRAPHICS_STRUCTURED_SHADER_PATH :: cstring("tests/graphics_structured.slang")
+COMPUTE_STRUCTURED_SHADER_PATH :: cstring("tests/compute_structured.slang")
 TRIANGLE_POSITION_HEAP :: "position"
 
 TRIANGLE_INDICES: [3]u32 = {0, 1, 2}
@@ -18,6 +20,11 @@ TRIANGLE_POSITIONS: [3][4]f32 = {
 	{-0.5, -0.5, 0.0, 1.0},
 	{0.5, -0.5, 0.0, 1.0},
 	{0.0, 0.5, 0.0, 1.0},
+}
+TRIANGLE_COLORS: [3][4]f32 = {
+	{1.0, 0.0, 0.0, 1.0},
+	{0.0, 1.0, 0.0, 1.0},
+	{0.0, 0.0, 1.0, 1.0},
 }
 
 Validation_Log :: struct {
@@ -152,7 +159,7 @@ structured_buffer_acquires_per_frame_and_reuses_pool :: proc(t: ^testing.T) {
 
 	testing.expect(
 		t,
-		gfx.ez_gfx_render_acquire_structured_buffer("test_buffer", 64) == nil,
+		!gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "test_buffer").handle.ok,
 		"structured buffer acquire should require an active render",
 	)
 
@@ -164,13 +171,12 @@ structured_buffer_acquires_per_frame_and_reuses_pool :: proc(t: ^testing.T) {
 		) {
 			return
 		}
-		ptr := gfx.ez_gfx_render_acquire_structured_buffer("test_buffer", 64)
-		if !testing.expect(t, ptr != nil, "structured buffer acquire failed") {
+		handle := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "test_buffer")
+		if !testing.expect(t, handle.handle.ok, "structured buffer acquire failed") {
 			_ = gfx.ez_gfx_finish_render()
 			return
 		}
-		values := cast([^]u32)ptr
-		values[0] = u32(frame)
+		handle.elements[0] = u32(frame)
 		testing.expect(
 			t,
 			gfx.ez_gfx_finish_render(),
@@ -197,8 +203,8 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 	}
 	defer triangle_cleanup(&app)
 
-	large_size := vk.DeviceSize(1 << 20)
-	small_size := vk.DeviceSize(64)
+	large_element_count := u32(1 << 20)
+	small_element_count := u32(16)
 
 	if !testing.expect(
 		t,
@@ -207,8 +213,8 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 	) {
 		return
 	}
-	large_ptr := gfx.ez_gfx_render_acquire_structured_buffer("large_buffer", large_size)
-	if !testing.expect(t, large_ptr != nil, "structured buffer trim test failed to acquire large buffer") {
+	large_handle := gfx.ez_gfx_render_acquire_structured_buffer(u8, large_element_count, "large_buffer")
+	if !testing.expect(t, large_handle.handle.ok, "structured buffer trim test failed to acquire large buffer") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
@@ -230,17 +236,16 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 		) {
 			return
 		}
-		small_ptr := gfx.ez_gfx_render_acquire_structured_buffer("small_buffer", small_size)
+		small_handle := gfx.ez_gfx_render_acquire_structured_buffer(u32, small_element_count, "small_buffer")
 		if !testing.expect(
 			t,
-			small_ptr != nil,
+			small_handle.handle.ok,
 			"structured buffer trim test failed to acquire small buffer",
 		) {
 			_ = gfx.ez_gfx_finish_render()
 			return
 		}
-		values := cast([^]u32)small_ptr
-		values[0] = u32(frame)
+		small_handle.elements[0] = u32(frame)
 		if !testing.expect(
 			t,
 			gfx.ez_gfx_finish_render(),
@@ -253,10 +258,218 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, app.ctx.structured_buffer_manager.count, 1)
 	if app.ctx.structured_buffer_manager.count == 1 {
-		testing.expect_value(t, app.ctx.structured_buffer_manager.buffers[0].capacity, small_size)
+		testing.expect_value(t, app.ctx.structured_buffer_manager.buffers[0].capacity, vk.DeviceSize(small_element_count * size_of(u32)))
 	}
 	testing.expect_value(t, app.validation_log.errors, u32(0))
 	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+}
+
+@(test)
+explicit_structured_buffer_reuses_one_handle_across_pipelines :: proc(t: ^testing.T) {
+	app: Triangle_App
+	if !testing.expect(t, triangle_init_app(&app), "structured reuse test failed during init") {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	graphics_shader, graphics_ok := triangle_compile_graphics_structured_shader()
+	if !testing.expect(t, graphics_ok, "failed to compile graphics structured shader") do return
+	defer gfx.ez_gfx_shader_destroy(&graphics_shader)
+	compute_shader, compute_ok := triangle_compile_compute_structured_shader()
+	if !testing.expect(t, compute_ok, "failed to compile compute structured shader") do return
+	defer gfx.ez_gfx_shader_destroy(&compute_shader)
+
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "structured reuse test failed to begin render") {
+		return
+	}
+	colors := gfx.ez_gfx_render_acquire_structured_buffer([4]f32, u32(len(TRIANGLE_COLORS)), "triangle colors")
+	if !testing.expect(t, colors.handle.ok, "failed to acquire structured colors") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	for color, i in TRIANGLE_COLORS {
+		colors.elements[i] = color
+	}
+
+	indirect := triangle_acquire_and_fill_indirect(&app)
+	if !testing.expect(t, indirect.ok, "failed to acquire indirect draw buffer") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+
+	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "instances", structured = colors.handle}}
+	compute := gfx.ez_gfx_render_add_compute_pipeline(&compute_shader, 1, 1, 1, compute_bindings[:])
+	if !testing.expect(t, compute.ok, "compute pipeline should accept reused structured handle") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	graphics_bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "colors", structured = colors.handle}}
+	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&graphics_shader, indirect, graphics_bindings[:])
+	if !testing.expect(t, pipeline.ok, "graphics pipeline should accept reused structured handle") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+
+	testing.expect(t, gfx.ez_gfx_finish_render(), "structured reuse render should submit")
+	gfx.ez_gfx_ctx_wait_idle()
+	testing.expect_value(t, app.ctx.structured_buffer_manager.count, 1)
+	testing.expect_value(t, app.validation_log.errors, u32(0))
+	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+}
+
+@(test)
+explicit_structured_binding_is_required_per_pipeline :: proc(t: ^testing.T) {
+	app: Triangle_App
+	if !testing.expect(t, triangle_init_app(&app), "missing binding test failed during init") {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	shader, shader_ok := triangle_compile_graphics_structured_shader()
+	if !testing.expect(t, shader_ok, "failed to compile graphics structured shader") do return
+	defer gfx.ez_gfx_shader_destroy(&shader)
+
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "missing binding test failed to begin render") {
+		return
+	}
+	indirect := triangle_acquire_and_fill_indirect(&app)
+	if !testing.expect(t, indirect.ok, "failed to acquire indirect draw buffer") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, nil)
+	testing.expect(t, !pipeline.ok, "pipeline unexpectedly inferred a missing structured binding")
+	_ = gfx.ez_gfx_finish_render()
+}
+
+@(test)
+stale_structured_handle_fails_submit_validation :: proc(t: ^testing.T) {
+	app: Triangle_App
+	if !testing.expect(t, triangle_init_app(&app), "stale handle test failed during init") {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	shader, shader_ok := triangle_compile_graphics_structured_shader()
+	if !testing.expect(t, shader_ok, "failed to compile graphics structured shader") do return
+	defer gfx.ez_gfx_shader_destroy(&shader)
+
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "stale handle setup failed to begin render") {
+		return
+	}
+	stale := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "stale colors")
+	if !testing.expect(t, stale.handle.ok, "failed to acquire stale structured handle") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	if !testing.expect(t, gfx.ez_gfx_finish_render(), "stale handle setup failed to finish") {
+		return
+	}
+	gfx.ez_gfx_ctx_wait_idle()
+
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "stale handle test failed to begin render") {
+		return
+	}
+	indirect := triangle_acquire_and_fill_indirect(&app)
+	bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "colors", structured = stale.handle}}
+	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, bindings[:])
+	if !testing.expect(t, pipeline.ok, "stale handle should be caught at submit validation") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	testing.expect(t, !gfx.ez_gfx_finish_render(), "stale structured handle unexpectedly submitted")
+}
+
+@(test)
+structured_size_mismatch_fails_submit_validation :: proc(t: ^testing.T) {
+	app: Triangle_App
+	if !testing.expect(t, triangle_init_app(&app), "size mismatch test failed during init") {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	shader, shader_ok := triangle_compile_graphics_structured_shader()
+	if !testing.expect(t, shader_ok, "failed to compile graphics structured shader") do return
+	defer gfx.ez_gfx_shader_destroy(&shader)
+
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "size mismatch test failed to begin render") {
+		return
+	}
+	colors := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "size mismatch colors")
+	if !testing.expect(t, colors.handle.ok, "failed to acquire structured colors") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	indirect := triangle_acquire_and_fill_indirect(&app)
+	bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "colors", structured = colors.handle}}
+	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, bindings[:])
+	if !testing.expect(t, pipeline.ok, "size mismatch pipeline failed before validation") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	colors.handle.buffer.size = 32
+	testing.expect(t, !gfx.ez_gfx_finish_render(), "structured size mismatch unexpectedly submitted")
+	colors.handle.buffer.size = colors.handle.size
+}
+
+triangle_compile_graphics_structured_shader :: proc() -> (
+	shader: gfx.Ez_Gfx_Shader_Program,
+	ok: bool,
+) {
+	ok = gfx.ez_gfx_shader_compile(
+		{
+			path = GRAPHICS_STRUCTURED_SHADER_PATH,
+			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+		},
+		&shader,
+	)
+	return shader, ok
+}
+
+triangle_compile_compute_structured_shader :: proc() -> (
+	shader: gfx.Ez_Gfx_Shader_Program,
+	ok: bool,
+) {
+	ok = gfx.ez_gfx_shader_compile(
+		{
+			path = COMPUTE_STRUCTURED_SHADER_PATH,
+			compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
+			kind = .Compute,
+		},
+		&shader,
+	)
+	return shader, ok
+}
+
+triangle_acquire_and_fill_indirect :: proc(
+	app: ^Triangle_App,
+) -> gfx.Ez_Gfx_Indirect_Buffer_Handle {
+	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+		vk.DrawIndexedIndirectCommand,
+		1,
+		"triangle test draw commands",
+	)
+	if !indirect.ok do return indirect
+	draw := vk.DrawIndexedIndirectCommand {
+		indexCount    = app.triangle_index_len,
+		instanceCount = 1,
+		firstIndex    = app.triangle_index,
+		vertexOffset  = i32(app.triangle_vertex),
+		firstInstance = 0,
+	}
+	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
+		indirect.ok = false
+		return indirect
+	}
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
+		indirect.ok = false
+	}
+	return indirect
 }
 
 validation_callback :: proc(
@@ -386,10 +599,20 @@ triangle_run_frames :: proc(app: ^Triangle_App) -> bool {
 triangle_draw_frame :: proc(app: ^Triangle_App) -> bool {
 	if !gfx.ez_gfx_begin_render(&app.window) do return false
 
+	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+		vk.DrawIndexedIndirectCommand,
+		1,
+		"triangle draw commands",
+	)
+	if !indirect.ok {
+		_ = gfx.ez_gfx_finish_render()
+		return false
+	}
+
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
-		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
-		1,
+		indirect,
+		nil,
 	)
 	if !pipeline.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -403,11 +626,11 @@ triangle_draw_frame :: proc(app: ^Triangle_App) -> bool {
 		vertexOffset  = i32(app.triangle_vertex),
 		firstInstance = 0,
 	}
-	if !gfx.ez_gfx_vertex_pipeline_write_draw(&pipeline, 0, draw) {
+	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
-	if !gfx.ez_gfx_vertex_pipeline_set_draw_count(&pipeline, 1) {
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}

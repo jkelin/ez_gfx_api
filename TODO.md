@@ -30,7 +30,7 @@
 
 - Replace remaining host-side waits for managed render target timeline dependencies with queue-side timeline waits so independent frame work can overlap more effectively. Graph node dependencies use queue-side timeline waits, but frame-start target clears and begin-render synchronization still call `ez_gfx_ctx_wait_timeline` on the CPU.
 
-- Expose per-pipeline or per-draw dynamic state controls, including viewport and scissor rectangles, and derive render areas from active attachment extents. Vulkan viewport/scissor dynamic state is already enabled internally, but callers cannot set these values and render graph render areas still use swapchain extent even for scaled render targets.
+- Expose per-pipeline or per-draw dynamic state controls, including viewport and scissor rectangles. Vulkan viewport/scissor dynamic state is already enabled internally, and render graph render areas now derive from active attachments, but callers cannot set these values.
 
 - Model render target declarations with richer Vulkan usage metadata instead of deriving usage only from color/depth kind. `Ez_Gfx_Shader_Target_Declaration` still records name, scale, kind, format, binding, and load behavior, while image usage is derived broadly from color/depth classification.
 
@@ -59,8 +59,6 @@
 - Support compressed texture formats. Color target parsing is still limited to uncompressed formats such as `rgba8` and `rgba16f`, with no BC/ASTC/block-compressed texture handling.
 
 - Add compute shader support. The public render API, linked Slang program creation, pipeline creation, and command recording paths are still graphics-only and bind `.GRAPHICS` pipelines.
-
-- Refactor structured-buffer and indirect-buffer binding to pipelines. Split buffer lifetime from pipeline binding: introduce a shared acquire API for structured buffers and indirect buffers so the same acquired buffer can be reused across different pipelines in one frame. When adding a pipeline to a render, require explicit per-name binding parameters for every structured buffer and indirect buffer the shader expects; do not infer bindings from earlier render calls. Validate at render submit that every required buffer is bound and that each binding matches the expected size/capacity. Add a parallel render-target API: a describe call that takes a debug label and size and returns a render-target ID, plus explicit per-pipeline binding of those IDs with the same submit-time validation.
 
 - Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
 

@@ -31,54 +31,86 @@ Ez_Gfx_Structured_Buffer_Manager :: struct {
 	peak_acquire_size: vk.DeviceSize,
 }
 
-Ez_Gfx_Render_Structured_Binding :: struct {
+Ez_Gfx_Structured_Buffer_Handle :: struct {
+	buffer:   ^Ez_Gfx_Structured_Buffer,
+	cpu_ptr:  rawptr,
+	size:     vk.DeviceSize,
+	frame_id: u64,
+	ok:       bool,
+}
+
+Ez_Gfx_Structured_Buffer_View :: struct($T: typeid) {
+	handle:   Ez_Gfx_Structured_Buffer_Handle,
+	elements: [^]T,
+}
+
+Ez_Gfx_Render_Target_Id :: struct {
+	index:      int,
+	generation: u64,
+	ok:         bool,
+}
+
+Ez_Gfx_Render_Binding :: struct {
+	name:          cstring,
+	structured:    Ez_Gfx_Structured_Buffer_Handle,
+	indirect:      Ez_Gfx_Indirect_Buffer_Handle,
+	render_target: Ez_Gfx_Render_Target_Id,
+}
+
+Ez_Gfx_Node_Buffer_Binding_Kind :: enum u8 {
+	Structured,
+	Indirect_Count,
+	Indirect_Elements,
+}
+
+Ez_Gfx_Node_Buffer_Binding :: struct {
 	name:              [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
 	name_len:          int,
+	kind:              Ez_Gfx_Node_Buffer_Binding_Kind,
 	buffer:            ^Ez_Gfx_Buffer,
 	offset:            vk.DeviceSize,
 	size:              vk.DeviceSize,
+	frame_id:          u64,
 	structured_buffer: ^Ez_Gfx_Structured_Buffer,
 	indirect_buffer:   ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
+	indirect_stride:   vk.DeviceSize,
+	indirect_capacity: u32,
 }
 
 ez_gfx_render_acquire_structured_buffer :: proc(
-	shader_name: cstring,
-	size: vk.DeviceSize,
-) -> rawptr {
+	$T: typeid,
+	element_count: u32,
+	debug_name: cstring,
+) -> Ez_Gfx_Structured_Buffer_View(T) {
 	render := &ez_gfx_current_render
 	if !render.active || !render.ready {
 		fmt.eprintln("ez_gfx_render_acquire_structured_buffer called without an active render")
-		return nil
+		return {}
 	}
-	if shader_name == nil {
-		fmt.eprintln("structured buffer shader name is required")
-		return nil
-	}
-	if size == 0 {
-		fmt.eprintln("structured buffer size must be greater than zero")
-		return nil
+	if element_count == 0 {
+		fmt.eprintln("structured buffer element count must be greater than zero")
+		return {}
 	}
 
+	byte_size := vk.DeviceSize(element_count) * vk.DeviceSize(size_of(T))
 	storage, acquire_ok := ez_gfx_structured_buffer_manager_acquire(
 		&render.ctx.structured_buffer_manager,
-		size,
-		shader_name,
+		byte_size,
+		debug_name,
 	)
-	if !acquire_ok do return nil
+	if !acquire_ok do return {}
 
-	if !ez_gfx_render_add_structured_binding(
-		render,
-		shader_name,
-		&storage.buffer,
-		0,
-		storage.size,
-		storage,
-		nil,
-	) {
-		storage.in_use = false
-		return nil
+	handle := Ez_Gfx_Structured_Buffer_Handle {
+		buffer   = storage,
+		cpu_ptr  = storage.cpu_ptr,
+		size     = storage.size,
+		frame_id = render.frame_id,
+		ok       = true,
 	}
-	return storage.cpu_ptr
+	return Ez_Gfx_Structured_Buffer_View(T) {
+		handle   = handle,
+		elements = cast([^]T)storage.cpu_ptr,
+	}
 }
 
 ez_gfx_structured_buffer_manager_acquire :: proc(
@@ -149,185 +181,27 @@ ez_gfx_structured_buffer_manager_acquire :: proc(
 	return slot, true
 }
 
-ez_gfx_render_add_indirect_structured_buffer :: proc(
-	shader_name: cstring,
-	descriptor: ^Ez_Gfx_Vertex_Pipeline_Descriptor,
-) -> bool {
-	render := &ez_gfx_current_render
-	if !render.active || !render.ready {
-		fmt.eprintln(
-			"ez_gfx_render_add_indirect_structured_buffer called without an active render",
-		)
-		return false
-	}
-	if descriptor == nil || !descriptor.ok || descriptor.indirect_buffer == nil {
-		fmt.eprintln("indirect descriptor is not valid")
-		return false
-	}
-	indirect := descriptor.indirect_buffer
-	count_size := vk.DeviceSize(size_of(u32))
-	draw_offset := indirect.draw_offset
-	draw_size := indirect.buffer.size - draw_offset
-	return(
-		ez_gfx_render_add_indirect_structured_buffer_part(
-			render,
-			shader_name,
-			".count",
-			&indirect.buffer,
-			0,
-			count_size,
-			indirect,
-		) &&
-		ez_gfx_render_add_indirect_structured_buffer_part(
-			render,
-			shader_name,
-			".elements",
-			&indirect.buffer,
-			draw_offset,
-			draw_size,
-			indirect,
-		) \
-	)
-}
-
-ez_gfx_render_add_structured_binding :: proc(
-	render: ^Ez_Gfx_Render,
-	shader_name: cstring,
-	buffer: ^Ez_Gfx_Buffer,
-	offset: vk.DeviceSize,
-	size: vk.DeviceSize,
-	structured_buffer: ^Ez_Gfx_Structured_Buffer,
-	indirect_buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
-) -> bool {
-	if shader_name == nil {
-		fmt.eprintln("structured buffer shader name is required")
-		return false
-	}
-
-	name_len := ez_gfx_cstring_len(shader_name)
-	if name_len >= EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
-		fmt.eprintln("structured buffer shader name is too long")
-		return false
-	}
-	name_bytes := cast([^]byte)shader_name
-	return ez_gfx_render_add_structured_binding_bytes(
-		render,
-		name_bytes[:name_len],
-		name_len,
-		buffer,
-		offset,
-		size,
-		structured_buffer,
-		indirect_buffer,
-	)
-}
-
-ez_gfx_render_add_structured_binding_bytes :: proc(
-	render: ^Ez_Gfx_Render,
-	shader_name: []byte,
-	shader_name_len: int,
-	buffer: ^Ez_Gfx_Buffer,
-	offset: vk.DeviceSize,
-	size: vk.DeviceSize,
-	structured_buffer: ^Ez_Gfx_Structured_Buffer,
-	indirect_buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
-) -> bool {
-	for i in 0 ..< render.structured_binding_count {
-		binding := &render.structured_bindings[i]
-		if ez_gfx_shader_target_name_equals_bytes(
-			binding.name[:],
-			binding.name_len,
-			shader_name,
-			shader_name_len,
-		) {
-			binding.buffer = buffer
-			binding.offset = offset
-			binding.size = size
-			binding.structured_buffer = structured_buffer
-			binding.indirect_buffer = indirect_buffer
-			render.structured_binding_version += 1
-			return true
-		}
-	}
-
-	if render.structured_binding_count >= EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS {
-		fmt.eprintln("too many structured buffers bound to this render")
-		return false
-	}
-	binding := &render.structured_bindings[render.structured_binding_count]
-	render.structured_binding_count += 1
-	if !ez_gfx_copy_shader_target_name(
-		binding.name[:],
-		&binding.name_len,
-		cast(cstring)raw_data(shader_name),
-		shader_name_len,
-	) {
-		render.structured_binding_count -= 1
-		return false
-	}
-	binding.buffer = buffer
-	binding.offset = offset
-	binding.size = size
-	binding.structured_buffer = structured_buffer
-	binding.indirect_buffer = indirect_buffer
-	render.structured_binding_version += 1
-	return true
-}
-
-ez_gfx_render_add_indirect_structured_buffer_part :: proc(
-	render: ^Ez_Gfx_Render,
+ez_gfx_indirect_structured_name :: proc(
 	shader_name: cstring,
 	suffix: string,
-	buffer: ^Ez_Gfx_Buffer,
-	offset: vk.DeviceSize,
-	size: vk.DeviceSize,
-	indirect_buffer: ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
+	name: ^[EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
+	name_len: ^int,
 ) -> bool {
 	base_len := ez_gfx_cstring_len(shader_name)
-	name_len := base_len + len(suffix)
-	if name_len >= EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
+	name_len^ = base_len + len(suffix)
+	if name_len^ >= EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
 		fmt.eprintln("indirect structured buffer shader name is too long")
 		return false
 	}
 
-	name: [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte
 	base_bytes := cast([^]byte)shader_name
 	for i in 0 ..< base_len {
-		name[i] = base_bytes[i]
+		name^[i] = base_bytes[i]
 	}
 	for i in 0 ..< len(suffix) {
-		name[base_len + i] = suffix[i]
+		name^[base_len + i] = suffix[i]
 	}
-	return ez_gfx_render_add_structured_binding_bytes(
-		render,
-		name[:name_len],
-		name_len,
-		buffer,
-		offset,
-		size,
-		nil,
-		indirect_buffer,
-	)
-}
-
-ez_gfx_render_find_structured_binding :: proc(
-	render: ^Ez_Gfx_Render,
-	name: []byte,
-	name_len: int,
-) -> ^Ez_Gfx_Render_Structured_Binding {
-	if render == nil do return nil
-	for i in 0 ..< render.structured_binding_count {
-		binding := &render.structured_bindings[i]
-		if ez_gfx_shader_target_name_equals_bytes(
-			binding.name[:],
-			binding.name_len,
-			name,
-			name_len,
-		) {
-			return binding
-		}
-	}
-	return nil
+	return true
 }
 
 ez_gfx_structured_buffer_manager_release_completed :: proc(

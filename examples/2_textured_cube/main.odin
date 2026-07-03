@@ -186,7 +186,7 @@ run :: proc(app: ^App) {
 		shared.orbit_camera_update(&app.camera, &app.input, delta_time)
 
 		if run_seconds > 0 && now - start_time >= run_seconds do break
-		draw_frame(app, main_window, f32(now - start_time))
+		draw_frame(app, main_window)
 	}
 
 	gfx.ez_gfx_ctx_wait_idle()
@@ -199,13 +199,10 @@ run :: proc(app: ^App) {
 	}
 }
 
-draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window, time_seconds: f32) {
+draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	if !gfx.ez_gfx_begin_render(window) do return
 
-	model := shared.mat4_mul(
-		shared.mat4_rotation_y(time_seconds),
-		shared.mat4_rotation_x(time_seconds * 0.65),
-	)
+	model := shared.mat4_identity()
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(
 		math.to_radians_f32(60),
@@ -218,10 +215,20 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window, time_seconds: f32) {
 		texture_id = u32(app.texture_id),
 	}
 
+	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+		vk.DrawIndexedIndirectCommand,
+		1,
+		"cube draw commands",
+	)
+	if !indirect.ok {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
-		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
-		1,
+		indirect,
+		nil,
 		push_constants,
 	)
 	if !pipeline.ok {
@@ -236,11 +243,11 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window, time_seconds: f32) {
 		vertexOffset  = i32(app.cube_vertex),
 		firstInstance = 0,
 	}
-	if !gfx.ez_gfx_vertex_pipeline_write_draw(&pipeline, 0, draw) {
+	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
-	if !gfx.ez_gfx_vertex_pipeline_set_draw_count(&pipeline, 1) {
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}

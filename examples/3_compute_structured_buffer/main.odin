@@ -529,45 +529,45 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	if !gfx.ez_gfx_begin_render(window) do return
 
 	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
-		vk.DeviceSize(size_of(vk.DrawIndexedIndirectCommand)),
+		vk.DrawIndexedIndirectCommand,
 		app.mesh_count,
+		"example 3 draw commands",
 	)
 	if !indirect.ok {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
 
-	descriptor_bytes := vk.DeviceSize(len(app.mesh_descriptors) * size_of(Mesh_Descriptor))
-	mesh_descriptors_ptr := gfx.ez_gfx_render_acquire_structured_buffer(
+	mesh_descriptors := gfx.ez_gfx_render_acquire_structured_buffer(
+		Mesh_Descriptor,
+		u32(len(app.mesh_descriptors)),
 		"mesh_descriptors",
-		descriptor_bytes,
 	)
-	if mesh_descriptors_ptr == nil {
+	if !mesh_descriptors.handle.ok {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
-	mesh_descriptors := cast([^]Mesh_Descriptor)mesh_descriptors_ptr
 	for descriptor, i in app.mesh_descriptors {
-		mesh_descriptors[i] = descriptor
+		mesh_descriptors.elements[i] = descriptor
 	}
 
-	instance_bytes := vk.DeviceSize(len(app.mesh_instances) * size_of(Mesh_Instance))
-	mesh_instances_ptr := gfx.ez_gfx_render_acquire_structured_buffer(
+	mesh_instances := gfx.ez_gfx_render_acquire_structured_buffer(
+		Mesh_Instance,
+		u32(len(app.mesh_instances)),
 		"mesh_instances",
-		instance_bytes,
 	)
-	if mesh_instances_ptr == nil {
+	if !mesh_instances.handle.ok {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
-	mesh_instances := cast([^]Mesh_Instance)mesh_instances_ptr
 	for instance, i in app.mesh_instances {
-		mesh_instances[i] = instance
+		mesh_instances.elements[i] = instance
 	}
 
-	if !gfx.ez_gfx_render_add_indirect_structured_buffer("draw_commands", &indirect) {
-		_ = gfx.ez_gfx_finish_render()
-		return
+	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding {
+		{name = "mesh_descriptors", structured = mesh_descriptors.handle},
+		{name = "mesh_instances", structured = mesh_instances.handle},
+		{name = "draw_commands", indirect = indirect},
 	}
 
 	compute_push := Compute_Push_Constants {
@@ -578,6 +578,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		app.mesh_count,
 		1,
 		1,
+		compute_bindings[:],
 		compute_push,
 	)
 	if !compute.ok {
@@ -595,9 +596,13 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	draw_push := Draw_Push_Constants {
 		mvp = shared.mat4_mul(projection, view),
 	}
-	draw := gfx.ez_gfx_render_add_vertex_pipeline_with_indirect(
+	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
+		{name = "mesh_instances", structured = mesh_instances.handle},
+	}
+	draw := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.draw_shader,
-		&indirect,
+		indirect,
+		draw_bindings[:],
 		draw_push,
 	)
 	if !draw.ok {
