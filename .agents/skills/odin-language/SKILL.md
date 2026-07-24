@@ -9,8 +9,8 @@ Use this skill whenever the task involves Odin source code, Odin commands, Odin 
 
 ## Required References
 
-- Read [overview.mapml](overview.mapml) before making or reviewing Odin code changes.
-- Read [testing.mapml](testing.mapml) before creating, fixing, reviewing, or running Odin tests.
+- Read [overview.md](./overview.md) before making or reviewing Odin code changes.
+- Read [testing.md](./testing.md) before creating, fixing, reviewing, or running Odin tests.
 
 ## Working Rules
 

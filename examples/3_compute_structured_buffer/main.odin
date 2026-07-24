@@ -15,7 +15,7 @@ GLTF_PATH :: "examples/shared/assets/sponza.glb"
 POSITION_HEAP :: "position"
 NORMAL_HEAP :: "normal"
 
-SPONZA_ORBIT_CENTER :: shared.Vec3{0.0, 1.3884, 0.0}
+SPONZA_ORBIT_CENTER :: shared.Vec3{0.0, 0.55, 0.0}
 
 Primitive_Record :: struct {
 	first_index:   u32,
@@ -27,9 +27,9 @@ Primitive_Record :: struct {
 
 sponza_camera_start :: proc() -> shared.Orbit_Camera_Start {
 	return shared.Orbit_Camera_Start {
-		yaw      = math.to_radians_f32(90.2),
-		pitch    = math.to_radians_f32(31.1),
-		distance = 16.73,
+		yaw      = math.to_radians_f32(-30.0),
+		pitch    = math.to_radians_f32(52.0),
+		distance = 2.2,
 	}
 }
 
@@ -69,6 +69,7 @@ init_app :: proc(app: ^App) {
 	assert(gfx.ez_gfx_glfw_init())
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	assert(gfx.ez_gfx_enable_all_decoders(), "failed to enable image decoders")
 	app.window_count = 1
 	app.camera = shared.orbit_camera_default()
 	main_window := &app.windows[0]
@@ -168,10 +169,6 @@ mesh_descriptor_to_primitive_record :: proc(descriptor: shared.Mesh_Descriptor) 
 
 upload_gltf_primitives :: proc(manager: ^gfx.Ez_Gfx_Vertex_Manager, mesh: ^shared.Loaded_Mesh) {
 	for &cpu, prim_index in mesh.cpu_primitives {
-		first_index := gfx.ez_gfx_vertex_manager_upload_indices(
-			manager,
-			cpu.indices[:],
-		)
 		vertex_start := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			POSITION_HEAP,
@@ -182,6 +179,16 @@ upload_gltf_primitives :: proc(manager: ^gfx.Ez_Gfx_Vertex_Manager, mesh: ^share
 			NORMAL_HEAP,
 			cpu.normals[:],
 		)
+
+		global_indices := make([]u32, len(cpu.indices))
+		for index, i in cpu.indices {
+			global_indices[i] = index + vertex_start
+		}
+		first_index := gfx.ez_gfx_vertex_manager_upload_indices(
+			manager,
+			global_indices,
+		)
+		delete(global_indices)
 
 		descriptor := &mesh.descriptors[prim_index]
 		descriptor.first_index = first_index
@@ -269,6 +276,10 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		compute_push,
 	)
 	if !compute.ok {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, app.mesh.mesh_count) {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}

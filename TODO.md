@@ -1,7 +1,7 @@
 # TODO
 
-- Example 5 (`examples/5_helmet_cgltf`) expects `examples/shared/assets/helmet.glb` (not committed). Place a glTF binary there before running `just example_5`.
-
+- Fix present-ready semaphore lifetime before teardown; the test run reports `vkDestroySemaphore` destroying a semaphore while it is still in use by the graphics queue.
+- Size descriptor pools for the complete per-frame descriptor demand; the test run reports a storage-image pool with one descriptor serving allocations that request two.
 - Decouple graphics pipeline caching from descriptor set/pool ownership. `Ez_Gfx_Pipeline_Record` still owns both `VkPipeline` and descriptor resources; `render_target_manager.version` mitigates stale render-target image views on resize, but vertex heap rebinding and per-frame descriptor lifetimes are still tied to cached pipeline records.
 
 - Expand the pipeline cache key to include topology and rasterization options instead of only shader identity, color formats, depth format, and blend mode. Blend mode is now reflected from the `[BlendMode]` Slang attribute; topology and rasterization are still hardcoded.
@@ -63,9 +63,10 @@
 - Add texture upload profiling counters for queued decode time, decode duration, staging bytes, transfer submit latency, graphics handoff latency, and callback latency so future streaming changes can be measured instead of guessed.
 
 - Support compressed texture formats. Color target parsing is still limited to uncompressed formats such as `rgba8` and `rgba16f`, with no BC/ASTC/block-compressed texture handling.
-
-- Add compute shader support. The public render API, linked Slang program creation, pipeline creation, and command recording paths are still graphics-only and bind `.GRAPHICS` pipelines.
+- Make KTX2 optional at link time for static builds. Runtime activation is opt-in, but `src/texture_manager.odin` still imports `vendor/odin-ktx` and the binding/library is linked whenever the package is built.
 
 - Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
 
-- `examples/shared/assets/sponza.glb` uses KTX2/Basis Universal textures via `KHR_texture_basisu` (18.8 MB, down from 52.6 MB). Regenerate with `npx @gltf-transform/cli etc1s examples/shared/assets/sponza.glb <output.glb>`. Runtime KTX2 decode is not implemented yet; cgltf loads mesh geometry only.
+- Go through examples and replace the failing checks with returns into asserts.
+
+- Add support for anisotropic filtering

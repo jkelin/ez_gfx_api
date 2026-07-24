@@ -6,6 +6,10 @@ struct PrimitiveRecord
     uint index_count;
     uint vertex_offset;
     uint normal_offset;
+    uint uv_offset;
+    uint texture_id;
+    uint _pad0;
+    uint _pad1;
     row_major float4x4 transform;
 };
 

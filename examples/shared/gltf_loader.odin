@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:os"
 import "core:strings"
 import cgltf "vendor:cgltf"
+import "core:mem"
 import vk "vendor:vulkan"
 
 // GPU-facing mesh description shared by examples. The transform carries the
@@ -14,6 +15,8 @@ Mesh_Descriptor :: struct {
 	first_index:          u32,
 	vertex_offset:        u32,
 	normal_vertex_offset: u32,
+	uv_offset:            u32,
+	texture_id:           u32,
 	transform:            Mat4,
 }
 
@@ -31,10 +34,12 @@ Mesh_Instance :: struct {
 Cpu_Primitive :: struct {
 	positions:       [dynamic][3]f32,
 	normals:         [dynamic][3]f32,
+	uvs:         [dynamic][2]f32,
 	indices:         [dynamic]u32,
 	vertex_count:    u32,
 	index_count:     u32,
 	world_transform: linalg.Matrix4f32,
+	material:       ^cgltf.material,
 }
 
 // Result of loading a glTF file. Vertex data lives in cpu_primitives until uploaded.
@@ -119,6 +124,7 @@ gltf_loaded_mesh_destroy :: proc(mesh: ^Loaded_Mesh) {
 	for &prim in mesh.cpu_primitives {
 		delete(prim.positions)
 		delete(prim.normals)
+		delete(prim.uvs)
 		delete(prim.indices)
 	}
 	delete(mesh.cpu_primitives)
@@ -198,6 +204,7 @@ gltf_collect_primitive :: proc(
 
 	prim: Cpu_Primitive
 	prim.world_transform = world
+	prim.material = primitive.material
 	prim.vertex_count = u32(position_accessor.count)
 
 	float_count := position_accessor.count * cgltf.num_components(.vec3)
@@ -217,19 +224,97 @@ gltf_collect_primitive :: proc(
 		delete(prim.positions)
 		return false
 	}
+	if !gltf_collect_uvs(primitive, &prim) {
+		delete(prim.positions)
+		delete(prim.normals)
+		return false
+	}
 	if !gltf_collect_indices(primitive, &prim) {
 		delete(prim.positions)
 		delete(prim.normals)
+		delete(prim.uvs)
 		return false
 	}
 	if prim.index_count == 0 {
 		delete(prim.positions)
 		delete(prim.normals)
 		delete(prim.indices)
+		delete(prim.uvs)
 		return true
 	}
 
 	append(&mesh.cpu_primitives, prim)
+	return true
+}
+
+gltf_base_color_image :: proc(prim: ^Cpu_Primitive) -> ^cgltf.image {
+	if prim == nil || prim.material == nil || !prim.material.has_pbr_metallic_roughness {
+		return nil
+	}
+	texture_view := prim.material.pbr_metallic_roughness.base_color_texture
+	if texture_view.texture == nil {
+		return nil
+	}
+	texture := texture_view.texture
+	if texture.has_basisu && texture.basisu_image != nil {
+		return texture.basisu_image
+	}
+	return texture.image_
+}
+
+gltf_image_bytes :: proc(image: ^cgltf.image) -> []u8 {
+	// Sponza embeds its KTX2 images in GLB buffer views; external URI images
+	// intentionally return nil until an owned file-loading path is added.
+	if image == nil || image.buffer_view == nil {
+		return nil
+	}
+	view := image.buffer_view
+	if view.size == 0 {
+		return nil
+	}
+	if view.data != nil {
+		return (cast([^]u8)view.data)[:int(view.size)]
+	}
+	if view.buffer == nil || view.buffer.data == nil {
+		return nil
+	}
+	base := cast([^]u8)view.buffer.data
+	return base[int(view.offset):][:int(view.size)]
+}
+
+gltf_collect_uvs :: proc(primitive: ^cgltf.primitive, prim: ^Cpu_Primitive) -> bool {
+	uv_set := 0
+	if prim.material != nil && prim.material.has_pbr_metallic_roughness {
+		texcoord := prim.material.pbr_metallic_roughness.base_color_texture.texcoord
+		if texcoord >= 0 {
+			uv_set = int(texcoord)
+		}
+	}
+	for &attribute in primitive.attributes {
+		if attribute.type != .texcoord || int(attribute.index) != uv_set do continue
+		accessor := attribute.data
+		if accessor == nil do continue
+		if accessor.type != .vec2 || accessor.component_type != .r_32f {
+			break
+		}
+		if accessor.count != uint(prim.vertex_count) {
+			break
+		}
+		float_count := accessor.count * cgltf.num_components(.vec2)
+		prim.uvs = make([dynamic][2]f32, int(accessor.count))
+		unpacked := cgltf.accessor_unpack_floats(
+			accessor,
+			cast([^]f32)raw_data(prim.uvs),
+			float_count,
+		)
+		if unpacked == float_count {
+			return true
+		}
+		delete(prim.uvs)
+		break
+	}
+
+	prim.uvs = make([dynamic][2]f32, int(prim.vertex_count))
 	return true
 }
 

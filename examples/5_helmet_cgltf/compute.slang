@@ -52,5 +52,5 @@ void computemain(uint3 dispatch_id: SV_DispatchThreadID)
     command.first_index = prim.first_index;
     command.vertex_offset = int(prim.vertex_offset);
     command.first_instance = primitive_index;
-    draw_commands.Append(command);
+    draw_commands.Set(primitive_index, command);
 }

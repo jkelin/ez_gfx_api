@@ -41,6 +41,7 @@ init_app :: proc(app: ^App) {
 	assert(gfx.ez_gfx_glfw_init())
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	assert(gfx.ez_gfx_enable_all_decoders(), "failed to enable image decoders")
 	app.window_count = 1
 	main_window := &app.windows[0]
 

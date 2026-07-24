@@ -267,6 +267,10 @@ example5_test_draw_frame :: proc(app: ^Example5_Test_App) -> bool {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, app.mesh.mesh_count) {
+		_ = gfx.ez_gfx_finish_render()
+		return false
+	}
 
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(

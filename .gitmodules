@@ -7,3 +7,6 @@
 [submodule "vendor/odin-imgui"]
 	path = vendor/odin-imgui
 	url = https://github.com/Capati/odin-imgui
+[submodule "vendor/odin-ktx"]
+	path = vendor/odin-ktx
+	url = https://github.com/jkelin/odin-ktx.git

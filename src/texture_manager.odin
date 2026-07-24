@@ -1,6 +1,7 @@
 package ez_gfx
 
 import vma "../vendor/odin-vma"
+import ktx "../vendor/odin-ktx"
 import "base:intrinsics"
 import "base:runtime"
 import "core:bytes"
@@ -27,6 +28,7 @@ Ez_Gfx_Source_Texture_Format :: enum u8 {
 	JPEG,
 	PNG,
 	TGA,
+	KTX2,
 }
 
 Ez_Gfx_Texture_Error :: enum u8 {
@@ -77,6 +79,9 @@ Ez_Gfx_Texture_Loaded_Callback :: #type proc(
 	err: Ez_Gfx_Texture_Error,
 	user_data: rawptr,
 )
+Ez_Gfx_Image_Decoder_Callback :: #type proc(
+	job: ^Ez_Gfx_Texture_Load_Job,
+) -> Ez_Gfx_Texture_Upload_Job
 
 Ez_Gfx_Texture_State :: enum u8 {
 	Empty,
@@ -128,6 +133,80 @@ Ez_Gfx_Texture_Upload_Job :: struct {
 	owns_pixels:  bool,
 	err:          Ez_Gfx_Texture_Error,
 }
+
+@(private)
+_ez_gfx_image_decoders: [Ez_Gfx_Source_Texture_Format]Ez_Gfx_Image_Decoder_Callback
+
+@(private)
+_ez_gfx_image_decoder_mutex: sync.Mutex
+
+@(private)
+ez_gfx_image_decoder_format_supported :: proc(
+	format: Ez_Gfx_Source_Texture_Format,
+) -> bool {
+	format_value := u8(format)
+	return format_value >= u8(Ez_Gfx_Source_Texture_Format.BMP) &&
+		format_value <= u8(Ez_Gfx_Source_Texture_Format.KTX2)
+}
+
+// Registers or replaces an encoded-image decoder. Raw RGB/RGBA uploads remain built in.
+ez_gfx_register_image_decoder :: proc(
+	format: Ez_Gfx_Source_Texture_Format,
+	callback: Ez_Gfx_Image_Decoder_Callback,
+) -> bool {
+	if !ez_gfx_image_decoder_format_supported(format) || callback == nil {
+		return false
+	}
+	sync.mutex_lock(&_ez_gfx_image_decoder_mutex)
+	_ez_gfx_image_decoders[format] = callback
+	sync.mutex_unlock(&_ez_gfx_image_decoder_mutex)
+	return true
+}
+
+@(private)
+ez_gfx_image_decoder_lookup :: proc(
+	format: Ez_Gfx_Source_Texture_Format,
+) -> Ez_Gfx_Image_Decoder_Callback {
+	if !ez_gfx_image_decoder_format_supported(format) {
+		return nil
+	}
+	sync.mutex_lock(&_ez_gfx_image_decoder_mutex)
+	callback := _ez_gfx_image_decoders[format]
+	sync.mutex_unlock(&_ez_gfx_image_decoder_mutex)
+	return callback
+}
+
+// Enables the built-in decoder for one encoded image format.
+ez_gfx_enable_bmp_decoder :: proc() -> bool {
+	return ez_gfx_register_image_decoder(.BMP, ez_gfx_decode_bmp_upload_job)
+}
+
+ez_gfx_enable_jpeg_decoder :: proc() -> bool {
+	return ez_gfx_register_image_decoder(.JPEG, ez_gfx_decode_jpeg_upload_job)
+}
+
+ez_gfx_enable_png_decoder :: proc() -> bool {
+	return ez_gfx_register_image_decoder(.PNG, ez_gfx_decode_png_upload_job)
+}
+
+ez_gfx_enable_tga_decoder :: proc() -> bool {
+	return ez_gfx_register_image_decoder(.TGA, ez_gfx_decode_tga_upload_job)
+}
+
+ez_gfx_enable_ktx2_decoder :: proc() -> bool {
+	return ez_gfx_register_image_decoder(.KTX2, ez_gfx_decode_ktx2_upload_job)
+}
+
+// Enables every built-in encoded-image decoder.
+ez_gfx_enable_all_decoders :: proc() -> bool {
+	bmp_ok := ez_gfx_enable_bmp_decoder()
+	jpeg_ok := ez_gfx_enable_jpeg_decoder()
+	png_ok := ez_gfx_enable_png_decoder()
+	tga_ok := ez_gfx_enable_tga_decoder()
+	ktx2_ok := ez_gfx_enable_ktx2_decoder()
+	return bmp_ok && jpeg_ok && png_ok && tga_ok && ktx2_ok
+}
+
 
 Ez_Gfx_Texture_Destroy_Job :: struct {
 	record:          Ez_Gfx_Texture_Record,
@@ -312,6 +391,10 @@ ez_gfx_texture_manager_load :: proc(
 		return 0, .Invalid_Arguments
 	}
 
+	if ez_gfx_image_decoder_format_supported(desc.source_format) &&
+	   ez_gfx_image_decoder_lookup(desc.source_format) == nil {
+		return 0, .Unsupported_Format
+	}
 	sync.mutex_lock(&manager.mutex)
 	defer sync.mutex_unlock(&manager.mutex)
 
@@ -551,6 +634,43 @@ ez_gfx_texture_decode_thread :: proc(worker: ^thread.Thread) {
 	}
 }
 
+// Decode workers can finish out of order; wait until no earlier texture is still pending
+// before allowing a later upload to block the shared command buffer.
+ez_gfx_texture_manager_take_ready_upload_job_locked :: proc(
+	manager: ^Ez_Gfx_Texture_Manager,
+) -> int {
+	if manager == nil || len(manager.upload_jobs) == 0 {
+		return -1
+	}
+
+	earliest_pending_timeline := ~u64(0)
+	for &record in manager.textures {
+		if record.state == .Queued || record.state == .Loading {
+			earliest_pending_timeline = min(
+				earliest_pending_timeline,
+				record.last_write_timeline,
+			)
+		}
+	}
+
+	best_index := -1
+	best_timeline := ~u64(0)
+	for candidate, index in manager.upload_jobs {
+		timeline := u64(0)
+		if record := ez_gfx_texture_manager_find_locked(manager, candidate.load.id); record != nil {
+			timeline = record.last_write_timeline
+		}
+		if timeline < best_timeline {
+			best_timeline = timeline
+			best_index = index
+		}
+	}
+	if best_index < 0 || best_timeline > earliest_pending_timeline {
+		return -1
+	}
+	return best_index
+}
+
 ez_gfx_texture_upload_thread :: proc(worker: ^thread.Thread) {
 	context = runtime.default_context()
 	manager := cast(^Ez_Gfx_Texture_Manager)worker.data
@@ -568,17 +688,25 @@ ez_gfx_texture_upload_thread :: proc(worker: ^thread.Thread) {
 	for {
 		job: Ez_Gfx_Texture_Upload_Job
 
+		shutdown := false
 		sync.mutex_lock(&manager.mutex)
-		for len(manager.upload_jobs) == 0 && !manager.shutdown {
+		for {
+			if manager.shutdown {
+				shutdown = true
+				break
+			}
+			job_index := ez_gfx_texture_manager_take_ready_upload_job_locked(manager)
+			if job_index >= 0 {
+				job = manager.upload_jobs[job_index]
+				ordered_remove(&manager.upload_jobs, job_index)
+				break
+			}
 			sync.cond_wait(&manager.cond, &manager.mutex)
 		}
-		if manager.shutdown {
-			sync.mutex_unlock(&manager.mutex)
+		sync.mutex_unlock(&manager.mutex)
+		if shutdown {
 			break
 		}
-		job = manager.upload_jobs[0]
-		ordered_remove(&manager.upload_jobs, 0)
-		sync.mutex_unlock(&manager.mutex)
 
 		err := job.err
 		if err == .None {
@@ -702,14 +830,61 @@ ez_gfx_texture_upload_decoded_job :: proc(
 	return .None
 }
 
+@(private)
+ez_gfx_texture_upload_job_is_valid :: proc(
+	job: ^Ez_Gfx_Texture_Upload_Job,
+) -> bool {
+	if job == nil || job.err != .None || job.width == 0 || job.height == 0 {
+		return false
+	}
+
+	channels: u64
+	switch job.source {
+	case .RGB:
+		channels = 3
+	case .RGBA:
+		channels = 4
+	case .None:
+		return false
+	}
+
+	max_u64 := ~u64(0)
+	width := u64(job.width)
+	height := u64(job.height)
+	if width > max_u64 / height {
+		return false
+	}
+	pixel_count := width * height
+	if pixel_count > max_u64 / channels {
+		return false
+	}
+	expected_size := pixel_count * channels
+	return expected_size == u64(len(job.pixels))
+}
+
 ez_gfx_texture_decode_upload_job :: proc(
 	job: ^Ez_Gfx_Texture_Load_Job,
 ) -> Ez_Gfx_Texture_Upload_Job {
-	upload := Ez_Gfx_Texture_Upload_Job{load = job^}
+	upload: Ez_Gfx_Texture_Upload_Job
+	if job == nil {
+		upload.err = .Invalid_Arguments
+		return upload
+	}
+	upload.load = job^
 	if len(job.regions) == 0 {
 		upload.err = .Invalid_Arguments
 		return upload
 	}
+
+	if callback := ez_gfx_image_decoder_lookup(job.desc.source_format); callback != nil {
+		upload = callback(job)
+		upload.load = job^
+		if upload.err == .None && !ez_gfx_texture_upload_job_is_valid(&upload) {
+			upload.err = .Decode_Failed
+		}
+		return upload
+	}
+
 	region := job.regions[0]
 	switch job.desc.source_format {
 	case .RGB, .RGBA:
@@ -729,28 +904,184 @@ ez_gfx_texture_decode_upload_job :: proc(
 		upload.height = job.desc.height
 		upload.err = .None
 		return upload
-	case .BMP, .JPEG, .PNG, .TGA:
-		img, img_err := image.load_from_bytes(region.data, {.alpha_add_if_missing})
-		if img_err != nil || img == nil {
-			upload.err = .Decode_Failed
-			return upload
-		}
-		defer image.destroy(img)
-		if img.width <= 0 || img.height <= 0 || img.depth != 8 || img.channels != 4 {
-			upload.err = .Decode_Failed
-			return upload
-		}
-		pixels := make([]u8, img.width * img.height * 4)
-		mem.copy(raw_data(pixels), raw_data(img.pixels.buf), len(pixels))
-		upload.pixels = pixels
-		upload.width = u32(img.width)
-		upload.height = u32(img.height)
-		upload.source = .RGBA
-		upload.owns_pixels = true
-		upload.err = .None
+	case .BMP, .JPEG, .PNG, .TGA, .KTX2:
+		upload.err = .Unsupported_Format
 		return upload
 	}
 	upload.err = .Unsupported_Format
+	return upload
+}
+
+ez_gfx_texture_decode_ktx2 :: proc(
+	data: []u8,
+) -> (
+	pixels: []u8,
+	width: u32,
+	height: u32,
+	err: Ez_Gfx_Texture_Error,
+) {
+	if len(data) == 0 {
+		err = .Invalid_Arguments
+		return
+	}
+
+	texture: ^ktx.ktxTexture2
+	flags := ktx.ktxTextureCreateFlags(
+		ktx.ktxTextureCreateFlagBits.KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT |
+		ktx.ktxTextureCreateFlagBits.KTX_TEXTURE_CREATE_CHECK_GLTF_BASISU_BIT,
+	)
+	create_err := ktx.ktxTexture2_CreateFromMemory(
+		cast(^ktx.ktx_uint8_t)raw_data(data),
+		ktx.ktx_size_t(len(data)),
+		flags,
+		&texture,
+	)
+	if create_err != .KTX_SUCCESS || texture == nil {
+		err = .Decode_Failed
+		return
+	}
+	defer ktx.ktxTexture2_Destroy(texture)
+
+	if texture.base.numDimensions != 2 ||
+	   texture.base.baseWidth == 0 ||
+	   texture.base.baseHeight == 0 ||
+	   texture.base.numLayers != 1 ||
+	   texture.base.numFaces != 1 {
+		err = .Unsupported_Format
+		return
+	}
+
+	if ktx.ktxTexture2_NeedsTranscoding(texture) {
+		transcode_err := ktx.ktxTexture2_TranscodeBasis(
+			texture,
+			.KTX_TTF_RGBA32,
+			0,
+		)
+		if transcode_err != .KTX_SUCCESS {
+			err = .Decode_Failed
+			return
+		}
+	} else {
+		format := ktx.ktxTexture2_GetVkFormat(texture)
+		if format != .R8G8B8A8_UNORM && format != .R8G8B8A8_SRGB {
+			err = .Unsupported_Format
+			return
+		}
+	}
+
+	image_offset: ktx.ktx_size_t
+	if ktx.ktxTexture2_GetImageOffset(texture, 0, 0, 0, &image_offset) != .KTX_SUCCESS {
+		err = .Decode_Failed
+		return
+	}
+	image_size := ktx.ktxTexture_GetImageSize(&texture.base, 0)
+	expected_size := ktx.ktx_size_t(texture.base.baseWidth) *
+		ktx.ktx_size_t(texture.base.baseHeight) *
+		ktx.ktx_size_t(4)
+	if image_size != expected_size ||
+	   image_offset > texture.base.dataSize ||
+	   image_size > texture.base.dataSize - image_offset {
+		err = .Decode_Failed
+		return
+	}
+
+	pixels = make([]u8, int(image_size))
+	source := mem.ptr_offset(texture.base.pData, uintptr(image_offset))
+	mem.copy(raw_data(pixels), source, len(pixels))
+	width = texture.base.baseWidth
+	height = texture.base.baseHeight
+	err = .None
+	return
+}
+
+@(private)
+ez_gfx_decode_core_image_upload_job :: proc(
+	job: ^Ez_Gfx_Texture_Load_Job,
+	loader: image.Loader_Proc,
+) -> Ez_Gfx_Texture_Upload_Job {
+	upload: Ez_Gfx_Texture_Upload_Job
+	if job != nil {
+		upload.load = job^
+	}
+	if job == nil || loader == nil || len(job.regions) == 0 {
+		upload.err = .Invalid_Arguments
+		return upload
+	}
+
+	region := job.regions[0]
+	img, img_err := loader(region.data, {.alpha_add_if_missing}, context.allocator)
+	if img_err != nil || img == nil {
+		upload.err = .Decode_Failed
+		return upload
+	}
+	defer image.destroy(img)
+	if img.width <= 0 || img.height <= 0 || img.depth != 8 || img.channels != 4 {
+		upload.err = .Decode_Failed
+		return upload
+	}
+
+	upload.pixels = make([]u8, img.width * img.height * 4)
+	mem.copy(raw_data(upload.pixels), raw_data(img.pixels.buf), len(upload.pixels))
+	upload.width = u32(img.width)
+	upload.height = u32(img.height)
+	upload.source = .RGBA
+	upload.owns_pixels = true
+	upload.err = .None
+	return upload
+}
+
+@(private)
+ez_gfx_decode_bmp_upload_job :: proc(
+	job: ^Ez_Gfx_Texture_Load_Job,
+) -> Ez_Gfx_Texture_Upload_Job {
+	return ez_gfx_decode_core_image_upload_job(job, bmp.load_from_bytes)
+}
+
+@(private)
+ez_gfx_decode_jpeg_upload_job :: proc(
+	job: ^Ez_Gfx_Texture_Load_Job,
+) -> Ez_Gfx_Texture_Upload_Job {
+	return ez_gfx_decode_core_image_upload_job(job, jpeg.load_from_bytes)
+}
+
+@(private)
+ez_gfx_decode_png_upload_job :: proc(
+	job: ^Ez_Gfx_Texture_Load_Job,
+) -> Ez_Gfx_Texture_Upload_Job {
+	return ez_gfx_decode_core_image_upload_job(job, png.load_from_bytes)
+}
+
+@(private)
+ez_gfx_decode_tga_upload_job :: proc(
+	job: ^Ez_Gfx_Texture_Load_Job,
+) -> Ez_Gfx_Texture_Upload_Job {
+	return ez_gfx_decode_core_image_upload_job(job, tga.load_from_bytes)
+}
+
+@(private)
+ez_gfx_decode_ktx2_upload_job :: proc(
+	job: ^Ez_Gfx_Texture_Load_Job,
+) -> Ez_Gfx_Texture_Upload_Job {
+	upload: Ez_Gfx_Texture_Upload_Job
+	if job != nil {
+		upload.load = job^
+	}
+	if job == nil || len(job.regions) == 0 {
+		upload.err = .Invalid_Arguments
+		return upload
+	}
+
+	pixels, width, height, err := ez_gfx_texture_decode_ktx2(job.regions[0].data)
+	if err != .None {
+		upload.err = err
+		return upload
+	}
+	upload.pixels = pixels
+	upload.width = width
+	upload.height = height
+	upload.source = .RGBA
+	upload.owns_pixels = true
+	upload.err = .None
 	return upload
 }
 
@@ -863,43 +1194,39 @@ ez_gfx_texture_decode_job :: proc(
 	out_width: ^u32,
 	out_height: ^u32,
 ) -> Ez_Gfx_Texture_Error {
-	if len(job.regions) == 0 do return .Invalid_Arguments
-	region := job.regions[0]
-	switch job.desc.source_format {
-	case .RGB, .RGBA:
-		channels := 3
-		if job.desc.source_format == .RGBA do channels = 4
-		expected := int(job.desc.width) * int(job.desc.height) * channels
-		if expected <= 0 || len(region.data) != expected do return .Invalid_Arguments
-		pixels := make([]u8, int(job.desc.width) * int(job.desc.height) * 4)
-		src := region.data
-		for i in 0 ..< int(job.desc.width) * int(job.desc.height) {
-			pixels[i * 4 + 0] = src[i * channels + 0]
-			pixels[i * 4 + 1] = src[i * channels + 1]
-			pixels[i * 4 + 2] = src[i * channels + 2]
-			pixels[i * 4 + 3] = channels == 4 ? src[i * channels + 3] : 255
-		}
-		out_pixels^ = pixels
-		out_width^ = job.desc.width
-		out_height^ = job.desc.height
-		return .None
-	case .BMP, .JPEG, .PNG, .TGA:
-		img, img_err := image.load_from_bytes(region.data, {.alpha_add_if_missing})
-		if img_err != nil || img == nil {
-			return .Decode_Failed
-		}
-		defer image.destroy(img)
-		if img.width <= 0 || img.height <= 0 || img.depth != 8 || img.channels != 4 {
-			return .Decode_Failed
-		}
-		pixels := make([]u8, img.width * img.height * 4)
-		mem.copy(raw_data(pixels), raw_data(img.pixels.buf), len(pixels))
-		out_pixels^ = pixels
-		out_width^ = u32(img.width)
-		out_height^ = u32(img.height)
-		return .None
+	if job == nil || out_pixels == nil || out_width == nil || out_height == nil {
+		return .Invalid_Arguments
 	}
-	return .Unsupported_Format
+	out_pixels^ = nil
+	out_width^ = 0
+	out_height^ = 0
+
+	upload := ez_gfx_texture_decode_upload_job(job)
+	defer ez_gfx_texture_upload_job_destroy(&upload)
+	if upload.err != .None {
+		return upload.err
+	}
+
+	pixel_count := int(upload.width) * int(upload.height)
+	pixels := make([]u8, pixel_count * 4)
+	switch upload.source {
+	case .RGB:
+		for i in 0 ..< pixel_count {
+			pixels[i * 4 + 0] = upload.pixels[i * 3 + 0]
+			pixels[i * 4 + 1] = upload.pixels[i * 3 + 1]
+			pixels[i * 4 + 2] = upload.pixels[i * 3 + 2]
+			pixels[i * 4 + 3] = 255
+		}
+	case .RGBA:
+		mem.copy(raw_data(pixels), raw_data(upload.pixels), len(pixels))
+	case .None:
+		delete(pixels)
+		return .Decode_Failed
+	}
+	out_pixels^ = pixels
+	out_width^ = upload.width
+	out_height^ = upload.height
+	return .None
 }
 
 ez_gfx_texture_create_image :: proc(
@@ -952,6 +1279,9 @@ ez_gfx_texture_submit_upload :: proc(
 	staging: ^Ez_Gfx_Buffer,
 	signal_value: u64,
 ) -> bool {
+	if signal_value > 1 && !ez_gfx_ctx_wait_timeline(ctx, signal_value - 1) {
+		return false
+	}
 	command_buffer := manager.upload_command_buffer
 	vk.ResetCommandBuffer(command_buffer, {})
 	begin_info := vk.CommandBufferBeginInfo {
@@ -1022,9 +1352,6 @@ ez_gfx_texture_submit_upload :: proc(
 		pCommandBufferInfos = &command_submit,
 		signalSemaphoreInfoCount = 1,
 		pSignalSemaphoreInfos = &signal_info,
-	}
-	if signal_value > 1 && !ez_gfx_ctx_wait_timeline(ctx, signal_value - 1) {
-		return false
 	}
 	sync.mutex_lock(&ctx.queue_mutex)
 	result := vk.QueueSubmit2(ctx.transfer_queue, 1, &submit_info, vk.Fence(0))

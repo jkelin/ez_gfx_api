@@ -2,6 +2,7 @@ package main
 
 import gfx "../../src"
 import shared "../shared"
+import cgltf "vendor:cgltf"
 import "core:fmt"
 import "core:math"
 import "vendor:glfw"
@@ -9,29 +10,28 @@ import vk "vendor:vulkan"
 
 WIDTH :: 1280
 HEIGHT :: 720
-COMPUTE_SHADER_PATH :: cstring("examples/5_helmet_cgltf/compute.slang")
-DRAW_SHADER_PATH :: cstring("examples/5_helmet_cgltf/draw.slang")
-GLTF_PATH :: "examples/shared/assets/helmet.glb"
+COMPUTE_SHADER_PATH :: cstring("examples/6_sponza_ktx2/compute.slang")
+DRAW_SHADER_PATH :: cstring("examples/6_sponza_ktx2/draw.slang")
+GLTF_PATH :: "examples/shared/assets/sponza.glb"
 POSITION_HEAP :: "position"
 NORMAL_HEAP :: "normal"
+UV_HEAP :: "uv"
 
-HELMET_ORBIT_CENTER :: shared.Vec3{0.0, 0.0, 0.0}
+SPONZA_ORBIT_CENTER :: shared.Vec3{0.0, -0.32, 0.0}
+SPONZA_NEAR_PLANE :: f32(0.02)
 
-// Matches the Slang PrimitiveRecord layout (field order differs from Mesh_Descriptor).
+// Matches the Slang PrimitiveRecord layout. The padding keeps the matrix
+// aligned after the per-primitive draw and texture metadata.
 Primitive_Record :: struct {
 	first_index:   u32,
 	index_count:   u32,
 	vertex_offset: u32,
 	normal_offset: u32,
+	uv_offset:     u32,
+	texture_id:    u32,
+	_pad0:         u32,
+	_pad1:         u32,
 	transform:     shared.Mat4,
-}
-
-helmet_camera_start :: proc() -> shared.Orbit_Camera_Start {
-	return shared.Orbit_Camera_Start {
-		yaw      = math.to_radians_f32(35),
-		pitch    = math.to_radians_f32(22),
-		distance = 5.0,
-	}
 }
 
 Compute_Push_Constants :: struct {
@@ -41,6 +41,8 @@ Compute_Push_Constants :: struct {
 Draw_Push_Constants :: struct {
 	mvp: shared.Mat4,
 }
+
+WHITE_PIXEL :: [4]u8{255, 255, 255, 255}
 
 App :: struct {
 	ctx:                   gfx.Ez_Gfx_Ctx,
@@ -53,6 +55,10 @@ App :: struct {
 	mesh:                  shared.Loaded_Mesh,
 	mesh_loaded:           bool,
 	primitive_records:     []Primitive_Record,
+	texture_ids:           [dynamic]gfx.Ez_Gfx_Texture_ID,
+	texture_ids_by_image:  map[^cgltf.image]gfx.Ez_Gfx_Texture_ID,
+	fallback_texture_id:   gfx.Ez_Gfx_Texture_ID,
+	fallback_pixel:      [4]u8,
 	camera:                shared.Orbit_Camera,
 	orbit_center:          shared.Vec3,
 	camera_start:          shared.Orbit_Camera_Start,
@@ -77,7 +83,7 @@ init_app :: proc(app: ^App) {
 
 	fmt.println("checkpoint: window create")
 	assert(
-		gfx.ez_gfx_window_create(main_window, "ez_gfx_api helmet cgltf", WIDTH, HEIGHT),
+		gfx.ez_gfx_window_create(main_window, "ez_gfx_api Sponza KTX2", WIDTH, HEIGHT),
 	)
 	shared.orbit_camera_install_callbacks(main_window)
 	fmt.println("checkpoint: instance create")
@@ -122,73 +128,167 @@ example_init :: proc(app: ^App) {
 	assert(mesh_ok, "glTF mesh load failed")
 	app.mesh = mesh
 	app.mesh_loaded = true
+	load_sponza_textures(app)
 
-	app.orbit_center = HELMET_ORBIT_CENTER
-	app.camera_start = helmet_camera_start()
+	app.orbit_center = SPONZA_ORBIT_CENTER
+	app.camera_start = sponza_camera_start()
 	shared.orbit_camera_apply_start(&app.camera, app.orbit_center, app.camera_start)
 
-	vertex_stride := vk.DeviceSize(size_of([4]f32))
+	position_stride := vk.DeviceSize(size_of([4]f32))
+	normal_stride := vk.DeviceSize(size_of([4]f32))
+	uv_stride := vk.DeviceSize(size_of([4]f32))
 	index_bytes := shared.gltf_mesh_index_heap_bytes(&app.mesh) + 4096
-	vertex_bytes := shared.gltf_mesh_vertex_heap_bytes(&app.mesh, vertex_stride) + 4096
+	position_bytes := shared.gltf_mesh_vertex_heap_bytes(&app.mesh, position_stride) + 4096
+	normal_bytes := shared.gltf_mesh_vertex_heap_bytes(&app.mesh, normal_stride) + 4096
+	uv_bytes := shared.gltf_mesh_vertex_heap_bytes(&app.mesh, uv_stride) + 4096
 	gfx.ez_gfx_vertex_manager_begin(&app.ctx.vertex_manager)
 	gfx.ez_gfx_gpu_heap_create(
 		&app.ctx.vertex_manager.index_heap,
 		index_bytes,
 		vk.DeviceSize(size_of(u32)),
 		{.INDEX_BUFFER},
-		"example 5 index heap",
+		"example 6 index heap",
 	)
 	gfx.ez_gfx_vertex_manager_add_heap(
 		&app.ctx.vertex_manager,
 		POSITION_HEAP,
-		vertex_bytes,
-		vertex_stride,
+		position_bytes,
+		position_stride,
 	)
 	gfx.ez_gfx_vertex_manager_add_heap(
 		&app.ctx.vertex_manager,
 		NORMAL_HEAP,
-		vertex_bytes,
-		vertex_stride,
+		normal_bytes,
+		normal_stride,
+	)
+	gfx.ez_gfx_vertex_manager_add_heap(
+		&app.ctx.vertex_manager,
+		UV_HEAP,
+		uv_bytes,
+		uv_stride,
 	)
 
-	upload_gltf_primitives(&app.ctx.vertex_manager, &app.mesh)
+	upload_sponza_primitives(&app.ctx.vertex_manager, &app.mesh)
 	app.primitive_records = make([]Primitive_Record, len(app.mesh.descriptors))
 	for descriptor, i in app.mesh.descriptors {
-		app.primitive_records[i] = mesh_descriptor_to_primitive_record(descriptor)
+		texture_id := app.fallback_texture_id
+		if image := shared.gltf_base_color_image(&app.mesh.cpu_primitives[i]); image != nil {
+			if mapped, ok := app.texture_ids_by_image[image]; ok {
+				texture_id = mapped
+			}
+		}
+		app.primitive_records[i] = mesh_descriptor_to_primitive_record(descriptor, texture_id)
 	}
 }
 
-mesh_descriptor_to_primitive_record :: proc(descriptor: shared.Mesh_Descriptor) -> Primitive_Record {
+sponza_camera_start :: proc() -> shared.Orbit_Camera_Start {
+	return shared.Orbit_Camera_Start {
+		yaw      = math.to_radians_f32(90.0),
+		pitch    = math.to_radians_f32(8.0),
+		distance = 0.45,
+	}
+}
+
+load_sponza_textures :: proc(app: ^App) {
+	app.texture_ids_by_image = make(map[^cgltf.image]gfx.Ez_Gfx_Texture_ID)
+	app.fallback_pixel = WHITE_PIXEL
+
+	fallback_id, fallback_err := gfx.ez_gfx_load_texture(
+		{{data = app.fallback_pixel[:]}},
+		{
+			source_format      = .RGBA,
+			destination_format = .R8G8B8A8_UNORM,
+			width              = 1,
+			height             = 1,
+			mip_count          = 1,
+			min_filter         = .Linear,
+			mag_filter         = .Linear,
+			address_mode_u     = .Repeat,
+			address_mode_v     = .Repeat,
+			debug_label        = "sponza fallback texture",
+		},
+	)
+	assert(fallback_err == .None, "failed to schedule fallback texture")
+	app.fallback_texture_id = fallback_id
+	append(&app.texture_ids, fallback_id)
+
+	for &prim in app.mesh.cpu_primitives {
+		image := shared.gltf_base_color_image(&prim)
+		if image == nil do continue
+		if _, exists := app.texture_ids_by_image[image]; exists do continue
+
+		data := shared.gltf_image_bytes(image)
+		assert(len(data) > 0, "Sponza base-color image has no embedded bytes")
+		texture_id, texture_err := gfx.ez_gfx_load_texture(
+			{{data = data}},
+			{
+				source_format      = .KTX2,
+				destination_format = .R8G8B8A8_UNORM,
+				generate_mips      = true,
+				min_filter         = .Linear,
+				mag_filter         = .Linear,
+				address_mode_u     = .Repeat,
+				address_mode_v     = .Repeat,
+				debug_label        = "sponza base color KTX2",
+			},
+		)
+		assert(texture_err == .None, "failed to schedule Sponza KTX2 texture")
+		app.texture_ids_by_image[image] = texture_id
+		append(&app.texture_ids, texture_id)
+	}
+}
+mesh_descriptor_to_primitive_record :: proc(
+	descriptor: shared.Mesh_Descriptor,
+	texture_id: gfx.Ez_Gfx_Texture_ID,
+) -> Primitive_Record {
 	return Primitive_Record {
 		first_index   = descriptor.first_index,
 		index_count   = descriptor.index_count,
 		vertex_offset = descriptor.vertex_offset,
 		normal_offset = descriptor.normal_vertex_offset,
+		uv_offset     = descriptor.uv_offset,
+		texture_id    = u32(texture_id),
 		transform     = descriptor.transform,
 	}
 }
 
-upload_gltf_primitives :: proc(manager: ^gfx.Ez_Gfx_Vertex_Manager, mesh: ^shared.Loaded_Mesh) {
+upload_sponza_primitives :: proc(
+	manager: ^gfx.Ez_Gfx_Vertex_Manager,
+	mesh: ^shared.Loaded_Mesh,
+) {
 	for &cpu, prim_index in mesh.cpu_primitives {
-		first_index := gfx.ez_gfx_vertex_manager_upload_indices(
-			manager,
-			cpu.indices[:],
-		)
-		vertex_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+		position_start := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			POSITION_HEAP,
 			cpu.positions[:],
 		)
+
+		global_indices := make([]u32, len(cpu.indices))
+		for index, i in cpu.indices {
+			global_indices[i] = index + position_start
+		}
+		first_index := gfx.ez_gfx_vertex_manager_upload_indices(
+			manager,
+			global_indices,
+		)
+		delete(global_indices)
+
 		normal_start := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			NORMAL_HEAP,
 			cpu.normals[:],
 		)
+		uv_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+			manager,
+			UV_HEAP,
+			cpu.uvs[:],
+		)
 
 		descriptor := &mesh.descriptors[prim_index]
 		descriptor.first_index = first_index
-		descriptor.vertex_offset = vertex_start
+		descriptor.vertex_offset = position_start
 		descriptor.normal_vertex_offset = normal_start
+		descriptor.uv_offset = uv_start
 	}
 }
 
@@ -234,7 +334,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		app.mesh.mesh_count,
-		"example 5 draw commands",
+		"example 6 draw commands",
 	)
 	if !indirect.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -253,14 +353,9 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	for record, i in app.primitive_records {
 		primitives.elements[i] = record
 	}
-
 	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding {
 		{name = "primitives", structured = primitives.handle},
 		{name = "draw_commands", indirect = indirect},
-	}
-
-	compute_push := Compute_Push_Constants {
-		primitive_count = app.mesh.mesh_count,
 	}
 	compute := gfx.ez_gfx_render_add_compute_pipeline(
 		&app.compute_shader,
@@ -268,7 +363,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		1,
 		1,
 		compute_bindings[:],
-		compute_push,
+		Compute_Push_Constants{primitive_count = app.mesh.mesh_count},
 	)
 	if !compute.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -283,12 +378,9 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	projection := shared.perspective_vk(
 		math.to_radians_f32(60),
 		shared.window_aspect(window),
-		0.1,
+		SPONZA_NEAR_PLANE,
 		100.0,
 	)
-	draw_push := Draw_Push_Constants {
-		mvp = shared.mat4_mul(projection, view),
-	}
 	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
 		{name = "primitives", structured = primitives.handle},
 	}
@@ -296,7 +388,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
-		draw_push,
+		Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
 	if !draw.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -309,6 +401,16 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 cleanup :: proc(app: ^App) {
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	gfx.ez_gfx_ctx_wait_idle()
+	for texture_id in app.texture_ids {
+		_ = gfx.ez_gfx_unload_texture(texture_id)
+	}
+	if len(app.texture_ids) > 0 {
+		gfx.ez_gfx_ctx_wait_idle()
+		delete(app.texture_ids)
+	}
+	if app.texture_ids_by_image != nil {
+		delete(app.texture_ids_by_image)
+	}
 	if app.primitive_records != nil {
 		delete(app.primitive_records)
 		app.primitive_records = nil

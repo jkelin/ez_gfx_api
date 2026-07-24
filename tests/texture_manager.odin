@@ -1,8 +1,70 @@
 package tests
 
 import gfx "../src"
+import shared "../examples/shared"
+import cgltf "vendor:cgltf"
 import "core:testing"
 import vk "vendor:vulkan"
+
+TEXTURE_DECODER_TEST_PNG :: #load("../examples/2_textured_cube/ez_graphics_api_texture.png")
+
+texture_test_decoder :: proc(
+	job: ^gfx.Ez_Gfx_Texture_Load_Job,
+) -> gfx.Ez_Gfx_Texture_Upload_Job {
+	pixels := make([]u8, 4)
+	pixels[0] = 1
+	pixels[1] = 2
+	pixels[2] = 3
+	pixels[3] = 4
+	return gfx.Ez_Gfx_Texture_Upload_Job{
+		load = job^,
+		pixels = pixels,
+		width = 1,
+		height = 1,
+		source = .RGBA,
+		owns_pixels = true,
+		err = .None,
+	}
+}
+
+@(test)
+texture_registers_custom_image_decoder :: proc(t: ^testing.T) {
+	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder))
+	testing.expect(t, !gfx.ez_gfx_register_image_decoder(.RGB, texture_test_decoder))
+	testing.expect(t, !gfx.ez_gfx_register_image_decoder(.BMP, nil))
+
+	data := [?]u8{0}
+	job := texture_test_job(data[:], .BMP, 0, 0)
+	defer texture_test_job_destroy(&job)
+	upload := gfx.ez_gfx_texture_decode_upload_job(&job)
+	defer gfx.ez_gfx_texture_upload_job_destroy(&upload)
+
+	if !testing.expect_value(t, upload.err, gfx.Ez_Gfx_Texture_Error.None) {
+		return
+	}
+	testing.expect_value(t, upload.width, u32(1))
+	testing.expect_value(t, upload.height, u32(1))
+	testing.expect_value(t, upload.pixels[3], u8(4))
+}
+
+@(test)
+texture_enable_all_decoders_enables_png :: proc(t: ^testing.T) {
+	if !testing.expect(t, gfx.ez_gfx_enable_all_decoders()) {
+		return
+	}
+
+	job := texture_test_job(TEXTURE_DECODER_TEST_PNG, .PNG, 0, 0)
+	defer texture_test_job_destroy(&job)
+	upload := gfx.ez_gfx_texture_decode_upload_job(&job)
+	defer gfx.ez_gfx_texture_upload_job_destroy(&upload)
+
+	if !testing.expect_value(t, upload.err, gfx.Ez_Gfx_Texture_Error.None) {
+		return
+	}
+	testing.expect(t, upload.width > 0 && upload.height > 0)
+	testing.expect_value(t, upload.source, gfx.Ez_Gfx_Texture_Decoded_Source.RGBA)
+	testing.expect(t, upload.owns_pixels)
+}
 
 @(test)
 texture_full_mip_count_halves_to_one_pixel :: proc(t: ^testing.T) {
@@ -114,6 +176,48 @@ texture_manager_allocates_and_finds_id_slots :: proc(t: ^testing.T) {
 	missing := gfx.ez_gfx_texture_manager_find_locked(&manager, gfx.Ez_Gfx_Texture_ID(7))
 	testing.expect(t, found == slot)
 	testing.expect(t, missing == nil)
+}
+
+@(test)
+texture_decode_ktx2_sponza_base_color :: proc(t: ^testing.T) {
+	mesh, ok := shared.gltf_load_meshes("examples/shared/assets/sponza.glb")
+	if !testing.expect(t, ok, "failed to load Sponza glTF") {
+		return
+	}
+	defer shared.gltf_loaded_mesh_destroy(&mesh)
+
+	image: ^cgltf.image
+	for &prim in mesh.cpu_primitives {
+		image = shared.gltf_base_color_image(&prim)
+		if image != nil {
+			break
+		}
+	}
+	if !testing.expect(t, image != nil, "Sponza has no base-color image") {
+		return
+	}
+	data := shared.gltf_image_bytes(image)
+	if !testing.expect(t, len(data) > 0, "Sponza base-color image has no bytes") {
+		return
+	}
+	gfx.ez_gfx_enable_ktx2_decoder()
+
+	job := texture_test_job(data, .KTX2, 0, 0)
+	defer texture_test_job_destroy(&job)
+	upload := gfx.ez_gfx_texture_decode_upload_job(&job)
+	defer gfx.ez_gfx_texture_upload_job_destroy(&upload)
+
+	if !testing.expect_value(t, upload.err, gfx.Ez_Gfx_Texture_Error.None) {
+		return
+	}
+	testing.expect_value(t, upload.source, gfx.Ez_Gfx_Texture_Decoded_Source.RGBA)
+	testing.expect(t, upload.owns_pixels)
+	testing.expect(t, upload.width > 0 && upload.height > 0)
+	testing.expect_value(
+		t,
+		len(upload.pixels),
+		int(upload.width) * int(upload.height) * 4,
+	)
 }
 
 texture_test_job :: proc(

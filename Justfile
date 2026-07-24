@@ -68,6 +68,8 @@ build_example_3: (build_example "3_compute_structured_buffer" "example_3")
 build_example_4: (build_example "4_imgui" "example_4")
 build_example_5: (build_example "5_helmet_cgltf" "example_5")
 
+build_example_6: (build_example "6_sponza_ktx2" "example_6")
+
 example folder_name name: copy_slang_dll
   odin run examples/{{ folder_name }} -keep-executable -out:out/{{ name }}.exe
 
@@ -79,6 +81,8 @@ example_3: (example "3_compute_structured_buffer" "example_3")
 
 example_4: (example "4_imgui" "example_4")
 example_5: (example "5_helmet_cgltf" "example_5")
+
+example_6: (example "6_sponza_ktx2" "example_6")
 
 [env("EZ_GFX_MAX_SECONDS", "2")]
 [env("EZ_GFX_SCREENSHOT", "1")]
@@ -93,3 +97,5 @@ example_3_agent: (example_agent "3_compute_structured_buffer" "example_3")
 
 example_4_agent: (example_agent "4_imgui" "example_4")
 example_5_agent: (example_agent "5_helmet_cgltf" "example_5")
+
+example_6_agent: (example_agent "6_sponza_ktx2" "example_6")
