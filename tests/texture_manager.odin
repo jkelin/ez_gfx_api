@@ -28,10 +28,36 @@ texture_test_decoder :: proc(
 }
 
 @(test)
+texture_unregistered_png_rejects_before_workers :: proc(t: ^testing.T) {
+	if !testing.expect(t, gfx.ez_gfx_register_image_decoder(.PNG, nil)) {
+		return
+	}
+	defer gfx.ez_gfx_enable_png_decoder()
+	data := [?]u8{137}
+	region := gfx.Ez_Gfx_Texture_Memory_Region{data = data[:]}
+	manager: gfx.Ez_Gfx_Texture_Manager
+	ctx: gfx.Ez_Gfx_Ctx
+	_, err := gfx.ez_gfx_texture_manager_load(
+		&manager,
+		&ctx,
+		[]gfx.Ez_Gfx_Texture_Memory_Region{region},
+		{source_format = .PNG},
+	)
+
+	testing.expect_value(t, err, gfx.Ez_Gfx_Texture_Error.Unsupported_Format)
+	testing.expect_value(t, manager.latest_scheduled_texture_timeline, u64(0))
+}
+
+
+@(test)
 texture_registers_custom_image_decoder :: proc(t: ^testing.T) {
-	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder))
+	if !testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder)) {
+		return
+	}
+	defer gfx.ez_gfx_enable_bmp_decoder()
 	testing.expect(t, !gfx.ez_gfx_register_image_decoder(.RGB, texture_test_decoder))
-	testing.expect(t, !gfx.ez_gfx_register_image_decoder(.BMP, nil))
+	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, nil))
+	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder))
 
 	data := [?]u8{0}
 	job := texture_test_job(data[:], .BMP, 0, 0)

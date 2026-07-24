@@ -149,12 +149,12 @@ ez_gfx_image_decoder_format_supported :: proc(
 		format_value <= u8(Ez_Gfx_Source_Texture_Format.KTX2)
 }
 
-// Registers or replaces an encoded-image decoder. Raw RGB/RGBA uploads remain built in.
+// Registers or clears an encoded-image decoder. Raw RGB/RGBA uploads remain built in.
 ez_gfx_register_image_decoder :: proc(
 	format: Ez_Gfx_Source_Texture_Format,
 	callback: Ez_Gfx_Image_Decoder_Callback,
 ) -> bool {
-	if !ez_gfx_image_decoder_format_supported(format) || callback == nil {
+	if !ez_gfx_image_decoder_format_supported(format) {
 		return false
 	}
 	sync.mutex_lock(&_ez_gfx_image_decoder_mutex)
@@ -377,7 +377,6 @@ ez_gfx_texture_manager_load :: proc(
 	err: Ez_Gfx_Texture_Error,
 ) {
 	if ctx == nil || manager == nil do return 0, .Invalid_Context
-	if manager.upload_worker == nil || len(manager.decode_workers) == 0 do return 0, .Worker_Unavailable
 	if len(regions) == 0 || len(regions) > 16 do return 0, .Invalid_Arguments
 	for region in regions {
 		if len(region.data) == 0 do return 0, .Invalid_Arguments
@@ -395,6 +394,7 @@ ez_gfx_texture_manager_load :: proc(
 	   ez_gfx_image_decoder_lookup(desc.source_format) == nil {
 		return 0, .Unsupported_Format
 	}
+	if manager.upload_worker == nil || len(manager.decode_workers) == 0 do return 0, .Worker_Unavailable
 	sync.mutex_lock(&manager.mutex)
 	defer sync.mutex_unlock(&manager.mutex)
 
