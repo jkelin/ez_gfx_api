@@ -9,14 +9,15 @@ import vk "vendor:vulkan"
 
 WIDTH :: 1280
 HEIGHT :: 720
-COMPUTE_SHADER_PATH :: cstring("examples/3_compute_structured_buffer/compute.slang")
-DRAW_SHADER_PATH :: cstring("examples/3_compute_structured_buffer/draw.slang")
-GLTF_PATH :: "examples/shared/assets/sponza.glb"
+COMPUTE_SHADER_PATH :: cstring("examples/5_helmet_cgltf/compute.slang")
+DRAW_SHADER_PATH :: cstring("examples/5_helmet_cgltf/draw.slang")
+GLTF_PATH :: "examples/shared/assets/helmet.glb"
 POSITION_HEAP :: "position"
 NORMAL_HEAP :: "normal"
 
-SPONZA_ORBIT_CENTER :: shared.Vec3{0.0, 1.3884, 0.0}
+HELMET_ORBIT_CENTER :: shared.Vec3{0.0, 0.0, 0.0}
 
+// Matches the Slang PrimitiveRecord layout (field order differs from Mesh_Descriptor).
 Primitive_Record :: struct {
 	first_index:   u32,
 	index_count:   u32,
@@ -25,11 +26,11 @@ Primitive_Record :: struct {
 	transform:     shared.Mat4,
 }
 
-sponza_camera_start :: proc() -> shared.Orbit_Camera_Start {
+helmet_camera_start :: proc() -> shared.Orbit_Camera_Start {
 	return shared.Orbit_Camera_Start {
-		yaw      = math.to_radians_f32(90.2),
-		pitch    = math.to_radians_f32(31.1),
-		distance = 16.73,
+		yaw      = math.to_radians_f32(35),
+		pitch    = math.to_radians_f32(22),
+		distance = 5.0,
 	}
 }
 
@@ -75,7 +76,7 @@ init_app :: proc(app: ^App) {
 
 	fmt.println("checkpoint: window create")
 	assert(
-		gfx.ez_gfx_window_create(main_window, "ez_gfx_api compute structured buffer", WIDTH, HEIGHT),
+		gfx.ez_gfx_window_create(main_window, "ez_gfx_api helmet cgltf", WIDTH, HEIGHT),
 	)
 	shared.orbit_camera_install_callbacks(main_window)
 	fmt.println("checkpoint: instance create")
@@ -121,8 +122,8 @@ example_init :: proc(app: ^App) {
 	app.mesh = mesh
 	app.mesh_loaded = true
 
-	app.orbit_center = SPONZA_ORBIT_CENTER
-	app.camera_start = sponza_camera_start()
+	app.orbit_center = HELMET_ORBIT_CENTER
+	app.camera_start = helmet_camera_start()
 	shared.orbit_camera_apply_start(&app.camera, app.orbit_center, app.camera_start)
 
 	vertex_stride := vk.DeviceSize(size_of([4]f32))
@@ -134,7 +135,7 @@ example_init :: proc(app: ^App) {
 		index_bytes,
 		vk.DeviceSize(size_of(u32)),
 		{.INDEX_BUFFER},
-		"example 3 index heap",
+		"example 5 index heap",
 	)
 	gfx.ez_gfx_vertex_manager_add_heap(
 		&app.ctx.vertex_manager,
@@ -232,7 +233,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		app.mesh.mesh_count,
-		"example 3 draw commands",
+		"example 5 draw commands",
 	)
 	if !indirect.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -278,7 +279,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		math.to_radians_f32(60),
 		shared.window_aspect(window),
 		0.1,
-		500.0,
+		100.0,
 	)
 	draw_push := Draw_Push_Constants {
 		mvp = shared.mat4_mul(projection, view),

@@ -12,11 +12,19 @@ EXAMPLE3_DRAW_SHADER_PATH :: cstring("examples/3_compute_structured_buffer/draw.
 EXAMPLE3_POSITION_HEAP :: "position"
 EXAMPLE3_NORMAL_HEAP :: "normal"
 
-Compute_Push_Constants :: struct {
-	instance_count: u32,
+Example3_Primitive_Record :: struct {
+	first_index:   u32,
+	index_count:   u32,
+	vertex_offset: u32,
+	normal_offset: u32,
+	transform:     shared.Mat4,
 }
 
-Draw_Push_Constants :: struct {
+Example3_Compute_Push_Constants :: struct {
+	primitive_count: u32,
+}
+
+Example3_Draw_Push_Constants :: struct {
 	mvp: shared.Mat4,
 }
 
@@ -27,8 +35,7 @@ Example3_Test_App :: struct {
 	draw_shader:           gfx.Ez_Gfx_Shader_Program,
 	compute_shader_loaded: bool,
 	draw_shader_loaded:    bool,
-	mesh_descriptor:       shared.Mesh_Descriptor,
-	mesh_instance:         shared.Mesh_Instance,
+	primitive_record:      Example3_Primitive_Record,
 	cube_index:            u32,
 	cube_index_len:        u32,
 	cube_vertex:           u32,
@@ -160,16 +167,12 @@ example3_test_init_resources :: proc(app: ^Example3_Test_App) -> bool {
 	)
 
 	identity := shared.mat4_identity()
-	app.mesh_descriptor = shared.Mesh_Descriptor {
-		index_count          = app.cube_index_len,
-		first_index          = app.cube_index,
-		vertex_offset        = app.cube_vertex,
-		normal_vertex_offset = app.cube_normal_vertex,
-		transform            = identity,
-	}
-	app.mesh_instance = shared.Mesh_Instance {
-		mesh_index = 0,
-		transform  = identity,
+	app.primitive_record = Example3_Primitive_Record {
+		index_count   = app.cube_index_len,
+		first_index   = app.cube_index,
+		vertex_offset = app.cube_vertex,
+		normal_offset = app.cube_normal_vertex,
+		transform     = identity,
 	}
 	return true
 }
@@ -200,31 +203,19 @@ example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
 		return false
 	}
 
-	mesh_descriptors := gfx.ez_gfx_render_acquire_structured_buffer(
-		shared.Mesh_Descriptor,
+	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
+		Example3_Primitive_Record,
 		1,
-		"mesh_descriptors",
+		"primitives",
 	)
-	if !mesh_descriptors.handle.ok {
+	if !primitives.handle.ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
-	mesh_descriptors.elements[0] = app.mesh_descriptor
-
-	mesh_instances := gfx.ez_gfx_render_acquire_structured_buffer(
-		shared.Mesh_Instance,
-		1,
-		"mesh_instances",
-	)
-	if !mesh_instances.handle.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return false
-	}
-	mesh_instances.elements[0] = app.mesh_instance
+	primitives.elements[0] = app.primitive_record
 
 	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding {
-		{name = "mesh_descriptors", structured = mesh_descriptors.handle},
-		{name = "mesh_instances", structured = mesh_instances.handle},
+		{name = "primitives", structured = primitives.handle},
 		{name = "draw_commands", indirect = indirect},
 	}
 	compute := gfx.ez_gfx_render_add_compute_pipeline(
@@ -233,7 +224,7 @@ example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
 		1,
 		1,
 		compute_bindings[:],
-		Compute_Push_Constants{instance_count = 1},
+		Example3_Compute_Push_Constants{primitive_count = 1},
 	)
 	if !compute.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -248,14 +239,13 @@ example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
 		100.0,
 	)
 	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
-		{name = "mesh_instances", structured = mesh_instances.handle},
-		{name = "mesh_descriptors", structured = mesh_descriptors.handle},
+		{name = "primitives", structured = primitives.handle},
 	}
 	draw := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
-		Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
+		Example3_Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
 	if !draw.ok {
 		_ = gfx.ez_gfx_finish_render()
