@@ -166,9 +166,10 @@ run :: proc(app: ^App) {
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		if !gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) {
-			fmt.eprintln("failed to save screenshot")
-		}
+		assert(
+			gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH),
+			"failed to save screenshot",
+		)
 	}
 }
 
@@ -193,21 +194,16 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		1,
 		"cube draw commands",
 	)
-	if !indirect.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(indirect.ok, "failed to acquire cube indirect buffer")
 
 	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
 		indirect,
 		nil,
+		{},
 		push_constants,
 	)
-	if !pipeline.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(pipeline.ok, "failed to add cube pipeline")
 
 	draw := vk.DrawIndexedIndirectCommand {
 		indexCount    = app.cube_index_len,
@@ -216,16 +212,16 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		vertexOffset  = i32(app.cube_vertex),
 		firstInstance = 0,
 	}
-	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(
+		gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw),
+		"failed to write cube draw",
+	)
+	assert(
+		gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1),
+		"failed to set cube draw count",
+	)
 
-	_ = gfx.ez_gfx_finish_render()
+	assert(gfx.ez_gfx_finish_render(), "failed to finish cube render")
 }
 
 cleanup :: proc(app: ^App) {

@@ -1,10 +1,7 @@
 # TODO
 
 - Fix present-ready semaphore lifetime before teardown; the test run reports `vkDestroySemaphore` destroying a semaphore while it is still in use by the graphics queue.
-- Size descriptor pools for the complete per-frame descriptor demand; the test run reports a storage-image pool with one descriptor serving allocations that request two.
 - Decouple graphics pipeline caching from descriptor set/pool ownership. `Ez_Gfx_Pipeline_Record` still owns both `VkPipeline` and descriptor resources; `render_target_manager.version` mitigates stale render-target image views on resize, but vertex heap rebinding and per-frame descriptor lifetimes are still tied to cached pipeline records.
-
-- Expand the pipeline cache key to include topology and rasterization options instead of only shader identity, color formats, depth format, and blend mode. Blend mode is now reflected from the `[BlendMode]` Slang attribute; topology and rasterization are still hardcoded.
 
 - Add hardware per-draw scissor support for ImGui and other UI renderers. Example 4 currently enforces clip rectangles in the fragment shader via `discard`, which is correct but less efficient than dynamic scissor state.
 
@@ -36,7 +33,7 @@
 
 - Replace remaining host-side waits for managed render target timeline dependencies with queue-side timeline waits so independent frame work can overlap more effectively. Graph node dependencies use queue-side timeline waits, but frame-start target clears and begin-render synchronization still call `ez_gfx_ctx_wait_timeline` on the CPU.
 
-- Expose per-pipeline or per-draw dynamic state controls, including viewport and scissor rectangles. Vulkan viewport/scissor dynamic state is already enabled internally, and render graph render areas now derive from active attachments, but callers cannot set these values.
+- Expose per-pipeline or per-draw viewport and scissor rectangle controls. Vulkan viewport/scissor dynamic state is already enabled internally, and render graph render areas now derive from active attachments, but callers cannot set these values.
 
 - Model render target declarations with richer Vulkan usage metadata instead of deriving usage only from color/depth kind. `Ez_Gfx_Shader_Target_Declaration` still records name, scale, kind, format, binding, and load behavior, while image usage is derived broadly from color/depth classification.
 
@@ -66,7 +63,3 @@
 - Make KTX2 optional at link time for static builds. Runtime activation is opt-in, but `src/texture_manager.odin` still imports `vendor/odin-ktx` and the binding/library is linked whenever the package is built.
 
 - Render-graph structured-buffer and indirect barriers use blanket source stage/access masks (`HOST|COMPUTE|VERTEX|FRAGMENT|DRAW_INDIRECT`) before every node. Replace with tracked node-to-node hazard metadata.
-
-- Go through examples and replace the failing checks with returns into asserts.
-
-- Add support for anisotropic filtering

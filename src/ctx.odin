@@ -84,11 +84,13 @@ Ez_Gfx_Ctx :: struct {
 	indirect_manager:                     Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
 	structured_buffer_manager:            Ez_Gfx_Structured_Buffer_Manager,
 	render_target_manager:                Ez_Gfx_Render_Target_Manager,
+	max_sampler_anisotropy:               f32,
 	min_storage_buffer_offset_alignment:  vk.DeviceSize,
 	enable_validation:                    bool,
 	enable_debug:                         bool,
 	debug_utils_enabled:                  bool,
 	memory_priority_enabled:              bool,
+	sampler_anisotropy_enabled:            bool,
 	pageable_device_local_memory_enabled: bool,
 	present_mode_fifo_latest_enabled:     bool,
 	shared_presentable_image_enabled:     bool,
@@ -447,6 +449,10 @@ ez_gfx_ctx_device_supports_extension :: proc(
 ez_gfx_ctx_cache_device_limits :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	properties: vk.PhysicalDeviceProperties
 	vk.GetPhysicalDeviceProperties(ctx.physical_device, &properties)
+	ctx.max_sampler_anisotropy = properties.limits.maxSamplerAnisotropy
+	if ctx.max_sampler_anisotropy < 1.0 {
+		ctx.max_sampler_anisotropy = 1.0
+	}
 	ctx.min_storage_buffer_offset_alignment =
 		vk.DeviceSize(properties.limits.minStorageBufferOffsetAlignment)
 	return true
@@ -633,6 +639,7 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 			drawIndirectFirstInstance = true,
 			shaderInt64 = true,
 			vertexPipelineStoresAndAtomics = true,
+			samplerAnisotropy = b32(ctx.sampler_anisotropy_enabled),
 			fragmentStoresAndAtomics = true,
 		},
 	}
@@ -774,6 +781,12 @@ ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) 
 ez_gfx_ctx_enable_optional_device_features :: proc(ctx: ^Ez_Gfx_Ctx) {
 	ctx.memory_priority_enabled = false
 	ctx.pageable_device_local_memory_enabled = false
+	ctx.sampler_anisotropy_enabled = false
+	core_features := vk.PhysicalDeviceFeatures2 {
+		sType = .PHYSICAL_DEVICE_FEATURES_2,
+	}
+	vk.GetPhysicalDeviceFeatures2(ctx.physical_device, &core_features)
+	ctx.sampler_anisotropy_enabled = bool(core_features.features.samplerAnisotropy)
 
 	if !ez_gfx_ctx_device_supports_extension(
 		ctx.physical_device,

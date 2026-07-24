@@ -131,6 +131,7 @@ cube_push_constant_size_mismatch_fails_cleanly :: proc(t: ^testing.T) {
 		&app.shader,
 		indirect,
 		nil,
+		{},
 		Cube_Test_Bad_Push_Constants{},
 	)
 	testing.expect(t, !pipeline.ok, "push constant size mismatch unexpectedly succeeded")
@@ -263,6 +264,7 @@ cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
 		&app.shader,
 		indirect,
 		nil,
+		{},
 		push_constants,
 	)
 	if !pipeline.ok {

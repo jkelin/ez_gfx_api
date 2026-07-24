@@ -4,6 +4,7 @@ import "core:fmt"
 import vk "vendor:vulkan"
 
 EZ_GFX_MAX_PIPELINES :: 8
+EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS :: EZ_GFX_FRAMES_IN_FLIGHT * EZ_GFX_MAX_RENDER_PIPELINES
 EZ_GFX_MAX_PIPELINE_DESCRIPTOR_BINDINGS ::
 	EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS +
 	EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS +
@@ -22,9 +23,46 @@ Ez_Gfx_Pipeline_Record :: struct {
 	pipeline:              vk.Pipeline,
 	descriptor_set_layout: vk.DescriptorSetLayout,
 	descriptor_pool:       vk.DescriptorPool,
-	descriptor_sets:       [EZ_GFX_FRAMES_IN_FLIGHT]vk.DescriptorSet,
-	descriptor_versions:   [EZ_GFX_FRAMES_IN_FLIGHT]u64,
+	descriptor_sets:       [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS]vk.DescriptorSet,
+	descriptor_versions:   [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS]u64,
 	last_used:             u64,
+}
+Ez_Gfx_Primitive_Type :: enum u8 {
+	Triangle_List,
+	Point_List,
+	Line_List,
+	Line_Strip,
+	Triangle_Strip,
+	Triangle_Fan,
+}
+
+// Zero-value state disables culling, uses counter-clockwise front faces,
+// triangle-list topology, and preserves shader-provided blend metadata.
+Ez_Gfx_Render_Dynamic_State :: struct {
+	cull_mode:      vk.CullModeFlags,
+	front_face:     vk.FrontFace,
+	primitive_type: Ez_Gfx_Primitive_Type,
+	blend_mode:     Ez_Gfx_Blend_Mode,
+}
+
+ez_gfx_render_dynamic_state_to_vk_topology :: proc(
+	primitive_type: Ez_Gfx_Primitive_Type,
+) -> vk.PrimitiveTopology {
+	switch primitive_type {
+	case .Triangle_List:
+		return .TRIANGLE_LIST
+	case .Point_List:
+		return .POINT_LIST
+	case .Line_List:
+		return .LINE_LIST
+	case .Line_Strip:
+		return .LINE_STRIP
+	case .Triangle_Strip:
+		return .TRIANGLE_STRIP
+	case .Triangle_Fan:
+		return .TRIANGLE_FAN
+	}
+	panic("invalid Ez_Gfx_Primitive_Type")
 }
 
 Ez_Gfx_Pipeline_Manager :: struct {
@@ -35,6 +73,7 @@ Ez_Gfx_Pipeline_Manager :: struct {
 
 Ez_Gfx_Compute_Pipeline_Descriptor :: struct {
 	pipeline:           ^Ez_Gfx_Pipeline_Record,
+	descriptor_set_index: int,
 	dispatch_x:         u32,
 	dispatch_y:         u32,
 	dispatch_z:         u32,
@@ -129,11 +168,11 @@ ez_gfx_pipeline_depth_format_equal :: proc(
 	return record.has_depth == has_depth && record.depth_format == format
 }
 
-// TODO: Add topology and rasterization options to the cache key.
 ez_gfx_pipeline_manager_get :: proc(
 	manager: ^Ez_Gfx_Pipeline_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
 	swapchain_format: vk.Format,
+	blend_mode: Ez_Gfx_Blend_Mode,
 ) -> (
 	record: ^Ez_Gfx_Pipeline_Record,
 	ok: bool,
@@ -153,7 +192,7 @@ ez_gfx_pipeline_manager_get :: proc(
 		candidate := &manager.records[i]
 		if candidate.kind == .Graphics &&
 		   candidate.shader_identity == shader.identity &&
-		   candidate.blend_mode == shader.blend_mode &&
+		   candidate.blend_mode == blend_mode &&
 		   ez_gfx_pipeline_color_formats_equal(candidate, color_formats, color_format_count) &&
 		   ez_gfx_pipeline_depth_format_equal(candidate, depth_format, has_depth) {
 			candidate.last_used = manager.clock
@@ -179,7 +218,7 @@ ez_gfx_pipeline_manager_get :: proc(
 	slot.kind = .Graphics
 	slot.shader_identity = shader.identity
 	slot.shader = shader
-	slot.blend_mode = shader.blend_mode
+	slot.blend_mode = blend_mode
 	slot.color_formats = color_formats
 	slot.color_format_count = color_format_count
 	slot.depth_format = depth_format
@@ -287,7 +326,13 @@ ez_gfx_pipeline_record_create :: proc(
 		"ez_gfx pipeline layout",
 	)
 
-	dynamic_states := [?]vk.DynamicState{.VIEWPORT, .SCISSOR}
+	dynamic_states := [?]vk.DynamicState {
+		.VIEWPORT,
+		.SCISSOR,
+		.CULL_MODE,
+		.FRONT_FACE,
+		.PRIMITIVE_TOPOLOGY,
+	}
 	dynamic_state := vk.PipelineDynamicStateCreateInfo {
 		sType             = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 		dynamicStateCount = len(dynamic_states),
@@ -373,6 +418,8 @@ ez_gfx_pipeline_record_create :: proc(
 		pRasterizationState = &{
 			sType = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 			polygonMode = .FILL,
+			cullMode = {},
+			frontFace = .COUNTER_CLOCKWISE,
 			lineWidth = 1.0,
 		},
 		pMultisampleState   = &{
@@ -554,25 +601,25 @@ ez_gfx_pipeline_create_descriptors :: proc(
 	if structured_descriptor_count > 0 {
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
 			type            = .STORAGE_BUFFER,
-			descriptorCount = u32(structured_descriptor_count * EZ_GFX_FRAMES_IN_FLIGHT),
+			descriptorCount = u32(structured_descriptor_count * EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS),
 		}
 		pool_size_count += 1
 	}
 	if shader.target_declaration_count > 0 {
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
 			type            = .COMBINED_IMAGE_SAMPLER,
-			descriptorCount = u32(shader.target_declaration_count * EZ_GFX_FRAMES_IN_FLIGHT),
+			descriptorCount = u32(shader.target_declaration_count * EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS),
 		}
 		pool_size_count += 1
 		pool_sizes[pool_size_count] = vk.DescriptorPoolSize {
 			type            = .STORAGE_IMAGE,
-			descriptorCount = u32(shader.target_declaration_count),
+			descriptorCount = u32(shader.target_declaration_count * EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS),
 		}
 		pool_size_count += 1
 	}
 	pool_info := vk.DescriptorPoolCreateInfo {
 		sType         = .DESCRIPTOR_POOL_CREATE_INFO,
-		maxSets       = EZ_GFX_FRAMES_IN_FLIGHT,
+		maxSets       = EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS,
 		poolSizeCount = u32(pool_size_count),
 		pPoolSizes    = &pool_sizes[0],
 	}
@@ -587,21 +634,21 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		"ez_gfx descriptor pool",
 	)
 
-	set_layouts: [EZ_GFX_FRAMES_IN_FLIGHT]vk.DescriptorSetLayout
-	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
+	set_layouts: [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS]vk.DescriptorSetLayout
+	for i in 0 ..< EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS {
 		set_layouts[i] = record.descriptor_set_layout
 	}
 	allocate_info := vk.DescriptorSetAllocateInfo {
 		sType              = .DESCRIPTOR_SET_ALLOCATE_INFO,
 		descriptorPool     = record.descriptor_pool,
-		descriptorSetCount = EZ_GFX_FRAMES_IN_FLIGHT,
+		descriptorSetCount = EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS,
 		pSetLayouts        = &set_layouts[0],
 	}
 	if vk.AllocateDescriptorSets(ctx.device, &allocate_info, &record.descriptor_sets[0]) != .SUCCESS {
 		fmt.eprintln("failed to allocate descriptor set")
 		return false
 	}
-	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
+	for i in 0 ..< EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS {
 		ez_gfx_debug_set_object_name(
 			ctx,
 			.DESCRIPTOR_SET,
@@ -617,13 +664,12 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
-	frame_slot: u32,
+	descriptor_set_index: int,
 	node: ^Ez_Gfx_Render_Graph_Node,
 ) -> bool {
-	frame_index := int(frame_slot)
 	version := ez_gfx_pipeline_descriptor_version(ctx, shader, node)
-	if record.descriptor_sets[frame_index] == vk.DescriptorSet(0) {
-		record.descriptor_versions[frame_index] = version
+	if record.descriptor_sets[descriptor_set_index] == vk.DescriptorSet(0) {
+		record.descriptor_versions[descriptor_set_index] = version
 		return true
 	}
 
@@ -651,7 +697,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
-			dstSet          = record.descriptor_sets[frame_index],
+			dstSet          = record.descriptor_sets[descriptor_set_index],
 			dstBinding      = binding_info.binding,
 			descriptorCount = 1,
 			descriptorType  = .STORAGE_BUFFER,
@@ -681,7 +727,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
-			dstSet          = record.descriptor_sets[frame_index],
+			dstSet          = record.descriptor_sets[descriptor_set_index],
 			dstBinding      = binding_info.binding,
 			descriptorCount = 1,
 			descriptorType  = .STORAGE_BUFFER,
@@ -708,7 +754,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
-			dstSet          = record.descriptor_sets[frame_index],
+			dstSet          = record.descriptor_sets[descriptor_set_index],
 			dstBinding      = target_info.binding,
 			descriptorCount = 1,
 			descriptorType  = ez_gfx_pipeline_target_descriptor_type(target_info),
@@ -720,7 +766,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	if write_count > 0 {
 		vk.UpdateDescriptorSets(ctx.device, u32(write_count), &writes[0], 0, nil)
 	}
-	record.descriptor_versions[frame_index] = version
+	record.descriptor_versions[descriptor_set_index] = version
 	return true
 }
 

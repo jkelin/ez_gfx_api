@@ -924,7 +924,13 @@ ez_gfx_render_graph_execute_node :: proc(
 	descriptor := &node.descriptor
 	if descriptor.ok {
 		vk.CmdBindPipeline(command_buffer, .GRAPHICS, descriptor.pipeline.pipeline)
-		descriptor_set := descriptor.pipeline.descriptor_sets[render.frame_slot]
+		vk.CmdSetCullMode(command_buffer, descriptor.dynamic_state.cull_mode)
+		vk.CmdSetFrontFace(command_buffer, descriptor.dynamic_state.front_face)
+		vk.CmdSetPrimitiveTopology(
+			command_buffer,
+			ez_gfx_render_dynamic_state_to_vk_topology(descriptor.dynamic_state.primitive_type),
+		)
+		descriptor_set := descriptor.pipeline.descriptor_sets[descriptor.descriptor_set_index]
 		if descriptor_set != vk.DescriptorSet(0) {
 			vk.CmdBindDescriptorSets(
 				command_buffer,
@@ -984,7 +990,7 @@ ez_gfx_render_graph_execute_compute_node :: proc(
 	if !descriptor.ok do return true
 
 	vk.CmdBindPipeline(command_buffer, .COMPUTE, descriptor.pipeline.pipeline)
-	descriptor_set := descriptor.pipeline.descriptor_sets[render.frame_slot]
+	descriptor_set := descriptor.pipeline.descriptor_sets[descriptor.descriptor_set_index]
 	if descriptor_set != vk.DescriptorSet(0) {
 		vk.CmdBindDescriptorSets(
 			command_buffer,

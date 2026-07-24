@@ -46,6 +46,20 @@ Triangle_App :: struct {
 }
 
 @(test)
+render_dynamic_state_zero_defaults :: proc(t: ^testing.T) {
+	state: gfx.Ez_Gfx_Render_Dynamic_State
+	testing.expect(t, state.cull_mode == vk.CullModeFlags{}, "dynamic state should default to no culling")
+	testing.expect_value(t, state.front_face, vk.FrontFace.COUNTER_CLOCKWISE)
+	testing.expect_value(t, state.primitive_type, gfx.Ez_Gfx_Primitive_Type.Triangle_List)
+	testing.expect_value(t, state.blend_mode, gfx.Ez_Gfx_Blend_Mode.None)
+	testing.expect_value(
+		t,
+		gfx.ez_gfx_render_dynamic_state_to_vk_topology(state.primitive_type),
+		vk.PrimitiveTopology.TRIANGLE_LIST,
+	)
+}
+
+@(test)
 triangle_renders_without_validation_errors :: proc(t: ^testing.T) {
 	app: Triangle_App
 	if !testing.expect(t, triangle_init_app(&app), "triangle test failed during init") {

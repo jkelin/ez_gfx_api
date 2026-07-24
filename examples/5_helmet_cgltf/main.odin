@@ -222,9 +222,10 @@ run :: proc(app: ^App) {
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		if !gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) {
-			fmt.eprintln("failed to save screenshot")
-		}
+		assert(
+			gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH),
+			"failed to save screenshot",
+		)
 	}
 }
 
@@ -236,20 +237,14 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		app.mesh.mesh_count,
 		"example 5 draw commands",
 	)
-	if !indirect.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(indirect.ok, "failed to acquire example 5 indirect buffer")
 
 	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
 		Primitive_Record,
 		u32(len(app.primitive_records)),
 		"primitives",
 	)
-	if !primitives.handle.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(primitives.handle.ok, "failed to acquire example 5 primitive buffer")
 	for record, i in app.primitive_records {
 		primitives.elements[i] = record
 	}
@@ -270,14 +265,11 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		compute_bindings[:],
 		compute_push,
 	)
-	if !compute.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, app.mesh.mesh_count) {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(compute.ok, "failed to add example 5 compute pipeline")
+	assert(
+		gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, app.mesh.mesh_count),
+		"failed to set example 5 draw count",
+	)
 
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(
@@ -296,14 +288,12 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
+		{},
 		draw_push,
 	)
-	if !draw.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(draw.ok, "failed to add example 5 draw pipeline")
 
-	_ = gfx.ez_gfx_finish_render()
+	assert(gfx.ez_gfx_finish_render(), "failed to finish example 5 render")
 }
 
 cleanup :: proc(app: ^App) {

@@ -29,6 +29,8 @@ Ez_Gfx_Indirect_Buffer_Handle :: struct {
 
 Ez_Gfx_Vertex_Pipeline_Descriptor :: struct {
 	pipeline:           ^Ez_Gfx_Pipeline_Record,
+	descriptor_set_index: int,
+	dynamic_state:      Ez_Gfx_Render_Dynamic_State,
 	indirect_buffer:    ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
 	indirect_stride:    vk.DeviceSize,
 	indirect_count:     u32,

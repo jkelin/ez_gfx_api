@@ -249,6 +249,7 @@ example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
+		{},
 		Example3_Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
 	if !draw.ok {

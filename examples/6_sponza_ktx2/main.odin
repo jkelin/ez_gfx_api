@@ -34,6 +34,7 @@ Primitive_Record :: struct {
 	transform:     shared.Mat4,
 }
 
+
 Compute_Push_Constants :: struct {
 	primitive_count: u32,
 }
@@ -227,6 +228,7 @@ load_sponza_textures :: proc(app: ^App) {
 				generate_mips      = true,
 				min_filter         = .Linear,
 				mag_filter         = .Linear,
+				max_anisotropy    = 16.0,
 				address_mode_u     = .Repeat,
 				address_mode_v     = .Repeat,
 				debug_label        = "sponza base color KTX2",
@@ -251,6 +253,7 @@ mesh_descriptor_to_primitive_record :: proc(
 		transform     = descriptor.transform,
 	}
 }
+
 
 upload_sponza_primitives :: proc(
 	manager: ^gfx.Ez_Gfx_Vertex_Manager,
@@ -322,57 +325,15 @@ run :: proc(app: ^App) {
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		if !gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) {
-			fmt.eprintln("failed to save screenshot")
-		}
+		assert(
+			gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH),
+			"failed to save screenshot",
+		)
 	}
 }
 
 draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	if !gfx.ez_gfx_begin_render(window) do return
-
-	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
-		vk.DrawIndexedIndirectCommand,
-		app.mesh.mesh_count,
-		"example 6 draw commands",
-	)
-	if !indirect.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
-
-	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
-		Primitive_Record,
-		u32(len(app.primitive_records)),
-		"primitives",
-	)
-	if !primitives.handle.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
-	for record, i in app.primitive_records {
-		primitives.elements[i] = record
-	}
-	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding {
-		{name = "primitives", structured = primitives.handle},
-		{name = "draw_commands", indirect = indirect},
-	}
-	compute := gfx.ez_gfx_render_add_compute_pipeline(
-		&app.compute_shader,
-		app.mesh.mesh_count,
-		1,
-		1,
-		compute_bindings[:],
-		Compute_Push_Constants{primitive_count = app.mesh.mesh_count},
-	)
-	if !compute.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, app.mesh.mesh_count) {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
 
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(
@@ -381,21 +342,59 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		SPONZA_NEAR_PLANE,
 		100.0,
 	)
+	primitive_count := u32(len(app.primitive_records))
+	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+		vk.DrawIndexedIndirectCommand,
+		primitive_count,
+		"example 6 draw commands",
+	)
+	assert(indirect.ok, "failed to acquire Sponza indirect buffer")
+
+	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
+		Primitive_Record,
+		primitive_count,
+		"example 6 primitives",
+	)
+	assert(primitives.handle.ok, "failed to acquire Sponza primitive buffer")
+	for record, i in app.primitive_records {
+		primitives.elements[i] = record
+	}
+
+	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding {
+		{name = "primitives", structured = primitives.handle},
+		{name = "draw_commands", indirect = indirect},
+	}
+	compute := gfx.ez_gfx_render_add_compute_pipeline(
+		&app.compute_shader,
+		primitive_count,
+		1,
+		1,
+		compute_bindings[:],
+		Compute_Push_Constants{primitive_count = primitive_count},
+	)
+	assert(compute.ok, "failed to add Sponza compute pipeline")
+	assert(
+		gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, primitive_count),
+		"failed to set Sponza indirect draw count",
+	)
+
 	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
 		{name = "primitives", structured = primitives.handle},
+	}
+	dynamic_state := gfx.Ez_Gfx_Render_Dynamic_State{
+		front_face = .COUNTER_CLOCKWISE,
+		cull_mode = {.BACK},
 	}
 	draw := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
+		dynamic_state,
 		Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
-	if !draw.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(draw.ok, "failed to add Sponza draw pipeline")
 
-	_ = gfx.ez_gfx_finish_render()
+	assert(gfx.ez_gfx_finish_render(), "failed to finish Sponza render")
 }
 
 cleanup :: proc(app: ^App) {
@@ -413,7 +412,6 @@ cleanup :: proc(app: ^App) {
 	}
 	if app.primitive_records != nil {
 		delete(app.primitive_records)
-		app.primitive_records = nil
 	}
 	if app.mesh_loaded {
 		shared.gltf_loaded_mesh_destroy(&app.mesh)

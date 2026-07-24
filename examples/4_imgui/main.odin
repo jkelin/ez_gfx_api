@@ -212,9 +212,10 @@ run :: proc(app: ^App) {
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		if !gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) {
-			fmt.eprintln("failed to save screenshot")
-		}
+		assert(
+			gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH),
+			"failed to save screenshot",
+		)
 	}
 }
 
@@ -236,7 +237,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	draw_data := im.get_draw_data()
 	if draw_data == nil || !draw_data.valid {
 		if !gfx.ez_gfx_begin_render(window) do return
-		_ = gfx.ez_gfx_finish_render()
+		assert(gfx.ez_gfx_finish_render(), "failed to finish ImGui render")
 		return
 	}
 
@@ -244,7 +245,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 
 	if draw_data.cmd_lists_count == 0 {
 		if !gfx.ez_gfx_begin_render(window) do return
-		_ = gfx.ez_gfx_finish_render()
+		assert(gfx.ez_gfx_finish_render(), "failed to finish ImGui render")
 		return
 	}
 
@@ -262,7 +263,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	}
 	if total_cmds == 0 {
 		if !gfx.ez_gfx_begin_render(window) do return
-		_ = gfx.ez_gfx_finish_render()
+		assert(gfx.ez_gfx_finish_render(), "failed to finish ImGui render")
 		return
 	}
 
@@ -333,10 +334,10 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		u32(total_cmds),
 		"imgui draw commands",
 	)
-	if !vertex_buffer.handle.ok || !index_buffer.handle.ok || !command_buffer.handle.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(
+		vertex_buffer.handle.ok && index_buffer.handle.ok && command_buffer.handle.ok,
+		"failed to acquire ImGui buffers",
+	)
 
 	mem.copy(vertex_buffer.elements, raw_data(vertices), len(vertices) * size_of(ImGui_Vertex))
 	mem.copy(index_buffer.elements, raw_data(indices), len(indices) * size_of(u32))
@@ -351,10 +352,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		u32(total_cmds),
 		"imgui indirect draws",
 	)
-	if !indirect.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(indirect.ok, "failed to acquire ImGui indirect buffer")
 
 	bindings := [3]gfx.Ez_Gfx_Render_Binding {
 		{name = "imgui_vertices", structured = vertex_buffer.handle},
@@ -372,12 +370,10 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		&app.shader,
 		indirect,
 		bindings[:],
+		{blend_mode = .Alpha},
 		push,
 	)
-	if !pipeline.ok {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(pipeline.ok, "failed to add ImGui pipeline")
 
 	active_cmd := 0
 	for list_index in 0 ..< int(draw_data.cmd_lists_count) {
@@ -393,19 +389,19 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 				vertexOffset  = 0,
 				firstInstance = u32(active_cmd),
 			}
-			if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, u32(active_cmd), draw) {
-				_ = gfx.ez_gfx_finish_render()
-				return
-			}
+			assert(
+				gfx.ez_gfx_indirect_buffer_write_draw(&indirect, u32(active_cmd), draw),
+				"failed to write ImGui draw",
+			)
 			active_cmd += 1
 		}
 	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, u32(active_cmd)) {
-		_ = gfx.ez_gfx_finish_render()
-		return
-	}
+	assert(
+		gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, u32(active_cmd)),
+		"failed to set ImGui draw count",
+	)
 
-	_ = gfx.ez_gfx_finish_render()
+	assert(gfx.ez_gfx_finish_render(), "failed to finish ImGui render")
 }
 
 cleanup :: proc(app: ^App) {

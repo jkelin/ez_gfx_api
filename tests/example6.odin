@@ -30,6 +30,7 @@ Example6_Primitive_Record :: struct {
 	transform:     shared.Mat4,
 }
 
+
 Example6_Compute_Push_Constants :: struct {
 	primitive_count: u32,
 }
@@ -247,6 +248,7 @@ example6_test_load_textures :: proc(app: ^Example6_Test_App) -> bool {
 				generate_mips      = true,
 				min_filter         = .Linear,
 				mag_filter         = .Linear,
+				max_anisotropy    = 16.0,
 				address_mode_u     = .Repeat,
 				address_mode_v     = .Repeat,
 				debug_label        = "example 6 base color KTX2",
@@ -273,6 +275,7 @@ example6_descriptor_to_record :: proc(
 		transform     = descriptor.transform,
 	}
 }
+
 
 example6_upload_gltf_primitives :: proc(
 	manager: ^gfx.Ez_Gfx_Vertex_Manager,
@@ -315,9 +318,17 @@ example6_upload_gltf_primitives :: proc(
 example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 	if !gfx.ez_gfx_begin_render(&app.window) do return false
 
+	view := shared.orbit_camera_view(&app.camera)
+	projection := shared.perspective_vk(
+		math.to_radians_f32(60),
+		shared.window_aspect(&app.window),
+		EXAMPLE6_NEAR_PLANE,
+		100.0,
+	)
+	primitive_count := u32(len(app.primitive_records))
 	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
-		app.mesh.mesh_count,
+		primitive_count,
 		"example 6 test draw commands",
 	)
 	if !indirect.ok {
@@ -327,8 +338,8 @@ example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 
 	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
 		Example6_Primitive_Record,
-		u32(len(app.primitive_records)),
-		"primitives",
+		primitive_count,
+		"example 6 test primitives",
 	)
 	if !primitives.handle.ok {
 		_ = gfx.ez_gfx_finish_render()
@@ -344,35 +355,33 @@ example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 	}
 	compute := gfx.ez_gfx_render_add_compute_pipeline(
 		&app.compute_shader,
-		app.mesh.mesh_count,
+		primitive_count,
 		1,
 		1,
 		compute_bindings[:],
-		Example6_Compute_Push_Constants{primitive_count = app.mesh.mesh_count},
+		Example6_Compute_Push_Constants{primitive_count = primitive_count},
 	)
 	if !compute.ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, app.mesh.mesh_count) {
+	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, primitive_count) {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
 
-	view := shared.orbit_camera_view(&app.camera)
-	projection := shared.perspective_vk(
-		math.to_radians_f32(60),
-		shared.window_aspect(&app.window),
-		EXAMPLE6_NEAR_PLANE,
-		100.0,
-	)
 	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
 		{name = "primitives", structured = primitives.handle},
+	}
+	dynamic_state := gfx.Ez_Gfx_Render_Dynamic_State{
+		front_face = .COUNTER_CLOCKWISE,
+		cull_mode = {.BACK},
 	}
 	draw := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
+		dynamic_state,
 		Example6_Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
 	if !draw.ok {
@@ -398,7 +407,6 @@ example6_test_cleanup :: proc(app: ^Example6_Test_App) {
 	}
 	if app.primitive_records != nil {
 		delete(app.primitive_records)
-		app.primitive_records = nil
 	}
 	if app.mesh_loaded {
 		shared.gltf_loaded_mesh_destroy(&app.mesh)

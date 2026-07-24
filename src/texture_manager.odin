@@ -67,6 +67,7 @@ Ez_Gfx_Load_Texture_Desc :: struct {
 	generate_mips:      bool,
 	min_filter:         Ez_Gfx_Texture_Filter,
 	mag_filter:         Ez_Gfx_Texture_Filter,
+	max_anisotropy:     f32,
 	address_mode_u:     Ez_Gfx_Texture_Address_Mode,
 	address_mode_v:     Ez_Gfx_Texture_Address_Mode,
 	address_mode_w:     Ez_Gfx_Texture_Address_Mode,
@@ -1640,11 +1641,20 @@ ez_gfx_texture_create_view_and_sampler :: proc(
 	}
 	filter_min := ez_gfx_texture_filter_to_vk(desc.min_filter)
 	filter_mag := ez_gfx_texture_filter_to_vk(desc.mag_filter)
+	anisotropy_enabled := desc.max_anisotropy > 1.0 &&
+		ctx.sampler_anisotropy_enabled &&
+		ctx.max_sampler_anisotropy > 1.0
+	max_anisotropy: f32 = 1.0
+	if anisotropy_enabled {
+		max_anisotropy = min(max(desc.max_anisotropy, 1.0), ctx.max_sampler_anisotropy)
+	}
 	sampler_info := vk.SamplerCreateInfo {
 		sType = .SAMPLER_CREATE_INFO,
 		magFilter = filter_mag,
 		minFilter = filter_min,
 		mipmapMode = desc.min_filter == .Linear ? vk.SamplerMipmapMode.LINEAR : vk.SamplerMipmapMode.NEAREST,
+		anisotropyEnable = b32(anisotropy_enabled),
+		maxAnisotropy  = max_anisotropy,
 		addressModeU = ez_gfx_texture_address_mode_to_vk(desc.address_mode_u),
 		addressModeV = ez_gfx_texture_address_mode_to_vk(desc.address_mode_v),
 		addressModeW = ez_gfx_texture_address_mode_to_vk(desc.address_mode_w),

@@ -112,7 +112,8 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 
 ez_gfx_render_add_vertex_pipeline :: proc {
 	ez_gfx_render_add_vertex_pipeline_without_push_constants,
-	ez_gfx_render_add_vertex_pipeline_with_push_constants,
+	ez_gfx_render_add_vertex_pipeline_with_dynamic_state_without_push_constants,
+	ez_gfx_render_add_vertex_pipeline_with_dynamic_state_and_push_constants,
 }
 
 ez_gfx_render_add_compute_pipeline :: proc {
@@ -160,15 +161,32 @@ ez_gfx_render_add_vertex_pipeline_without_push_constants :: proc(
 		shader,
 		indirect,
 		bindings,
+		{},
+		nil,
+		0,
+	)
+}
+ez_gfx_render_add_vertex_pipeline_with_dynamic_state_without_push_constants :: proc(
+	shader: ^Ez_Gfx_Shader_Program,
+	indirect: Ez_Gfx_Indirect_Buffer_Handle,
+	bindings: []Ez_Gfx_Render_Binding,
+	dynamic_state: Ez_Gfx_Render_Dynamic_State,
+) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
+	return ez_gfx_render_add_vertex_pipeline_impl(
+		shader,
+		indirect,
+		bindings,
+		dynamic_state,
 		nil,
 		0,
 	)
 }
 
-ez_gfx_render_add_vertex_pipeline_with_push_constants :: proc(
+ez_gfx_render_add_vertex_pipeline_with_dynamic_state_and_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
 	bindings: []Ez_Gfx_Render_Binding,
+	dynamic_state: Ez_Gfx_Render_Dynamic_State,
 	push_constants: $T,
 ) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
 	data := push_constants
@@ -176,6 +194,7 @@ ez_gfx_render_add_vertex_pipeline_with_push_constants :: proc(
 		shader,
 		indirect,
 		bindings,
+		dynamic_state,
 		rawptr(&data),
 		u32(size_of(T)),
 	)
@@ -185,6 +204,7 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
 	bindings: []Ez_Gfx_Render_Binding,
+	dynamic_state: Ez_Gfx_Render_Dynamic_State,
 	push_constant_data: rawptr,
 	push_constant_size: u32,
 ) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
@@ -222,15 +242,24 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 	) {
 		return {}
 	}
+	blend_mode := shader.blend_mode
+	if dynamic_state.blend_mode != .None {
+		// The zero-value blend mode preserves shader metadata; callers can override it explicitly.
+		blend_mode = dynamic_state.blend_mode
+	}
 	pipeline, pipeline_ok := ez_gfx_pipeline_manager_get(
 		&render.ctx.pipeline_manager,
 		shader,
 		render.window.swapchain.format,
+		blend_mode,
 	)
 	if !pipeline_ok do return {}
 
+	descriptor_set_index := int(render.frame_slot) * EZ_GFX_MAX_RENDER_PIPELINES + render.pipeline_count
 	descriptor := Ez_Gfx_Vertex_Pipeline_Descriptor {
 		pipeline           = pipeline,
+		descriptor_set_index = descriptor_set_index,
+		dynamic_state      = dynamic_state,
 		indirect_buffer    = indirect.buffer,
 		indirect_stride    = indirect.stride,
 		indirect_count     = 0,
@@ -241,7 +270,6 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 		// Push constants are copied here so callers can pass frame-local structs safely.
 		mem.copy(&descriptor.push_constant_data[0], push_constant_data, int(push_constant_size))
 	}
-	render.pipeline_count += 1
 	if !ez_gfx_render_graph_add_vertex_pipeline(
 		&render.graph,
 		descriptor,
@@ -253,13 +281,20 @@ ez_gfx_render_add_vertex_pipeline_impl :: proc(
 		return {}
 	}
 	node := &render.graph.nodes[render.graph.node_count - 1]
-	frame_index := int(render.frame_slot)
 	version := ez_gfx_pipeline_descriptor_version(render.ctx, shader, node)
-	if pipeline.descriptor_versions[frame_index] != version {
-		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot, node) {
+	if pipeline.descriptor_versions[descriptor.descriptor_set_index] != version {
+		if !ez_gfx_pipeline_update_descriptors(
+			render.ctx,
+			pipeline,
+			shader,
+			descriptor.descriptor_set_index,
+			node,
+		) {
+			render.graph.node_count -= 1
 			return {}
 		}
 	}
+	render.pipeline_count += 1
 	return descriptor
 }
 
@@ -340,8 +375,10 @@ ez_gfx_render_add_compute_pipeline_impl :: proc(
 	)
 	if !pipeline_ok do return {}
 
+	descriptor_set_index := int(render.frame_slot) * EZ_GFX_MAX_RENDER_PIPELINES + render.pipeline_count
 	descriptor := Ez_Gfx_Compute_Pipeline_Descriptor {
 		pipeline           = pipeline,
+		descriptor_set_index = descriptor_set_index,
 		dispatch_x         = dispatch_x,
 		dispatch_y         = dispatch_y,
 		dispatch_z         = dispatch_z,
@@ -351,18 +388,24 @@ ez_gfx_render_add_compute_pipeline_impl :: proc(
 	if push_constant_size > 0 {
 		mem.copy(&descriptor.push_constant_data[0], push_constant_data, int(push_constant_size))
 	}
-	render.pipeline_count += 1
 	if !ez_gfx_render_graph_add_compute_pipeline(&render.graph, descriptor, shader, render, bindings) {
 		return {}
 	}
 	node := &render.graph.nodes[render.graph.node_count - 1]
-	frame_index := int(render.frame_slot)
 	version := ez_gfx_pipeline_descriptor_version(render.ctx, shader, node)
-	if pipeline.descriptor_versions[frame_index] != version {
-		if !ez_gfx_pipeline_update_descriptors(render.ctx, pipeline, shader, render.frame_slot, node) {
+	if pipeline.descriptor_versions[descriptor.descriptor_set_index] != version {
+		if !ez_gfx_pipeline_update_descriptors(
+			render.ctx,
+			pipeline,
+			shader,
+			descriptor.descriptor_set_index,
+			node,
+		) {
+			render.graph.node_count -= 1
 			return {}
 		}
 	}
+	render.pipeline_count += 1
 	return descriptor
 }
 
