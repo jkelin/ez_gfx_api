@@ -39,6 +39,7 @@ apply_vendor_patches:
     done < <(find "$patch_dir" -maxdepth 1 -type f -name '*.patch' -print0 | sort -z)
   done
 
+[env("VK_LOADER_LAYERS_DISABLE", "GalaxyOverlayVkLayer*")]
 test: copy_slang_dll
   odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
 
@@ -70,6 +71,7 @@ build_example_5: (build_example "5_helmet_cgltf" "example_5")
 
 build_example_6: (build_example "6_sponza_ktx2" "example_6")
 
+[env("VK_LOADER_LAYERS_DISABLE", "GalaxyOverlayVkLayer*")]
 example folder_name name: copy_slang_dll
   odin run examples/{{ folder_name }} -keep-executable -out:out/{{ name }}.exe
 
@@ -84,6 +86,7 @@ example_5: (example "5_helmet_cgltf" "example_5")
 
 example_6: (example "6_sponza_ktx2" "example_6")
 
+[env("VK_LOADER_LAYERS_DISABLE", "GalaxyOverlayVkLayer*")]
 [env("EZ_GFX_MAX_SECONDS", "2")]
 [env("EZ_GFX_SCREENSHOT", "1")]
 example_agent folder_name name: copy_slang_dll
