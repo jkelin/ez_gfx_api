@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define EZ_GFX_ABI_VERSION 5u
+#define EZ_GFX_ABI_VERSION 7u
 
 #if defined(__clang__)
 #  if __has_attribute(access)
@@ -32,25 +32,29 @@ extern "C" {
 #endif
 
 /**
- * EzGfxContext: Opaque Vulkan context owned by the caller.
+ * EzGfxContext: Opaque packed u64 context handle (slot+1/generation in bits 0-39).
  */
 typedef uint64_t EzGfxContext;
 /**
- * EzGfxSurface: Opaque surface whose parent window remains caller-owned.
+ * EzGfxSurface: Opaque packed u64 surface handle; child bits index the context identity arena and resolve only as Surface.
  */
 typedef uint64_t EzGfxSurface;
 /**
- * EzGfxShader: Opaque compiled shader program.
+ * EzGfxShader: Opaque packed u64 shader handle; child bits index the context identity arena and resolve only as Shader.
  */
 typedef uint64_t EzGfxShader;
 /**
- * EzGfxIndirectBuffer: Opaque indirect draw buffer acquired during a render.
+ * EzGfxIndirectBuffer: Opaque packed u64 indirect-buffer handle; child bits index the context identity arena and resolve only as Indirect.
  */
 typedef uint64_t EzGfxIndirectBuffer;
 /**
- * EzGfxStructuredBuffer: Opaque structured buffer view acquired during a render.
+ * EzGfxStructuredBuffer: Opaque packed u64 structured-buffer handle; child bits index the context identity arena and resolve only as Structured.
  */
 typedef uint64_t EzGfxStructuredBuffer;
+/**
+ * EzGfxTexture: Opaque packed u64 texture handle; child bits index the context identity arena and resolve only as Texture.
+ */
+typedef uint64_t EzGfxTexture;
 
 /**
  * EzGfxResult:
@@ -499,21 +503,31 @@ EzGfxResult ez_gfx_c_enable_all_decoders(EzGfxContext context);
  * @data (in) (not nullable) (array length=data_size): Encoded image bytes.
  * @data_size: Number of bytes in data.
  * @desc (in) (not nullable): Texture description.
- * @out_texture_id (out caller-allocates): Receives the texture identifier.
+ * @out_texture (out caller-allocates): Receives the texture handle.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxTextureError_None or a typed texture error.
  */
-EzGfxTextureError ez_gfx_c_texture_load(const void * data, uint64_t data_size, const EzGfxTextureDesc * desc, uint32_t * out_texture_id, EzGfxContext context) EZ_GFX_ACCESS(read_only, 1, 2) EZ_GFX_ACCESS(write_only, 4);
+EzGfxTextureError ez_gfx_c_texture_load(const void * data, uint64_t data_size, const EzGfxTextureDesc * desc, EzGfxTexture * out_texture, EzGfxContext context) EZ_GFX_ACCESS(read_only, 1, 2) EZ_GFX_ACCESS(write_only, 4);
+
+/**
+ * ez_gfx_c_texture_binding_index:
+ * @texture: Texture handle.
+ * @out_binding_index (out caller-allocates): Receives the bindless descriptor index.
+ * @context (not nullable): Owning context.
+ *
+ * Returns: (transfer none): Returns EzGfxTextureError_None or a typed texture error.
+ */
+EzGfxTextureError ez_gfx_c_texture_binding_index(EzGfxTexture texture, uint32_t * out_binding_index, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
 
 /**
  * ez_gfx_c_texture_unload:
- * @texture_id: Texture identifier.
+ * @texture: Texture handle.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxTextureError_None or a typed texture error.
  */
-EzGfxTextureError ez_gfx_c_texture_unload(uint32_t texture_id, EzGfxContext context);
+EzGfxTextureError ez_gfx_c_texture_unload(EzGfxTexture texture, EzGfxContext context);
 
 /**
  * ez_gfx_c_begin_render:

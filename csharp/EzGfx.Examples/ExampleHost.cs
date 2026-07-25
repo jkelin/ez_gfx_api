@@ -131,12 +131,12 @@ public static class ExampleHost
         return bytes;
     }
 
-    public static byte[] MatrixAndTexturePush(Matrix4x4 matrix, uint textureId)
+    public static byte[] MatrixAndTexturePush(Matrix4x4 matrix, uint textureBindingIndex)
     {
         byte[] bytes = new byte[80];
         byte[] matrixBytes = MatrixPush(matrix);
         Buffer.BlockCopy(matrixBytes, 0, bytes, 0, matrixBytes.Length);
-        BitConverter.TryWriteBytes(bytes.AsSpan(64, sizeof(uint)), textureId);
+        BitConverter.TryWriteBytes(bytes.AsSpan(64, sizeof(uint)), textureBindingIndex);
         return bytes;
     }
 

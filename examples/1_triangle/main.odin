@@ -20,10 +20,10 @@ TRIANGLE_POSITIONS: [3][4]f32 = {
 }
 
 App :: struct {
-	ctx:                gfx.Ez_Gfx_Ctx,
-	windows:            [shared.EXAMPLE_MAX_WINDOWS]gfx.Ez_Gfx_Window,
+	ctx:                gfx.Ez_Gfx_Context_Handle,
+	windows:            [shared.EXAMPLE_MAX_WINDOWS]shared.Example_Window,
 	window_count:       int,
-	shader:             gfx.Ez_Gfx_Shader_Program,
+	shader:             gfx.Ez_Gfx_Shader_Handle,
 	shader_loaded:      bool,
 	triangle_index:     u32,
 	triangle_index_len: u32,
@@ -32,7 +32,6 @@ App :: struct {
 
 main :: proc() {
 	app := new(App)
-	context.user_ptr = &app.ctx
 	defer free(app)
 	defer cleanup(app)
 	init_app(app)
@@ -43,56 +42,57 @@ init_app :: proc(app: ^App) {
 	fmt.println("checkpoint: glfw init")
 	assert(shared.example_glfw_init())
 
-	context.user_ptr = &app.ctx
-	assert(gfx.ez_gfx_enable_all_decoders() == .Ok, "failed to enable image decoders")
+	fmt.println("checkpoint: instance create")
+	ctx_handle, ctx_status := gfx.ez_gfx_context_create({
+		enable_debug = true,
+		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
+	})
+	assert(ctx_status == .Ok)
+	app.ctx = ctx_handle
+
+	assert(gfx.ez_gfx_enable_all_decoders_for_context(app.ctx) == .Ok, "failed to enable image decoders")
 	app.window_count = 1
 	main_window := &app.windows[0]
 
 	fmt.println("checkpoint: window create")
 	assert(
-		shared.example_window_create(main_window, "ez_gfx_api Vulkan", WIDTH, HEIGHT),
+		shared.example_window_create(main_window, app.ctx, "ez_gfx_api Vulkan", WIDTH, HEIGHT),
 	)
-	fmt.println("checkpoint: instance create")
-	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {
-		enable_debug = true,
-		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
-	}) == .Ok)
-	fmt.println("checkpoint: surface create")
-	assert(gfx.ez_gfx_window_create_surface(main_window) == .Ok)
 	fmt.println("checkpoint: device init")
-	assert(gfx.ez_gfx_ctx_init_device(main_window.surface) == .Ok)
+	assert(gfx.ez_gfx_surface_init_device(app.ctx, main_window.surface) == .Ok)
 	fmt.println("checkpoint: swapchain recreate")
-	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height) == .Ok)
+	assert(gfx.ez_gfx_surface_resize(app.ctx, main_window.surface, u32(main_window.framebuffer_width), u32(main_window.framebuffer_height)) == .Ok)
 	fmt.println("checkpoint: triangle data init")
 	triangle_init(app)
 	fmt.println("checkpoint: init done")
 }
 
 triangle_init :: proc(app: ^App) {
-	assert(gfx.ez_gfx_shader_compile({
-				path = TRIANGLE_SHADER_PATH,
-				vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
-				fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
-			},
-			&app.shader,) == .Ok)
+	shader_handle, shader_status := gfx.ez_gfx_shader_create(app.ctx, {
+		path = TRIANGLE_SHADER_PATH,
+		vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+		fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+	})
+	assert(shader_status == .Ok)
+	app.shader = shader_handle
 	app.shader_loaded = true
 
-	gfx.ez_gfx_vertex_manager_add_heap(
-		&app.ctx.vertex_manager,
+	gfx.ez_gfx_vertex_heap_create(
+		app.ctx,
 		TRIANGLE_POSITION_HEAP,
 		gfx.EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES,
 		vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
 	)
 
-	index_start, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
-		&app.ctx.vertex_manager,
+	index_start, index_status := gfx.ez_gfx_vertex_upload_indices(
+		app.ctx,
 		TRIANGLE_INDICES[:],
 	)
 	assert(index_status == .Ok, "failed to upload triangle indices")
 	app.triangle_index = index_start
 	app.triangle_index_len = u32(len(TRIANGLE_INDICES))
-	vertex_start, vertex_status := gfx.ez_gfx_vertex_manager_upload_vertices(
-		&app.ctx.vertex_manager,
+	vertex_start, vertex_status := gfx.ez_gfx_vertex_upload(
+		app.ctx,
 		TRIANGLE_POSITION_HEAP,
 		TRIANGLE_POSITIONS[:],
 	)
@@ -116,26 +116,27 @@ run :: proc(app: ^App) {
 		frame_count += 1
 	}
 
-	gfx.ez_gfx_ctx_wait_idle()
+	gfx.ez_gfx_context_wait_idle(app.ctx)
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		assert(gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
+		assert(gfx.ez_gfx_screenshot_save(app.ctx, main_window.surface, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
 	}
 }
 
-draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
-	if gfx.ez_gfx_begin_render(window) != .Ok do return
+draw_frame :: proc(app: ^App, window: ^shared.Example_Window) {
+	if gfx.ez_gfx_begin_render_surface(app.ctx, window.surface) != .Ok do return
 
-	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
-		vk.DrawIndexedIndirectCommand,
+	indirect, indirect_status := gfx.ez_gfx_acquire_indirect(
+		app.ctx,
 		1,
 		"triangle draw commands",
 	)
 	assert(indirect_status == .Ok, "failed to acquire triangle indirect buffer")
 
-	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(
-		&app.shader,
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline_handles(
+		app.ctx,
+		app.shader,
 		indirect,
 		nil,
 	)
@@ -148,22 +149,21 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		vertexOffset  = i32(app.triangle_vertex),
 		firstInstance = 0,
 	}
-	assert(gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) == .Ok, "failed to write triangle draw")
-	assert(gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) == .Ok, "failed to set triangle draw count")
+	assert(gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, 0, draw) == .Ok, "failed to write triangle draw")
+	assert(gfx.ez_gfx_indirect_set_draw_count(app.ctx, indirect, 1) == .Ok, "failed to set triangle draw count")
 
-	assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish triangle render")
+	assert(gfx.ez_gfx_finish_render_context(app.ctx) == .Ok, "failed to finish triangle render")
 }
 
 cleanup :: proc(app: ^App) {
-	context.user_ptr = &app.ctx
-	if app.shader_loaded {
-		gfx.ez_gfx_shader_destroy(&app.shader)
+		if app.shader_loaded {
+		gfx.ez_gfx_shader_release(app.ctx, app.shader)
 		app.shader_loaded = false
 	}
 	for i in 0 ..< app.window_count {
 		shared.example_window_destroy(&app.windows[i])
 	}
 	app.window_count = 0
-	gfx.ez_gfx_ctx_destroy()
+	gfx.ez_gfx_context_destroy(app.ctx)
 	shared.example_glfw_terminate()
 }

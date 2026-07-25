@@ -656,7 +656,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitTextureLoad(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxTextureError EzGfxCTextureLoad(ReadOnlySpan<byte> data, uint sourceFormat, uint destinationFormat, uint width, uint height, uint mipCount, bool generateMips, EzGfxTextureFilter minFilter, EzGfxTextureFilter magFilter, float maxAnisotropy, EzGfxTextureAddressMode addressModeU, EzGfxTextureAddressMode addressModeV, EzGfxTextureAddressMode addressModeW, string? debugLabel, out uint textureId, ulong context)");
+            output.AppendLine("    public static EzGfxTextureError EzGfxCTextureLoad(ReadOnlySpan<byte> data, uint sourceFormat, uint destinationFormat, uint width, uint height, uint mipCount, bool generateMips, EzGfxTextureFilter minFilter, EzGfxTextureFilter magFilter, float maxAnisotropy, EzGfxTextureAddressMode addressModeU, EzGfxTextureAddressMode addressModeV, EzGfxTextureAddressMode addressModeW, string? debugLabel, out ulong texture, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Texture data must not be empty.\", nameof(data));");
             output.AppendLine("        int totalBytes = Utf8ByteCount(debugLabel);");
@@ -683,7 +683,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("                    AddressModeW = (uint)addressModeW,");
             output.AppendLine("                    DebugLabel = PutUtf8(utf8, ref offset, debugLabel),");
             output.AppendLine("                };");
-            output.AppendLine("                return (EzGfxTextureError)RawEzGfxCTextureLoad((IntPtr)dataPointer, checked((ulong)data.Length), (IntPtr)(&description), out textureId, context);");
+            output.AppendLine("                return (EzGfxTextureError)RawEzGfxCTextureLoad((IntPtr)dataPointer, checked((ulong)data.Length), (IntPtr)(&description), out texture, context);");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");

@@ -205,12 +205,21 @@ public sealed class EasyGraphics : IDisposable
             description.AddressModeV,
             description.AddressModeW,
             description.DebugLabel,
-            out uint textureId,
+            out ulong textureId,
             ContextValue);
         NativeErrors.ThrowIfTextureFailed("Texture load", result);
         TextureResource texture = new(this, textureId);
         _resources.Add(texture);
         return texture;
+    }
+
+    public uint GetTextureBindingIndex(TextureResource texture)
+    {
+        ValidateOwner(texture);
+        NativeErrors.ThrowIfTextureFailed(
+            "Texture binding index",
+            EzGfxNative.EzGfxCTextureBindingIndex(texture.NativeValue, out uint bindingIndex, ContextValue));
+        return bindingIndex;
     }
 
     public bool BeginFrame(GraphicsWindow window)
@@ -354,7 +363,7 @@ public sealed class EasyGraphics : IDisposable
         return pending != 0;
     }
 
-    internal void UnloadTexture(uint textureId)
+    internal void UnloadTexture(ulong textureId)
     {
         if (_disposed)
         {

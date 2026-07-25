@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ez-gfx-bindings version="1" abi-version="5" library="ez_gfx_native">
+<ez-gfx-bindings version="1" abi-version="7" library="ez_gfx_native">
   <description>Public EzGfx C ABI. This file is manually maintained; generated headers and managed bindings are derived from it.</description>
   <handles>
-    <handle name="EzGfxContext" doc="Opaque Vulkan context owned by the caller." />
-    <handle name="EzGfxSurface" doc="Opaque surface whose parent window remains caller-owned." />
-    <handle name="EzGfxShader" doc="Opaque compiled shader program." />
-    <handle name="EzGfxIndirectBuffer" doc="Opaque indirect draw buffer acquired during a render." />
-    <handle name="EzGfxStructuredBuffer" doc="Opaque structured buffer view acquired during a render." />
+    <handle name="EzGfxContext" doc="Opaque packed u64 context handle (slot+1/generation in bits 0-39)." />
+    <handle name="EzGfxSurface" doc="Opaque packed u64 surface handle; child bits index the context identity arena and resolve only as Surface." />
+    <handle name="EzGfxShader" doc="Opaque packed u64 shader handle; child bits index the context identity arena and resolve only as Shader." />
+    <handle name="EzGfxIndirectBuffer" doc="Opaque packed u64 indirect-buffer handle; child bits index the context identity arena and resolve only as Indirect." />
+    <handle name="EzGfxStructuredBuffer" doc="Opaque packed u64 structured-buffer handle; child bits index the context identity arena and resolve only as Structured." />
+    <handle name="EzGfxTexture" doc="Opaque packed u64 texture handle; child bits index the context identity arena and resolve only as Texture." />
   </handles>
   <enums>
     <enum name="EzGfxResult" underlying="int32_t" doc="Result returned by context, surface, shader, buffer, and render operations.">
@@ -221,12 +222,18 @@
       <param name="data" type="const void *" nullable="false" direction="in" array-length="data_size" doc="Encoded image bytes." />
       <param name="data_size" type="uint64_t" validation="greater-than-zero" doc="Number of bytes in data." />
       <param name="desc" type="const EzGfxTextureDesc *" nullable="false" direction="in" doc="Texture description." />
-      <param name="out_texture_id" type="uint32_t *" direction="out" doc="Receives the texture identifier." />
+      <param name="out_texture" type="EzGfxTexture *" direction="out" doc="Receives the texture handle." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxTextureError_None or a typed texture error." />
+    </function>
+    <function name="ez_gfx_c_texture_binding_index" return="EzGfxTextureError" context="last" doc="Resolves a texture handle to its bindless descriptor index.">
+      <param name="texture" type="EzGfxTexture" doc="Texture handle." />
+      <param name="out_binding_index" type="uint32_t *" direction="out" doc="Receives the bindless descriptor index." />
       <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
       <returns doc="Returns EzGfxTextureError_None or a typed texture error." />
     </function>
     <function name="ez_gfx_c_texture_unload" return="EzGfxTextureError" context="last" doc="Queues a texture for destruction.">
-      <param name="texture_id" type="uint32_t" doc="Texture identifier." />
+      <param name="texture" type="EzGfxTexture" doc="Texture handle." />
       <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
       <returns doc="Returns EzGfxTextureError_None or a typed texture error." />
     </function>

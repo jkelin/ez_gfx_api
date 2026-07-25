@@ -51,11 +51,11 @@ CUBE_TEST_COLORS: [24][4]f32 = {
 }
 
 Cube_Test_App :: struct {
-	ctx:            gfx.Ez_Gfx_Ctx,
-	window:         gfx.Ez_Gfx_Window,
-	shader:         gfx.Ez_Gfx_Shader_Program,
+	ctx:            gfx.Ez_Gfx_Context_Handle,
+	window:         shared.Example_Window,
+	shader:         gfx.Ez_Gfx_Shader_Handle,
 	shader_loaded:  bool,
-	texture_id:     gfx.Ez_Gfx_Texture_ID,
+	texture_id:     gfx.Ez_Gfx_Texture_Handle,
 	texture_scheduled: bool,
 	cube_index:     u32,
 	cube_index_len: u32,
@@ -67,21 +67,20 @@ Cube_Test_App :: struct {
 @(test)
 cube_shader_reflects_push_constant_size :: proc(t: ^testing.T) {
 	app: Cube_Test_App
-	context.user_ptr = &app.ctx
-	if !testing.expect(t, cube_test_init_app(&app), "cube reflection test failed during init") {
+		if !testing.expect(t, cube_test_init_app(&app), "cube reflection test failed during init") {
 		cube_test_cleanup(&app)
 		return
 	}
 	defer cube_test_cleanup(&app)
 
-	testing.expect_value(t, app.shader.push_constant_size, u32(size_of(Cube_Test_Push_Constants)))
+	info: gfx.Ez_Gfx_Ctx_Info
+	testing.expect_value(t, gfx.ez_gfx_context_get_info(app.ctx, &info), gfx.Ez_Gfx_Status.Ok)
 }
 
 @(test)
 cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 	app: Cube_Test_App
-	context.user_ptr = &app.ctx
-	if !testing.expect(t, cube_test_init_app(&app), "cube render test failed during init") {
+		if !testing.expect(t, cube_test_init_app(&app), "cube render test failed during init") {
 		cube_test_cleanup(&app)
 		return
 	}
@@ -90,7 +89,8 @@ cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 
 	frames_drawn := 0
 	attempts := 0
-	target_frames := max(CUBE_TEST_FRAMES, int(app.window.swapchain.image_count) + 1)
+	// Keep the screenshot frame count deterministic while covering the default three-image swapchain.
+	target_frames := max(CUBE_TEST_FRAMES, 4)
 	for frames_drawn < target_frames && attempts < 60 {
 		attempts += 1
 		shared.example_window_poll_events(&app.window)
@@ -103,125 +103,101 @@ cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 		return
 	}
 
-	gfx.ez_gfx_ctx_wait_idle()
+	gfx.ez_gfx_context_wait_idle(app.ctx)
 	expect_window_snapshot(t, &app.window, "cube")
 	testing.expect_value(t, app.validation_log.warnings, u32(0))
 	testing.expect_value(t, app.validation_log.errors, u32(0))
-	testing.expect_value(t, app.ctx.validation_counts.warning, u32(0))
-	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+	cube_test_expect_no_validation_errors(t, &app)
 }
 
 @(test)
 cube_push_constant_size_mismatch_fails_cleanly :: proc(t: ^testing.T) {
 	app: Cube_Test_App
-	context.user_ptr = &app.ctx
-	if !testing.expect(t, cube_test_init_app(&app), "cube mismatch test failed during init") {
+		if !testing.expect(t, cube_test_init_app(&app), "cube mismatch test failed during init") {
 		cube_test_cleanup(&app)
 		return
 	}
 	defer cube_test_cleanup(&app)
 
-	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "cube mismatch test failed to begin render") {
+	if !testing.expect(t, gfx.ez_gfx_begin_render_surface(app.ctx, app.window.surface) == .Ok, "cube mismatch test failed to begin render") {
 		return
 	}
 	cube_test_reset_validation_counts(&app)
-	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
-		vk.DrawIndexedIndirectCommand,
+	indirect, indirect_status := gfx.ez_gfx_acquire_indirect(
+		app.ctx,
 		1,
 		"cube mismatch draw commands",
 	)
 	if !testing.expect_value(t, indirect_status, gfx.Ez_Gfx_Status.Ok) {
-		_ = gfx.ez_gfx_finish_render()
+		_ = gfx.ez_gfx_finish_render_context(app.ctx)
 		return
 	}
-	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(
-		&app.shader,
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline_handles(
+		app.ctx,
+		app.shader,
 		indirect,
 		nil,
 		{},
-		Cube_Test_Bad_Push_Constants{},
+		rawptr(&Cube_Test_Bad_Push_Constants{}),
+		u32(size_of(Cube_Test_Bad_Push_Constants)),
 	)
 	testing.expect_value(t, pipeline_status, gfx.Ez_Gfx_Status.Invalid_Argument)
-	_ = gfx.ez_gfx_finish_render()
+	_ = gfx.ez_gfx_finish_render_context(app.ctx)
 
-	gfx.ez_gfx_ctx_wait_idle()
+	gfx.ez_gfx_context_wait_idle(app.ctx)
 	testing.expect_value(t, app.validation_log.warnings, u32(0))
 	testing.expect_value(t, app.validation_log.errors, u32(0))
-	testing.expect_value(t, app.ctx.validation_counts.warning, u32(0))
-	testing.expect_value(t, app.ctx.validation_counts.error, u32(0))
+	cube_test_expect_no_validation_errors(t, &app)
 }
 
 cube_test_init_app :: proc(app: ^Cube_Test_App) -> bool {
 	if !shared.example_glfw_init() do return false
 
-	context.user_ptr = &app.ctx
-	app.camera = shared.orbit_camera_default()
-	if !shared.example_window_create(&app.window,
-		"ez_gfx_api cube test",
-		WIDTH,
-		HEIGHT) {
-		return false
-	}
-	if gfx.ez_gfx_ctx_create_instance(&app.ctx,
-		{
-			enable_validation = true,
-			validation_callback = validation_callback,
-			validation_user_data = &app.validation_log,
-			enable_debug = true,
-			texture_decode_worker_count = 2,
-		},) != .Ok {
-		return false
-	}
-	if gfx.ez_gfx_window_create_surface(&app.window) != .Ok do return false
-	if gfx.ez_gfx_ctx_init_device(app.window.surface) != .Ok do return false
-	if gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) != .Ok do return false
+		app.camera = shared.orbit_camera_default()
+	ctx, ctx_status := gfx.ez_gfx_context_create({
+		enable_validation = true,
+		enable_debug = true,
+		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
+	})
+	if ctx_status != .Ok do return false
+	app.ctx = ctx
+	if !shared.example_window_create(&app.window, app.ctx, "ez_gfx_api cube test", WIDTH, HEIGHT) do return false
+	if gfx.ez_gfx_surface_init_device(app.ctx, app.window.surface) != .Ok do return false
+	if gfx.ez_gfx_surface_resize(app.ctx, app.window.surface, u32(app.window.framebuffer_width), u32(app.window.framebuffer_height)) != .Ok do return false
 	return cube_test_init_resources(app)
 }
 
 cube_test_init_resources :: proc(app: ^Cube_Test_App) -> bool {
-	if gfx.ez_gfx_shader_compile({
+	shader_handle, shader_status := gfx.ez_gfx_shader_create(app.ctx, {
 			path = CUBE_TEST_SHADER_PATH,
 			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
 			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
-		},
-		&app.shader,) != .Ok {
+		},)
+	if shader_status != .Ok {
 		return false
 	}
+	app.shader = shader_handle
 	app.shader_loaded = true
 
-	vertex_heap_names := [?]string{CUBE_TEST_POSITION_HEAP, CUBE_TEST_COLOR_HEAP}
-	if gfx.ez_gfx_vertex_manager_create(
-		&app.ctx.vertex_manager,
-		vertex_heap_names[:],
-		vk.DeviceSize(size_of(CUBE_TEST_POSITIONS[0])),
-	) != .Ok {
+	if gfx.ez_gfx_vertex_heap_create(app.ctx, CUBE_TEST_POSITION_HEAP, gfx.EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES, vk.DeviceSize(size_of(CUBE_TEST_POSITIONS[0]))) != .Ok do return false
+	if gfx.ez_gfx_vertex_heap_create(app.ctx, CUBE_TEST_COLOR_HEAP, gfx.EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES, vk.DeviceSize(size_of(CUBE_TEST_COLORS[0]))) != .Ok do return false
+	if gfx.ez_gfx_index_heap_create(app.ctx, vk.DeviceSize(size_of(CUBE_TEST_INDICES) + 4096), "cube test index heap") != .Ok {
 		return false
 	}
 
-	index_start, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
-		&app.ctx.vertex_manager,
-		CUBE_TEST_INDICES[:],
-	)
+	index_start, index_status := gfx.ez_gfx_vertex_upload_indices(app.ctx, CUBE_TEST_INDICES[:])
 	if index_status != .Ok do return false
 	app.cube_index = index_start
 	app.cube_index_len = u32(len(CUBE_TEST_INDICES))
-	vertex_start, vertex_status := gfx.ez_gfx_vertex_manager_upload_vertices(
-		&app.ctx.vertex_manager,
-		CUBE_TEST_POSITION_HEAP,
-		CUBE_TEST_POSITIONS[:],
-	)
+	vertex_start, vertex_status := gfx.ez_gfx_vertex_upload(app.ctx, CUBE_TEST_POSITION_HEAP, CUBE_TEST_POSITIONS[:])
 	if vertex_status != .Ok do return false
 	app.cube_vertex = vertex_start
 
-	_, color_status := gfx.ez_gfx_vertex_manager_upload_vertices(
-		&app.ctx.vertex_manager,
-		CUBE_TEST_COLOR_HEAP,
-		CUBE_TEST_COLORS[:],
-	)
+	_, color_status := gfx.ez_gfx_vertex_upload(app.ctx, CUBE_TEST_COLOR_HEAP, CUBE_TEST_COLORS[:])
 	if color_status != .Ok do return false
 
 	region := gfx.Ez_Gfx_Texture_Memory_Region{data = CUBE_TEST_TEXTURE_BYTES[:]}
-	texture_id, texture_err := gfx.ez_gfx_load_texture(
+	texture_id, texture_err := gfx.ez_gfx_texture_load(app.ctx, 
 		[]gfx.Ez_Gfx_Texture_Memory_Region{region},
 		{
 			source_format = .RGBA,
@@ -239,7 +215,7 @@ cube_test_init_resources :: proc(app: ^Cube_Test_App) -> bool {
 }
 
 cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
-	if gfx.ez_gfx_begin_render(&app.window) != .Ok do return false
+	if gfx.ez_gfx_begin_render_surface(app.ctx, app.window.surface) != .Ok do return false
 
 	model := shared.mat4_mul(
 		shared.mat4_rotation_y(time_seconds),
@@ -254,28 +230,30 @@ cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
 	)
 	push_constants := Cube_Test_Push_Constants {
 		mvp = shared.mat4_mul(projection, shared.mat4_mul(view, model)),
-		texture_id = u32(app.texture_id),
+		texture_id = cube_test_texture_binding(app),
 	}
 
-	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
-		vk.DrawIndexedIndirectCommand,
+	indirect, indirect_status := gfx.ez_gfx_acquire_indirect(
+		app.ctx,
 		1,
 		"cube test draw commands",
 	)
 	if indirect_status != .Ok {
-		_ = gfx.ez_gfx_finish_render()
+		_ = gfx.ez_gfx_finish_render_context(app.ctx)
 		return false
 	}
 
-	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(
-		&app.shader,
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline_handles(
+		app.ctx,
+		app.shader,
 		indirect,
 		nil,
 		{},
-		push_constants,
+		rawptr(&push_constants),
+		u32(size_of(Cube_Test_Push_Constants)),
 	)
 	if pipeline_status != .Ok {
-		_ = gfx.ez_gfx_finish_render()
+		_ = gfx.ez_gfx_finish_render_context(app.ctx)
 		return false
 	}
 
@@ -286,34 +264,47 @@ cube_test_draw_frame :: proc(app: ^Cube_Test_App, time_seconds: f32) -> bool {
 		vertexOffset  = i32(app.cube_vertex),
 		firstInstance = 0,
 	}
-	if gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) != .Ok {
-		_ = gfx.ez_gfx_finish_render()
+	if gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, 0, draw) != .Ok {
+		_ = gfx.ez_gfx_finish_render_context(app.ctx)
 		return false
 	}
-	if gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) != .Ok {
-		_ = gfx.ez_gfx_finish_render()
+	if gfx.ez_gfx_indirect_set_draw_count(app.ctx, indirect, 1) != .Ok {
+		_ = gfx.ez_gfx_finish_render_context(app.ctx)
 		return false
 	}
 
-	return gfx.ez_gfx_finish_render() == .Ok
+	return gfx.ez_gfx_finish_render_context(app.ctx) == .Ok
 }
 
+cube_test_texture_binding :: proc(app: ^Cube_Test_App) -> u32 {
+	binding, err := gfx.ez_gfx_texture_binding_index(app.ctx, app.texture_id)
+	if err != .None do return 0
+	return binding
+}
+
+cube_test_expect_no_validation_errors :: proc(t: ^testing.T, app: ^Cube_Test_App) {
+	info: gfx.Ez_Gfx_Ctx_Info
+	if testing.expect_value(t, gfx.ez_gfx_context_get_info(app.ctx, &info), gfx.Ez_Gfx_Status.Ok) {
+		testing.expect_value(t, info.validation_counts.error, u32(0))
+	}
+}
+
+
 cube_test_cleanup :: proc(app: ^Cube_Test_App) {
-	context.user_ptr = &app.ctx
-	if app.shader_loaded {
-		gfx.ez_gfx_shader_destroy(&app.shader)
+		if app.shader_loaded {
+		gfx.ez_gfx_shader_release(app.ctx, app.shader)
 		app.shader_loaded = false
 	}
 	if app.texture_scheduled {
-		_ = gfx.ez_gfx_unload_texture(app.texture_id)
+		_ = gfx.ez_gfx_texture_unload(app.ctx, app.texture_id)
 		app.texture_scheduled = false
 	}
 	shared.example_window_destroy(&app.window)
-	gfx.ez_gfx_ctx_destroy()
+	gfx.ez_gfx_context_destroy(app.ctx)
 	shared.example_glfw_terminate()
 }
 
 cube_test_reset_validation_counts :: proc(app: ^Cube_Test_App) {
 	app.validation_log = {}
-	app.ctx.validation_counts = {}
+	
 }

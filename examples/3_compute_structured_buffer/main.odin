@@ -43,11 +43,11 @@ Draw_Push_Constants :: struct {
 }
 
 App :: struct {
-	ctx:                   gfx.Ez_Gfx_Ctx,
-	windows:               [shared.EXAMPLE_MAX_WINDOWS]gfx.Ez_Gfx_Window,
+	ctx:                   gfx.Ez_Gfx_Context_Handle,
+	windows:               [shared.EXAMPLE_MAX_WINDOWS]shared.Example_Window,
 	window_count:          int,
-	compute_shader:        gfx.Ez_Gfx_Shader_Program,
-	draw_shader:           gfx.Ez_Gfx_Shader_Program,
+	compute_shader:        gfx.Ez_Gfx_Shader_Handle,
+	draw_shader:           gfx.Ez_Gfx_Shader_Handle,
 	compute_shader_loaded: bool,
 	draw_shader_loaded:    bool,
 	mesh:                  shared.Loaded_Mesh,
@@ -60,7 +60,6 @@ App :: struct {
 
 main :: proc() {
 	app := new(App)
-	context.user_ptr = &app.ctx
 	defer free(app)
 	defer cleanup(app)
 	init_app(app)
@@ -71,48 +70,50 @@ init_app :: proc(app: ^App) {
 	fmt.println("checkpoint: glfw init")
 	assert(shared.example_glfw_init())
 
-	context.user_ptr = &app.ctx
-	assert(gfx.ez_gfx_enable_all_decoders() == .Ok, "failed to enable image decoders")
+	fmt.println("checkpoint: instance create")
+	ctx_handle, ctx_status := gfx.ez_gfx_context_create({
+		enable_debug = true,
+		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
+	})
+	assert(ctx_status == .Ok)
+	app.ctx = ctx_handle
+
+	assert(gfx.ez_gfx_enable_all_decoders_for_context(app.ctx) == .Ok, "failed to enable image decoders")
 	app.window_count = 1
 	app.camera = shared.orbit_camera_default()
 	main_window := &app.windows[0]
 
 	fmt.println("checkpoint: window create")
 	assert(
-		shared.example_window_create(main_window, "ez_gfx_api compute structured buffer", WIDTH, HEIGHT),
+		shared.example_window_create(main_window, app.ctx, "ez_gfx_api compute structured buffer", WIDTH, HEIGHT),
 	)
 	shared.orbit_camera_install_callbacks(main_window)
-	fmt.println("checkpoint: instance create")
-	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {
-		enable_debug = true,
-		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
-	}) == .Ok)
-	fmt.println("checkpoint: surface create")
-	assert(gfx.ez_gfx_window_create_surface(main_window) == .Ok)
 	fmt.println("checkpoint: device init")
-	assert(gfx.ez_gfx_ctx_init_device(main_window.surface) == .Ok)
+	assert(gfx.ez_gfx_surface_init_device(app.ctx, main_window.surface) == .Ok)
 	fmt.println("checkpoint: swapchain recreate")
-	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height) == .Ok)
+	assert(gfx.ez_gfx_surface_resize(app.ctx, main_window.surface, u32(main_window.framebuffer_width), u32(main_window.framebuffer_height)) == .Ok)
 	fmt.println("checkpoint: example data init")
 	example_init(app)
 	fmt.println("checkpoint: init done")
 }
 
 example_init :: proc(app: ^App) {
-	assert(gfx.ez_gfx_shader_compile({
-				path = COMPUTE_SHADER_PATH,
-				compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
-				kind = .Compute,
-			},
-			&app.compute_shader,) == .Ok)
+	compute_shader_handle, compute_shader_status := gfx.ez_gfx_shader_create(app.ctx, {
+		path = COMPUTE_SHADER_PATH,
+		compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
+		kind = .Compute,
+	})
+	assert(compute_shader_status == .Ok)
+	app.compute_shader = compute_shader_handle
 	app.compute_shader_loaded = true
 
-	assert(gfx.ez_gfx_shader_compile({
-				path = DRAW_SHADER_PATH,
-				vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
-				fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
-			},
-			&app.draw_shader,) == .Ok)
+	draw_shader_handle, draw_shader_status := gfx.ez_gfx_shader_create(app.ctx, {
+		path = DRAW_SHADER_PATH,
+		vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+		fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+	})
+	assert(draw_shader_status == .Ok)
+	app.draw_shader = draw_shader_handle
 	app.draw_shader_loaded = true
 
 	mesh, mesh_ok := shared.gltf_load_meshes(GLTF_PATH)
@@ -127,28 +128,21 @@ example_init :: proc(app: ^App) {
 	vertex_stride := vk.DeviceSize(size_of([4]f32))
 	index_bytes := shared.gltf_mesh_index_heap_bytes(&app.mesh) + 4096
 	vertex_bytes := shared.gltf_mesh_vertex_heap_bytes(&app.mesh, vertex_stride) + 4096
-	gfx.ez_gfx_vertex_manager_begin(&app.ctx.vertex_manager)
-	gfx.ez_gfx_gpu_heap_create(
-		&app.ctx.vertex_manager.index_heap,
-		index_bytes,
-		vk.DeviceSize(size_of(u32)),
-		{.INDEX_BUFFER},
-		"example 3 index heap",
-	)
-	gfx.ez_gfx_vertex_manager_add_heap(
-		&app.ctx.vertex_manager,
+	gfx.ez_gfx_index_heap_create(app.ctx, index_bytes, "example 3 index heap")
+	gfx.ez_gfx_vertex_heap_create(
+		app.ctx,
 		POSITION_HEAP,
 		vertex_bytes,
 		vertex_stride,
 	)
-	gfx.ez_gfx_vertex_manager_add_heap(
-		&app.ctx.vertex_manager,
+	gfx.ez_gfx_vertex_heap_create(
+		app.ctx,
 		NORMAL_HEAP,
 		vertex_bytes,
 		vertex_stride,
 	)
 
-	upload_gltf_primitives(&app.ctx.vertex_manager, &app.mesh)
+	upload_gltf_primitives(app.ctx, &app.mesh)
 	app.primitive_records = make([]Primitive_Record, len(app.mesh.descriptors))
 	for descriptor, i in app.mesh.descriptors {
 		app.primitive_records[i] = mesh_descriptor_to_primitive_record(descriptor)
@@ -165,16 +159,16 @@ mesh_descriptor_to_primitive_record :: proc(descriptor: shared.Mesh_Descriptor) 
 	}
 }
 
-upload_gltf_primitives :: proc(manager: ^gfx.Ez_Gfx_Vertex_Manager, mesh: ^shared.Loaded_Mesh) {
+upload_gltf_primitives :: proc(ctx: gfx.Ez_Gfx_Context_Handle, mesh: ^shared.Loaded_Mesh) {
 	for &cpu, prim_index in mesh.cpu_primitives {
-		vertex_start, vertex_status := gfx.ez_gfx_vertex_manager_upload_vertices(
-			manager,
+		vertex_start, vertex_status := gfx.ez_gfx_vertex_upload(
+			ctx,
 			POSITION_HEAP,
 			cpu.positions[:],
 		)
 		assert(vertex_status == .Ok, "failed to upload positions")
-		normal_start, normal_status := gfx.ez_gfx_vertex_manager_upload_vertices(
-			manager,
+		normal_start, normal_status := gfx.ez_gfx_vertex_upload(
+			ctx,
 			NORMAL_HEAP,
 			cpu.normals[:],
 		)
@@ -184,8 +178,8 @@ upload_gltf_primitives :: proc(manager: ^gfx.Ez_Gfx_Vertex_Manager, mesh: ^share
 		for index, i in cpu.indices {
 			global_indices[i] = index + vertex_start
 		}
-		first_index, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
-			manager,
+		first_index, index_status := gfx.ez_gfx_vertex_upload_indices(
+			ctx,
 			global_indices,
 		)
 		assert(index_status == .Ok, "failed to upload indices")
@@ -228,52 +222,53 @@ run :: proc(app: ^App) {
 		frame_count += 1
 	}
 
-	gfx.ez_gfx_ctx_wait_idle()
+	gfx.ez_gfx_context_wait_idle(app.ctx)
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		assert(gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
+		assert(gfx.ez_gfx_screenshot_save(app.ctx, main_window.surface, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
 	}
 }
 
-draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
-	if gfx.ez_gfx_begin_render(window) != .Ok do return
+draw_frame :: proc(app: ^App, window: ^shared.Example_Window) {
+	if gfx.ez_gfx_begin_render_surface(app.ctx, window.surface) != .Ok do return
 
-	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
-		vk.DrawIndexedIndirectCommand,
+	indirect, indirect_status := gfx.ez_gfx_acquire_indirect(
+		app.ctx,
 		app.mesh.mesh_count,
 		"example 3 draw commands",
 	)
 	assert(indirect_status == .Ok, "failed to acquire example 3 indirect buffer")
 
-	primitives, primitives_status := gfx.ez_gfx_render_acquire_structured_buffer(
+	primitives, primitives_status := gfx.ez_gfx_acquire_structured(
+		app.ctx,
 		Primitive_Record,
 		u32(len(app.primitive_records)),
 		"primitives",
 	)
 	assert(primitives_status == .Ok, "failed to acquire example 3 primitive buffer")
-	for record, i in app.primitive_records {
-		primitives.elements[i] = record
-	}
+	assert(gfx.ez_gfx_structured_write(app.ctx, primitives, raw_data(app.primitive_records), u64(len(app.primitive_records) * size_of(Primitive_Record))) == .Ok)
 
-	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding {
-		{name = "primitives", structured = primitives.handle},
+	compute_bindings := [?]gfx.Ez_Gfx_Public_Render_Binding {
+		{name = "primitives", structured = primitives},
 		{name = "draw_commands", indirect = indirect},
 	}
 
 	compute_push := Compute_Push_Constants {
 		primitive_count = app.mesh.mesh_count,
 	}
-	_, compute_status := gfx.ez_gfx_render_add_compute_pipeline(
-		&app.compute_shader,
+	_, compute_status := gfx.ez_gfx_render_add_compute_pipeline_handles(
+		app.ctx,
+		app.compute_shader,
 		app.mesh.mesh_count,
 		1,
 		1,
 		compute_bindings[:],
-		compute_push,
+		rawptr(&compute_push),
+		u32(size_of(Compute_Push_Constants)),
 	)
 	assert(compute_status == .Ok, "failed to add example 3 compute pipeline")
-	assert(gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, app.mesh.mesh_count) == .Ok, "failed to set example 3 draw count")
+	assert(gfx.ez_gfx_indirect_set_draw_count(app.ctx, indirect, app.mesh.mesh_count) == .Ok, "failed to set example 3 draw count")
 
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(
@@ -285,24 +280,25 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	draw_push := Draw_Push_Constants {
 		mvp = shared.mat4_mul(projection, view),
 	}
-	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
-		{name = "primitives", structured = primitives.handle},
+	draw_bindings := [?]gfx.Ez_Gfx_Public_Render_Binding {
+		{name = "primitives", structured = primitives},
 	}
-	_, draw_status := gfx.ez_gfx_render_add_vertex_pipeline(
-		&app.draw_shader,
+	_, draw_status := gfx.ez_gfx_render_add_vertex_pipeline_handles(
+		app.ctx,
+		app.draw_shader,
 		indirect,
 		draw_bindings[:],
 		{},
-		draw_push,
+		rawptr(&draw_push),
+		u32(size_of(Draw_Push_Constants)),
 	)
 	assert(draw_status == .Ok, "failed to add example 3 draw pipeline")
 
-	assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish example 3 render")
+	assert(gfx.ez_gfx_finish_render_context(app.ctx) == .Ok, "failed to finish example 3 render")
 }
 
 cleanup :: proc(app: ^App) {
-	context.user_ptr = &app.ctx
-	gfx.ez_gfx_ctx_wait_idle()
+		gfx.ez_gfx_context_wait_idle(app.ctx)
 	if app.primitive_records != nil {
 		delete(app.primitive_records)
 		app.primitive_records = nil
@@ -312,17 +308,17 @@ cleanup :: proc(app: ^App) {
 		app.mesh_loaded = false
 	}
 	if app.compute_shader_loaded {
-		gfx.ez_gfx_shader_destroy(&app.compute_shader)
+		gfx.ez_gfx_shader_release(app.ctx, app.compute_shader)
 		app.compute_shader_loaded = false
 	}
 	if app.draw_shader_loaded {
-		gfx.ez_gfx_shader_destroy(&app.draw_shader)
+		gfx.ez_gfx_shader_release(app.ctx, app.draw_shader)
 		app.draw_shader_loaded = false
 	}
 	for i in 0 ..< app.window_count {
 		shared.example_window_destroy(&app.windows[i])
 	}
 	app.window_count = 0
-	gfx.ez_gfx_ctx_destroy()
+	gfx.ez_gfx_context_destroy(app.ctx)
 	shared.example_glfw_terminate()
 }

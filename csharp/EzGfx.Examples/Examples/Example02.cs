@@ -55,7 +55,8 @@ public static class Example02
 
         Matrix4x4 view = ExampleHost.OrbitView();
         Matrix4x4 projection = ExampleHost.VulkanPerspective(60, 1280f / 720f, 0.1f, 100f);
-        byte[] pushConstants = ExampleHost.MatrixAndTexturePush(view * projection, texture.Id);
+        uint textureBindingIndex = graphics.GetTextureBindingIndex(texture);
+        byte[] pushConstants = ExampleHost.MatrixAndTexturePush(view * projection, textureBindingIndex);
         ExampleHost.RunFrames(graphics, window, options.Frames, _ =>
         {
             using IndirectBuffer indirect = graphics.AcquireIndirect(1, "cube draw commands");

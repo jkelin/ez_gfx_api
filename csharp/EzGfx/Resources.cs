@@ -258,16 +258,25 @@ public sealed class StructuredBuffer : GraphicsResource
 
 public sealed class TextureResource : GraphicsResource
 {
-    private readonly uint _textureId;
+    private readonly ulong _textureId;
     private bool _disposed;
 
-    internal TextureResource(EasyGraphics owner, uint textureId)
+    internal TextureResource(EasyGraphics owner, ulong textureId)
         : base(owner)
     {
         _textureId = textureId;
     }
 
-    public uint Id => _textureId;
+    public ulong Id => _textureId;
+
+    internal ulong NativeValue
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _textureId;
+        }
+    }
 
     public override void Dispose()
     {

@@ -2,987 +2,23 @@ package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
 import vma "../vendor/odin-vma"
+import ga "./generational_arena"
 import "base:runtime"
 import "core:c"
 import "core:mem"
+import "core:fmt"
 import "core:sync"
 import "core:thread"
-import im "../vendor/odin-imgui"
 import vk "vendor:vulkan"
 
-// Public C ABI descriptors live beside private opaque-owner bookkeeping.
-@(private)
-Ez_Gfx_C_Context :: struct {
-	opaque_handle:             u64,
-	ctx:                       Ez_Gfx_Ctx,
-	texture_data:              [dynamic][]u8,
-	imgui_context:              rawptr,
-	imgui_shader:               Ez_Gfx_Shader_Program,
-	imgui_shader_loaded:        bool,
-	imgui_font_texture_id:      Ez_Gfx_Texture_ID,
-	imgui_font_texture_loaded:  bool,
-	imgui_font_atlas_pixels:    []u8,
-	imgui_texture_data:         [dynamic][]u8,
-	imgui_identity_index_start: u32,
-	imgui_identity_index_loaded: bool,
-}
 
-@(private)
-Ez_Gfx_C_Surface :: struct {
-	opaque_handle: u64,
-	owner:   ^Ez_Gfx_C_Context,
-	surface: Ez_Gfx_Window,
-}
 
-@(private)
-Ez_Gfx_C_Shader :: struct {
-	opaque_handle: u64,
-	owner:       ^Ez_Gfx_C_Context,
-	shader:      Ez_Gfx_Shader_Program,
-	string_data: [4][]u8,
-}
 
-@(private)
-Ez_Gfx_C_Indirect :: struct {
-	opaque_handle: u64,
-	owner:  ^Ez_Gfx_C_Context,
-	handle: Ez_Gfx_Indirect_Buffer_Handle,
-}
 
-@(private)
-Ez_Gfx_C_Structured :: struct {
-	opaque_handle: u64,
-	owner:  ^Ez_Gfx_C_Context,
-	handle: Ez_Gfx_Structured_Buffer_Handle,
-}
-
-Ez_Gfx_C_Context_Desc :: struct {
-	enable_debug:      i32,
-	enable_validation: i32,
-	surface_platform:  u32,
-}
-
-Ez_Gfx_C_Surface_Desc :: struct {
-	window:  rawptr,
-	display: rawptr,
-	platform: u32,
-	width:   u32,
-	height:  u32,
-}
-
-Ez_Gfx_C_Shader_Desc :: struct {
-	path:           cstring,
-	vertex_entry:   cstring,
-	fragment_entry: cstring,
-	compute_entry:  cstring,
-	kind:           u32,
-}
-
-Ez_Gfx_C_Texture_Desc :: struct {
-	source_format:      u32,
-	destination_format: u32,
-	width:              u32,
-	height:             u32,
-	mip_count:          u32,
-	generate_mips:      i32,
-	min_filter:         u32,
-	mag_filter:         u32,
-	max_anisotropy:     f32,
-	address_mode_u:     u32,
-	address_mode_v:     u32,
-	address_mode_w:     u32,
-	debug_label:        cstring,
-}
-
-Ez_Gfx_C_Binding :: struct {
-	name:       cstring,
-	structured: u64,
-	indirect:   u64,
-}
-
-Ez_Gfx_C_Dynamic_State :: struct {
-	cull_mode:      u32,
-	front_face:     u32,
-	primitive_type: u32,
-	blend_mode:     u32,
-}
-
-Ez_Gfx_C_Draw_Indexed_Command :: struct {
-	index_count:    u32,
-	instance_count: u32,
-	first_index:    u32,
-	vertex_offset:  i32,
-	first_instance: u32,
-}
-
-
-Ez_Gfx_Buffer :: struct {
-	handle:          vk.Buffer,
-	allocation:      vma.Allocation,
-	allocation_info: vma.Allocation_Info,
-	size:            vk.DeviceSize,
-	mapped_data:     rawptr,
-}
-
-// C ABI ImGui push-constant layout.
-Ez_Gfx_C_ImGui_Push_Constants :: struct {
-	display_size: [2]f32,
-}
-
-// C ABI ImGui vertex layout.
-Ez_Gfx_C_ImGui_Vertex :: struct {
-	pos:   im.Vec2,
-	uv:    im.Vec2,
-	col:   u32,
-	_pad0: u32,
-	_pad1: u32,
-	_pad2: u32,
-}
-
-// C ABI ImGui indirect command layout.
-Ez_Gfx_C_ImGui_Draw_Command :: struct {
-	clip_rect:  [4]f32,
-	texture_id: u32,
-	idx_offset: u32,
-	vtx_offset: u32,
-	_pad:       u32,
-}
-
-
-// Moved from src\ctx.odin:19.
-Ez_Gfx_Frame_Slot :: struct {
-	command_buffers:         [EZ_GFX_FRAME_COMMAND_BUFFERS]vk.CommandBuffer,
-	image_available:         vk.Semaphore,
-	last_submitted_timeline: u64,
-}
-
-// Moved from src\ctx.odin:25.
-Ez_Gfx_Validation_Message :: struct {
-	severity:        vk.DebugUtilsMessageSeverityFlagsEXT,
-	message_type:    vk.DebugUtilsMessageTypeFlagsEXT,
-	message_id_name: cstring,
-	message:         cstring,
-}
-
-// Moved from src\ctx.odin:32.
-Ez_Gfx_Validation_Callback :: #type proc(
-	ctx: ^Ez_Gfx_Ctx,
-	message: Ez_Gfx_Validation_Message,
-	user_data: rawptr,
-)
-
-// Moved from src\ctx.odin:38.
-Ez_Gfx_Ctx_Desc :: struct {
-	enable_validation:    bool,
-	validation_callback:  Ez_Gfx_Validation_Callback,
-	validation_user_data: rawptr,
-	enable_debug:         bool,
-	texture_loaded_callback:  Ez_Gfx_Texture_Loaded_Callback,
-	texture_loaded_user_data: rawptr,
-	vertex_uploaded_callback:  Ez_Gfx_Vertex_Uploaded_Callback,
-	vertex_uploaded_user_data: rawptr,
-	texture_decode_worker_count: u32,
-	surface_platform: u32,
-	instance_extensions: []cstring,
-}
-
-// Moved from src\ctx.odin:52.
-Ez_Gfx_Validation_Counts :: struct {
-	verbose: u32,
-	info:    u32,
-	warning: u32,
-	error:   u32,
-}
-
-// Moved from src\ctx.odin:59.
-Ez_Gfx_Ctx_Info :: struct {
-	swapchain_present_modes:      [EZ_GFX_MAX_PRESENT_MODES]vk.PresentModeKHR,
-	swapchain_present_mode_count: u32,
-	swapchain_present_mode:       vk.PresentModeKHR,
-}
-
-// Moved from src\ctx.odin:65.
-Ez_Gfx_Ctx :: struct {
-	instance:                             vk.Instance,
-	surface_platform:                    u32,
-	debug_messenger:                      vk.DebugUtilsMessengerEXT,
-	physical_device:                      vk.PhysicalDevice,
-	device:                               vk.Device,
-	queue_family_index:                   u32,
-	transfer_queue_family_index:          u32,
-	graphics_queue:                       vk.Queue,
-	transfer_queue:                       vk.Queue,
-	queue_mutex:                          sync.Mutex,
-	command_pool:                         vk.CommandPool,
-	frame_slots:                          [EZ_GFX_FRAMES_IN_FLIGHT]Ez_Gfx_Frame_Slot,
-	current_frame_slot:                   u32,
-	render_frame_counter:                 u64,
-	timeline_semaphore:                   vk.Semaphore,
-	timeline_counter:                     u64,
-	vma_vulkan_functions:                 vma.Vulkan_Functions,
-	vma_allocator:                        vma.Allocator,
-	slang_session:                        ^sp.IGlobalSession,
-	vertex_manager:                       Ez_Gfx_Vertex_Manager,
-	texture_manager:                      Ez_Gfx_Texture_Manager,
-	pipeline_manager:                     Ez_Gfx_Pipeline_Manager,
-	indirect_manager:                     Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
-	structured_buffer_manager:            Ez_Gfx_Structured_Buffer_Manager,
-	render_target_manager:                Ez_Gfx_Render_Target_Manager,
-	max_sampler_anisotropy:               f32,
-	min_storage_buffer_offset_alignment:  vk.DeviceSize,
-	enable_validation:                    bool,
-	enable_debug:                         bool,
-	debug_utils_enabled:                  bool,
-	memory_priority_enabled:              bool,
-	sampler_anisotropy_enabled:            bool,
-	pageable_device_local_memory_enabled: bool,
-	present_mode_fifo_latest_enabled:     bool,
-	shared_presentable_image_enabled:     bool,
-	swapchain_present_mode:               vk.PresentModeKHR,
-	swapchain_present_modes:              [EZ_GFX_MAX_PRESENT_MODES]vk.PresentModeKHR,
-	swapchain_present_mode_count:         u32,
-	validation_callback:                  Ez_Gfx_Validation_Callback,
-	validation_user_data:                 rawptr,
-	texture_loaded_callback:              Ez_Gfx_Texture_Loaded_Callback,
-	texture_loaded_user_data:             rawptr,
-	vertex_uploaded_callback:             Ez_Gfx_Vertex_Uploaded_Callback,
-	vertex_uploaded_user_data:            rawptr,
-	texture_decode_worker_count:          u32,
-	validation_counts:                    Ez_Gfx_Validation_Counts,
-	render:                              Ez_Gfx_Render,
-}
-
-// Moved from src\indirect_buffer.odin:9.
-Ez_Gfx_Multi_Draw_Indirect_Buffer :: struct {
-	buffer:             Ez_Gfx_Buffer,
-	stride:             vk.DeviceSize,
-	draw_offset:        vk.DeviceSize,
-	capacity:           u32,
-	in_use:             bool,
-	last_used_timeline: u64,
-}
-
-// Moved from src\indirect_buffer.odin:18.
-Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager :: struct {
-	buffers: [EZ_GFX_MAX_INDIRECT_BUFFERS]Ez_Gfx_Multi_Draw_Indirect_Buffer,
-	count:   int,
-}
-
-// Moved from src\indirect_buffer.odin:23.
-Ez_Gfx_Indirect_Buffer_Handle :: struct {
-	buffer:   ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
-	stride:   vk.DeviceSize,
-	capacity: u32,
-	frame_id: u64,
-	ok:       bool,
-}
-
-// Moved from src\indirect_buffer.odin:31.
-Ez_Gfx_Vertex_Pipeline_Descriptor :: struct {
-	pipeline:           ^Ez_Gfx_Pipeline_Record,
-	descriptor_set_index: int,
-	dynamic_state:      Ez_Gfx_Render_Dynamic_State,
-	indirect_buffer:    ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
-	indirect_stride:    vk.DeviceSize,
-	indirect_count:     u32,
-	push_constant_size: u32,
-	push_constant_data: [EZ_GFX_MAX_PUSH_CONSTANT_BYTES]byte,
-	ok:                 bool,
-}
-
-// Moved from src\pipeline.odin:14.
-Ez_Gfx_Pipeline_Record :: struct {
-	kind:                  Ez_Gfx_Shader_Kind,
-	shader_identity:       u64,
-	shader:                ^Ez_Gfx_Shader_Program,
-	blend_mode:            Ez_Gfx_Blend_Mode,
-	color_formats:         [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.Format,
-	color_format_count:    int,
-	depth_format:          vk.Format,
-	has_depth:             bool,
-	pipeline_layout:       vk.PipelineLayout,
-	pipeline:              vk.Pipeline,
-	descriptor_set_layout: vk.DescriptorSetLayout,
-	descriptor_pool:       vk.DescriptorPool,
-	descriptor_sets:       [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS]vk.DescriptorSet,
-	descriptor_versions:   [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS]u64,
-	last_used:             u64,
-}
-
-// Moved from src\pipeline.odin:31.
-Ez_Gfx_Primitive_Type :: enum u8 {
-	Triangle_List,
-	Point_List,
-	Line_List,
-	Line_Strip,
-	Triangle_Strip,
-	Triangle_Fan,
-}
-
-// Moved from src\pipeline.odin:42.
-Ez_Gfx_Render_Dynamic_State :: struct {
-	cull_mode:      vk.CullModeFlags,
-	front_face:     vk.FrontFace,
-	primitive_type: Ez_Gfx_Primitive_Type,
-	blend_mode:     Ez_Gfx_Blend_Mode,
-}
-
-// Moved from src\pipeline.odin:69.
-Ez_Gfx_Pipeline_Manager :: struct {
-	records: [EZ_GFX_MAX_PIPELINES]Ez_Gfx_Pipeline_Record,
-	count:   int,
-	clock:   u64,
-}
-
-// Moved from src\pipeline.odin:75.
-Ez_Gfx_Compute_Pipeline_Descriptor :: struct {
-	pipeline:           ^Ez_Gfx_Pipeline_Record,
-	descriptor_set_index: int,
-	dispatch_x:         u32,
-	dispatch_y:         u32,
-	dispatch_z:         u32,
-	push_constant_size: u32,
-	push_constant_data: [EZ_GFX_MAX_PUSH_CONSTANT_BYTES]byte,
-	ok:                 bool,
-}
-
-// Moved from src\render.odin:12.
-Ez_Gfx_Render :: struct {
-	ctx:                          ^Ez_Gfx_Ctx,
-	window:                       ^Ez_Gfx_Window,
-	frame:                        ^Ez_Gfx_Frame_Slot,
-	frame_slot:                   u32,
-	image_index:                  u32,
-	timeline_end:                 u64,
-	frame_id:                     u64,
-	texture_upload_wait_timeline: u64,
-	vertex_upload_wait_timeline:  u64,
-	graph:                        Ez_Gfx_Render_Graph,
-	pipeline_count:               int,
-	active:                       bool,
-	ready:                        bool,
-}
-
-// Moved from src\render_graph.odin:14.
-Ez_Gfx_Render_Graph_Resource_Kind :: enum u8 {
-	Managed,
-	Swapchain,
-	Structured_Buffer,
-}
-
-// Moved from src\render_graph.odin:20.
-Ez_Gfx_Render_Graph_Node_Kind :: enum u8 {
-	Graphics,
-	Compute,
-}
-
-// Moved from src\render_graph.odin:25.
-Ez_Gfx_Render_Graph_Access :: struct {
-	name:                   [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:               int,
-	resource_kind:          Ez_Gfx_Render_Graph_Resource_Kind,
-	target_kind:            Ez_Gfx_Render_Target_Kind,
-	target:                 ^Ez_Gfx_Render_Target_Texture,
-	structured_binding:     ^Ez_Gfx_Node_Buffer_Binding,
-	sampled_read:           bool,
-	storage_read:           bool,
-	storage_write:          bool,
-	structured_read:        bool,
-	structured_write:       bool,
-	color_write:            bool,
-	depth_write:            bool,
-	color_attachment_index: u32,
-}
-
-// Moved from src\render_graph.odin:42.
-Ez_Gfx_Render_Graph_Node :: struct {
-	kind:            Ez_Gfx_Render_Graph_Node_Kind,
-	shader:          ^Ez_Gfx_Shader_Program,
-	descriptor:      Ez_Gfx_Vertex_Pipeline_Descriptor,
-	compute:         Ez_Gfx_Compute_Pipeline_Descriptor,
-	buffer_bindings: [EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS]Ez_Gfx_Node_Buffer_Binding,
-	buffer_binding_count: int,
-	accesses:        [EZ_GFX_MAX_RENDER_GRAPH_ACCESSES]Ez_Gfx_Render_Graph_Access,
-	access_count:    int,
-	has_color_write: bool,
-	has_depth_write: bool,
-	timeline_value:  u64,
-}
-
-// Moved from src\render_graph.odin:56.
-Ez_Gfx_Render_Graph :: struct {
-	nodes:          [EZ_GFX_MAX_RENDER_PIPELINES]Ez_Gfx_Render_Graph_Node,
-	node_count:     int,
-	swapchain_used: bool,
-}
-
-// Moved from src\render_target.odin:10.
-Ez_Gfx_Render_Target_Texture :: struct {
-	name:                [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:            int,
-	image:               vk.Image,
-	allocation:          vma.Allocation,
-	allocation_info:     vma.Allocation_Info,
-	image_view:          vk.ImageView,
-	attachment_view:     vk.ImageView,
-	sampler:             vk.Sampler,
-	format:              vk.Format,
-	extent:              vk.Extent2D,
-	relative_scale:      f32,
-	kind:                Ez_Gfx_Render_Target_Kind,
-	layout:              vk.ImageLayout,
-	initialized:         bool,
-	load_on_frame_begin: bool,
-	frame_clear_pending: bool,
-	last_write_timeline: u64,
-	generation:          u64,
-	described:           bool,
-	has_image:           bool,
-}
-
-// Moved from src\render_target.odin:33.
-Ez_Gfx_Render_Target_Manager :: struct {
-	targets: [EZ_GFX_MAX_RENDER_TARGETS]Ez_Gfx_Render_Target_Texture,
-	count:   int,
-	version: u64,
-}
-
-// Moved from src\shader.odin:32.
-Ez_Gfx_Shader_Stage :: enum u8 {
-	Vertex,
-	Fragment,
-	Compute,
-}
-
-// Moved from src\shader.odin:38.
-Ez_Gfx_Shader_Kind :: enum u8 {
-	Graphics,
-	Compute,
-}
-
-// Moved from src\shader.odin:43.
-Ez_Gfx_Target_Access :: enum u8 {
-	Read,
-	Write,
-	Read_Write,
-}
-
-// Moved from src\shader.odin:49.
-Ez_Gfx_Render_Target_Kind :: enum u8 {
-	Color,
-	Depth,
-}
-
-// Moved from src\shader.odin:54.
-Ez_Gfx_Blend_Mode :: enum u8 {
-	None,
-	Alpha,
-}
-
-// Moved from src\shader.odin:59.
-Ez_Gfx_Vertex_Heap_Binding :: struct {
-	name:     [EZ_GFX_VERTEX_HEAP_NAME_MAX]byte,
-	name_len: int,
-	binding:  u32,
-	set:      u32,
-}
-
-// Moved from src\shader.odin:66.
-Ez_Gfx_Structured_Buffer_Binding :: struct {
-	name:     [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
-	name_len: int,
-	binding:  u32,
-	set:      u32,
-	access:   Ez_Gfx_Buffer_Access,
-	stages:   vk.ShaderStageFlags,
-}
-
-// Moved from src\shader.odin:75.
-Ez_Gfx_Shader_Target_Usage :: struct {
-	name:                   [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:               int,
-	access:                 Ez_Gfx_Target_Access,
-	stage:                  Ez_Gfx_Shader_Stage,
-	core:                   bool,
-	color_attachment_index: u32,
-}
-
-// Moved from src\shader.odin:84.
-Ez_Gfx_Shader_Target_Declaration :: struct {
-	name:                [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:            int,
-	relative_scale:      f32,
-	kind:                Ez_Gfx_Render_Target_Kind,
-	format:              vk.Format,
-	binding:             u32,
-	set:                 u32,
-	storage:             bool,
-	load_on_frame_begin: bool,
-}
-
-// Moved from src\shader.odin:96.
-Ez_Gfx_Shader_Program :: struct {
-	desc:                      Ez_Gfx_Shader_Desc,
-	identity:                  u64,
-	module:                    vk.ShaderModule,
-	vertex_heap_bindings:      [EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS]Ez_Gfx_Vertex_Heap_Binding,
-	vertex_heap_binding_count: int,
-	structured_buffer_bindings:      [EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS]Ez_Gfx_Structured_Buffer_Binding,
-	structured_buffer_binding_count: int,
-	target_usages:             [EZ_GFX_MAX_SHADER_TARGET_USAGES]Ez_Gfx_Shader_Target_Usage,
-	target_usage_count:        int,
-	target_declarations:       [EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS]Ez_Gfx_Shader_Target_Declaration,
-	target_declaration_count:  int,
-	push_constant_size:        u32,
-	blend_mode:                Ez_Gfx_Blend_Mode,
-}
-
-// Moved from src\shader.odin:112.
-Ez_Gfx_Shader_Desc :: struct {
-	path:           cstring,
-	vertex_entry:   cstring,
-	fragment_entry: cstring,
-	compute_entry:  cstring,
-	kind:           Ez_Gfx_Shader_Kind,
-}
-
-// Moved from src\shader.odin:121.
-Ez_Gfx_Slang_Linked_Program :: struct {
-	session:        ^sp.ISession,
-	shared_module: ^sp.IModule,
-	slang_module:   ^sp.IModule,
-	vertex_entry:   ^sp.IEntryPoint,
-	fragment_entry: ^sp.IEntryPoint,
-	compute_entry:  ^sp.IEntryPoint,
-	linked_program: ^sp.IComponentType,
-}
-
-// Moved from src\structured_buffer.odin:11.
-Ez_Gfx_Buffer_Access :: enum u8 {
-	Read,
-	Write,
-	Read_Write,
-}
-
-// Moved from src\structured_buffer.odin:17.
-Ez_Gfx_Structured_Buffer :: struct {
-	buffer:              Ez_Gfx_Buffer,
-	cpu_ptr:             rawptr,
-	capacity:            vk.DeviceSize,
-	size:                vk.DeviceSize,
-	in_use:              bool,
-	last_write_timeline: u64,
-	last_used_timeline:  u64,
-	debug_name:          cstring,
-}
-
-// Moved from src\structured_buffer.odin:28.
-Ez_Gfx_Structured_Buffer_Manager :: struct {
-	buffers:           [EZ_GFX_MAX_STRUCTURED_BUFFERS]Ez_Gfx_Structured_Buffer,
-	count:             int,
-	version:           u64,
-	peak_acquire_size: vk.DeviceSize,
-}
-
-// Moved from src\structured_buffer.odin:35.
-Ez_Gfx_Structured_Buffer_Handle :: struct {
-	buffer:   ^Ez_Gfx_Structured_Buffer,
-	cpu_ptr:  rawptr,
-	size:     vk.DeviceSize,
-	frame_id: u64,
-	ok:       bool,
-}
-
-// Moved from src\structured_buffer.odin:43.
-Ez_Gfx_Structured_Buffer_View :: struct($T: typeid) {
-	handle:   Ez_Gfx_Structured_Buffer_Handle,
-	elements: [^]T,
-}
-
-// Moved from src\structured_buffer.odin:48.
-Ez_Gfx_Render_Target_Id :: struct {
-	index:      int,
-	generation: u64,
-	ok:         bool,
-}
-
-// Moved from src\structured_buffer.odin:54.
-Ez_Gfx_Render_Binding :: struct {
-	name:          cstring,
-	structured:    Ez_Gfx_Structured_Buffer_Handle,
-	indirect:      Ez_Gfx_Indirect_Buffer_Handle,
-	render_target: Ez_Gfx_Render_Target_Id,
-}
-
-// Moved from src\structured_buffer.odin:61.
-Ez_Gfx_Node_Buffer_Binding_Kind :: enum u8 {
-	Structured,
-	Indirect_Count,
-	Indirect_Elements,
-}
-
-// Moved from src\structured_buffer.odin:67.
-Ez_Gfx_Node_Buffer_Binding :: struct {
-	name:              [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
-	name_len:          int,
-	kind:              Ez_Gfx_Node_Buffer_Binding_Kind,
-	buffer:            ^Ez_Gfx_Buffer,
-	offset:            vk.DeviceSize,
-	size:              vk.DeviceSize,
-	frame_id:          u64,
-	structured_buffer: ^Ez_Gfx_Structured_Buffer,
-	indirect_buffer:   ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
-	indirect_stride:   vk.DeviceSize,
-	indirect_capacity: u32,
-}
-
-// Moved from src\swapchain.odin:11.
-Ez_Gfx_Swapchain :: struct {
-	handle:               vk.SwapchainKHR,
-	format:               vk.Format,
-	extent:               vk.Extent2D,
-	present_mode:         vk.PresentModeKHR,
-	images:               [MAX_SWAPCHAIN_IMAGES]vk.Image,
-	image_views:          [MAX_SWAPCHAIN_IMAGES]vk.ImageView,
-	image_layouts:        [MAX_SWAPCHAIN_IMAGES]vk.ImageLayout,
-	last_write_timeline:  [MAX_SWAPCHAIN_IMAGES]u64,
-	present_ready:        [MAX_SWAPCHAIN_IMAGES]vk.Semaphore,
-	image_count:          u32,
-	last_presented_index: u32,
-	has_presented_image:  bool,
-	presented_snapshot_pixels: []u8,
-	presented_snapshot_valid:  bool,
-}
-
-// Moved from src\texture_manager.odin:23.
-Ez_Gfx_Texture_ID :: distinct u32
-
-// Moved from src\texture_manager.odin:25.
-Ez_Gfx_Source_Texture_Format :: enum u8 {
-	RGB,
-	RGBA,
-	BMP,
-	JPEG,
-	PNG,
-	TGA,
-	KTX2,
-}
-
-// Moved from src\texture_manager.odin:35.
-Ez_Gfx_Texture_Error :: enum u8 {
-	None,
-	Invalid_Context,
-	Invalid_Arguments,
-	Unsupported_Format,
-	Out_Of_Texture_Handles,
-	Out_Of_Memory,
-	Decode_Failed,
-	Vulkan_Failed,
-	Worker_Unavailable,
-	Not_Found,
-}
-
-// Moved from src\texture_manager.odin:48.
-Ez_Gfx_Texture_Memory_Region :: struct {
-	data: []u8,
-}
-
-// Moved from src\texture_manager.odin:52.
-Ez_Gfx_Texture_Filter :: enum u8 {
-	Nearest,
-	Linear,
-}
-
-// Moved from src\texture_manager.odin:57.
-Ez_Gfx_Texture_Address_Mode :: enum u8 {
-	Repeat,
-	Clamp_To_Edge,
-}
-
-// Moved from src\texture_manager.odin:62.
-Ez_Gfx_Load_Texture_Desc :: struct {
-	source_format:      Ez_Gfx_Source_Texture_Format,
-	destination_format: vk.Format,
-	width:              u32,
-	height:             u32,
-	mip_count:          u32,
-	generate_mips:      bool,
-	min_filter:         Ez_Gfx_Texture_Filter,
-	mag_filter:         Ez_Gfx_Texture_Filter,
-	max_anisotropy:     f32,
-	address_mode_u:     Ez_Gfx_Texture_Address_Mode,
-	address_mode_v:     Ez_Gfx_Texture_Address_Mode,
-	address_mode_w:     Ez_Gfx_Texture_Address_Mode,
-	debug_label:        string,
-}
-
-// Moved from src\texture_manager.odin:78.
-Ez_Gfx_Texture_Loaded_Callback :: #type proc(
-	ctx: ^Ez_Gfx_Ctx,
-	texture_id: Ez_Gfx_Texture_ID,
-	err: Ez_Gfx_Texture_Error,
-	user_data: rawptr,
-)
-
-// Moved from src\texture_manager.odin:84.
-Ez_Gfx_Image_Decoder_Callback :: #type proc(
-	job: ^Ez_Gfx_Texture_Load_Job,
-) -> Ez_Gfx_Texture_Upload_Job
-
-// Moved from src\texture_manager.odin:88.
-Ez_Gfx_Texture_State :: enum u8 {
-	Empty,
-	Queued,
-	Loading,
-	Ready,
-	Failed,
-	Unloading,
-}
-
-// Moved from src\texture_manager.odin:97.
-Ez_Gfx_Texture_Record :: struct {
-	id:                 Ez_Gfx_Texture_ID,
-	state:              Ez_Gfx_Texture_State,
-	image:              vk.Image,
-	allocation:         vma.Allocation,
-	allocation_info:    vma.Allocation_Info,
-	image_view:         vk.ImageView,
-	sampler:            vk.Sampler,
-	format:             vk.Format,
-	width:              u32,
-	height:             u32,
-	mip_count:          u32,
-	layout:             vk.ImageLayout,
-	last_write_timeline: u64,
-	last_use_timeline:   u64,
-	error:              Ez_Gfx_Texture_Error,
-	debug_label:        [EZ_GFX_TEXTURE_DEBUG_LABEL_MAX]byte,
-	debug_label_len:    int,
-}
-
-// Moved from src\texture_manager.odin:117.
-Ez_Gfx_Texture_Load_Job :: struct {
-	id:      Ez_Gfx_Texture_ID,
-	regions: [dynamic]Ez_Gfx_Texture_Memory_Region,
-	desc:    Ez_Gfx_Load_Texture_Desc,
-}
-
-// Moved from src\texture_manager.odin:123.
-Ez_Gfx_Texture_Decoded_Source :: enum u8 {
-	None,
-	RGB,
-	RGBA,
-}
-
-// Moved from src\texture_manager.odin:129.
-Ez_Gfx_Texture_Upload_Job :: struct {
-	load:         Ez_Gfx_Texture_Load_Job,
-	pixels:       []u8,
-	width:        u32,
-	height:       u32,
-	source:       Ez_Gfx_Texture_Decoded_Source,
-	owns_pixels:  bool,
-	err:          Ez_Gfx_Texture_Error,
-}
-
-// Moved from src\texture_manager.odin:213.
-Ez_Gfx_Texture_Destroy_Job :: struct {
-	record:          Ez_Gfx_Texture_Record,
-	retire_timeline: u64,
-}
-
-// Moved from src\texture_manager.odin:218.
-Ez_Gfx_Texture_Staging_Retire_Job :: struct {
-	buffer:          Ez_Gfx_Buffer,
-	retire_timeline: u64,
-}
-
-// Moved from src\texture_manager.odin:223.
-Ez_Gfx_Texture_Graphics_Handoff_Job :: struct {
-	id:                Ez_Gfx_Texture_ID,
-	image:             vk.Image,
-	width:             u32,
-	height:            u32,
-	mip_count:         u32,
-	transfer_timeline: u64,
-}
-
-// Moved from src\texture_manager.odin:232.
-Ez_Gfx_Texture_Manager :: struct {
-	textures:                         [EZ_GFX_MAX_TEXTURES]Ez_Gfx_Texture_Record,
-	descriptor_set_layout:            vk.DescriptorSetLayout,
-	descriptor_pool:                  vk.DescriptorPool,
-	descriptor_set:                   vk.DescriptorSet,
-	upload_command_pool:              vk.CommandPool,
-	upload_command_buffer:            vk.CommandBuffer,
-	upload_worker:                    ^thread.Thread,
-	decode_workers:                   [dynamic]^thread.Thread,
-	decode_worker_count:              u32,
-	mutex:                            sync.Mutex,
-	cond:                             sync.Cond,
-	decode_jobs:                      [dynamic]Ez_Gfx_Texture_Load_Job,
-	upload_jobs:                      [dynamic]Ez_Gfx_Texture_Upload_Job,
-	pending_destroys:                 [dynamic]Ez_Gfx_Texture_Destroy_Job,
-	pending_staging:                  [dynamic]Ez_Gfx_Texture_Staging_Retire_Job,
-	pending_graphics_handoffs:        [dynamic]Ez_Gfx_Texture_Graphics_Handoff_Job,
-	shutdown:                         bool,
-	latest_scheduled_texture_timeline: u64,
-	latest_submitted_texture_timeline: u64,
-	latest_completed_texture_timeline: u64,
-}
-
-// Moved from src\vertex_manager.odin:17.
-Ez_Gfx_Heap_Chunk :: struct {
-	offset: vk.DeviceSize,
-	size:   vk.DeviceSize,
-}
-
-// Moved from src\vertex_manager.odin:22.
-Ez_Gfx_Pending_Free_Chunk :: struct {
-	chunk:           Ez_Gfx_Heap_Chunk,
-	retire_timeline: u64,
-}
-
-// Moved from src\vertex_manager.odin:27.
-Ez_Gfx_Vertex_Allocation :: struct {
-	start_index: u32,
-	count:       u32,
-}
-
-// Moved from src\vertex_manager.odin:32.
-Ez_Gfx_Vertex_Upload_Kind :: enum u8 {
-	Indices,
-	Vertices,
-}
-
-// Moved from src\vertex_manager.odin:37.
-Ez_Gfx_Vertex_Upload_Error :: enum u8 {
-	None,
-	Invalid_Context,
-	Invalid_Arguments,
-	Out_Of_Memory,
-	Vulkan_Failed,
-	Worker_Unavailable,
-	Missing_Heap,
-}
-
-// Moved from src\vertex_manager.odin:47.
-Ez_Gfx_Vertex_Uploaded_Callback :: #type proc(
-	ctx: ^Ez_Gfx_Ctx,
-	kind: Ez_Gfx_Vertex_Upload_Kind,
-	heap_name: string,
-	allocation: Ez_Gfx_Vertex_Allocation,
-	err: Ez_Gfx_Vertex_Upload_Error,
-	user_data: rawptr,
-)
-
-// Moved from src\vertex_manager.odin:56.
-Ez_Gfx_Gpu_Heap :: struct {
-	buffer:              Ez_Gfx_Buffer,
-	capacity:            vk.DeviceSize,
-	stride:              vk.DeviceSize,
-	high_water:          vk.DeviceSize,
-	used_bytes:          vk.DeviceSize,
-	free_chunks:         [dynamic]Ez_Gfx_Heap_Chunk,
-	pending_free_chunks: [dynamic]Ez_Gfx_Pending_Free_Chunk,
-}
-
-// Moved from src\vertex_manager.odin:66.
-Ez_Gfx_Vertex_Upload_Job :: struct {
-	kind:              Ez_Gfx_Vertex_Upload_Kind,
-	heap:              ^Ez_Gfx_Gpu_Heap,
-	heap_name:         [EZ_GFX_VERTEX_HEAP_NAME_MAX]byte,
-	heap_name_len:     int,
-	allocation:        Ez_Gfx_Vertex_Allocation,
-	offset:            vk.DeviceSize,
-	byte_size:         vk.DeviceSize,
-	// Staging buffer already filled with the caller's data at schedule time, so the
-	// worker only records and submits the GPU copy. Ownership moves to the retire
-	// queue once the transfer is submitted.
-	staging:           Ez_Gfx_Buffer,
-	transfer_timeline: u64,
-}
-
-// Moved from src\vertex_manager.odin:81.
-Ez_Gfx_Vertex_Staging_Retire_Job :: struct {
-	buffer:          Ez_Gfx_Buffer,
-	command_buffer:  vk.CommandBuffer,
-	retire_timeline: u64,
-}
-
-// Moved from src\vertex_manager.odin:87.
-Ez_Gfx_Vertex_Graphics_Handoff_Job :: struct {
-	buffer:            vk.Buffer,
-	offset:            vk.DeviceSize,
-	size:              vk.DeviceSize,
-	transfer_timeline: u64,
-}
-
-// Moved from src\vertex_manager.odin:94.
-Ez_Gfx_Named_Vertex_Heap :: struct {
-	name:     [EZ_GFX_VERTEX_HEAP_NAME_MAX]byte,
-	name_len: int,
-	heap:     Ez_Gfx_Gpu_Heap,
-}
-
-// Moved from src\vertex_manager.odin:100.
-Ez_Gfx_Vertex_Manager :: struct {
-	index_heap:                      Ez_Gfx_Gpu_Heap,
-	vertex_heaps:                    [EZ_GFX_MAX_VERTEX_HEAPS]Ez_Gfx_Named_Vertex_Heap,
-	vertex_heap_count:               int,
-	upload_command_pool:             vk.CommandPool,
-	worker:                          ^thread.Thread,
-	mutex:                           sync.Mutex,
-	cond:                            sync.Cond,
-	jobs:                            [dynamic]Ez_Gfx_Vertex_Upload_Job,
-	pending_staging:                 [dynamic]Ez_Gfx_Vertex_Staging_Retire_Job,
-	pending_graphics_handoffs:       [dynamic]Ez_Gfx_Vertex_Graphics_Handoff_Job,
-	shutdown:                        bool,
-	latest_scheduled_vertex_timeline: u64,
-	latest_submitted_vertex_timeline: u64,
-}
-
-// Moved from src\window.odin:15.
-Ez_Gfx_Window :: struct {
-	native_window:          rawptr,
-	host_window:            rawptr,
-	native_display:         rawptr,
-	surface_platform:       u32,
-	surface:                vk.SurfaceKHR,
-	framebuffer_resized:    bool,
-	cache_presented_snapshots: bool,
-	framebuffer_width:      c.int,
-	framebuffer_height:     c.int,
-	swapchain:              Ez_Gfx_Swapchain,
-}
-
-
-// Public constants used by the example-facing Odin API.
-EZ_GFX_DEFAULT_COMPUTE_ENTRY :: cstring("computemain")
-EZ_GFX_DEFAULT_FRAGMENT_ENTRY :: cstring("fragmentmain")
-EZ_GFX_DEFAULT_VERTEX_ENTRY :: cstring("vertexmain")
-EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES :: vk.DeviceSize(1024 * 1024)
-EZ_GFX_SURFACE_PLATFORM_GLFW :: u32(1)
-EZ_GFX_SURFACE_PLATFORM_WIN32 :: u32(0)
-SCREENSHOT_PATH :: "screenshot.png"
-EZ_GFX_C_ABI_VERSION :: u32(5)
-EZ_GFX_C_RESULT_OK :: i32(0)
-EZ_GFX_C_RESULT_INVALID_ARGUMENT :: i32(1)
-EZ_GFX_C_RESULT_INVALID_CONTEXT :: i32(2)
-EZ_GFX_C_RESULT_NATIVE_FAILURE :: i32(3)
-EZ_GFX_C_RESULT_NOT_READY :: i32(4)
 
 // Public Odin procedures, public type layouts, and C adapters live in this
 // facade. All implementation modules are package-private through #+private.
 
-// Public status values are the stable result vocabulary for Odin and C APIs.
-Ez_Gfx_Status :: enum u8 {
-	Ok,
-	Invalid_Argument,
-	Invalid_Context,
-	Native_Failure,
-	Not_Ready,
-}
 
 @(private)
 status_from_bool :: proc(ok: bool) -> Ez_Gfx_Status {
@@ -1062,6 +98,7 @@ validate_pipeline_common :: proc(
 
 // Runtime-sized push constants enter through this public boundary. Typed
 // overloads and C adapters delegate here after marshalling their inputs.
+@(private)
 ez_gfx_render_add_vertex_pipeline_raw :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
@@ -1096,6 +133,7 @@ ez_gfx_render_add_vertex_pipeline_raw :: proc(
 
 // Runtime-sized push constants enter through this public boundary. Typed
 // overloads and C adapters delegate here after marshalling their inputs.
+@(private)
 ez_gfx_render_add_compute_pipeline_raw :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	dispatch_x, dispatch_y, dispatch_z: u32,
@@ -1154,6 +192,7 @@ validate_texture_load_arguments :: proc(
 
 
 
+@(private)
 ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {}) -> Ez_Gfx_Status {
 	if status := validate_context(ctx); status != .Ok do return status
 	if get_current_ctx() != ctx do return .Invalid_Context
@@ -1165,6 +204,7 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 }
 
 
+@(private)
 ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> Ez_Gfx_Status {
 	if status := validate_context(get_current_ctx()); status != .Ok do return status
 	if surface == vk.SurfaceKHR(0) do return .Invalid_Argument
@@ -1172,6 +212,7 @@ ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> Ez_Gfx_Status {
 }
 
 
+@(private)
 ez_gfx_ctx_wait_idle :: proc() -> Ez_Gfx_Status {
 	if status := validate_context(get_current_ctx()); status != .Ok do return status
 	ctx_wait_idle()
@@ -1179,6 +220,7 @@ ez_gfx_ctx_wait_idle :: proc() -> Ez_Gfx_Status {
 }
 
 
+@(private)
 ez_gfx_ctx_destroy :: proc() -> Ez_Gfx_Status {
 	if status := validate_context(get_current_ctx()); status != .Ok do return status
 	ctx_destroy()
@@ -1186,6 +228,7 @@ ez_gfx_ctx_destroy :: proc() -> Ez_Gfx_Status {
 }
 
 
+@(private)
 ez_gfx_window_create_surface :: proc(window: ^Ez_Gfx_Window) -> Ez_Gfx_Status {
 	if status := validate_window_surface_identity(window); status != .Ok do return status
 	if window.framebuffer_width <= 0 || window.framebuffer_height <= 0 {
@@ -1194,6 +237,7 @@ ez_gfx_window_create_surface :: proc(window: ^Ez_Gfx_Window) -> Ez_Gfx_Status {
 	return status_from_bool(window_create_surface(window))
 }
 
+@(private)
 ez_gfx_window_create_surface_u32 :: proc(
 	window: ^Ez_Gfx_Window,
 	width, height: u32,
@@ -1209,6 +253,7 @@ ez_gfx_window_create_surface_u32 :: proc(
 }
 
 
+@(private)
 ez_gfx_window_recreate_swapchain :: proc(window: ^Ez_Gfx_Window, width, height: c.int) -> Ez_Gfx_Status {
 	if status := validate_window(window); status != .Ok do return status
 	if width < 0 || height < 0 do return .Invalid_Argument
@@ -1220,6 +265,7 @@ ez_gfx_window_recreate_swapchain :: proc(window: ^Ez_Gfx_Window, width, height: 
 	return status_from_bool(window_recreate_swapchain(window, width, height))
 }
 
+@(private)
 ez_gfx_window_recreate_swapchain_u32 :: proc(
 	window: ^Ez_Gfx_Window,
 	width, height: u32,
@@ -1231,6 +277,7 @@ ez_gfx_window_recreate_swapchain_u32 :: proc(
 }
 
 
+@(private)
 ez_gfx_window_get_framebuffer_size :: proc(window: ^Ez_Gfx_Window) -> (width, height: c.int, status: Ez_Gfx_Status) {
 	if status := validate_window(window); status != .Ok do return 0, 0, status
 	width, height = window_get_framebuffer_size(window)
@@ -1238,24 +285,28 @@ ez_gfx_window_get_framebuffer_size :: proc(window: ^Ez_Gfx_Window) -> (width, he
 	return width, height, .Ok
 }
 
+@(private)
 ez_gfx_window_resize_pending :: proc(window: ^Ez_Gfx_Window) -> (pending: bool, status: Ez_Gfx_Status) {
 	if status := validate_window(window); status != .Ok do return false, status
 	return window_resize_pending(window), .Ok
 }
 
 
+@(private)
 ez_gfx_window_set_snapshot_cache :: proc(window: ^Ez_Gfx_Window, enabled: bool) -> Ez_Gfx_Status {
 	if status := validate_window(window); status != .Ok do return status
 	window.cache_presented_snapshots = enabled
 	return .Ok
 }
 
+@(private)
 ez_gfx_window_set_snapshot_cache_i32 :: proc(window: ^Ez_Gfx_Window, enabled: i32) -> Ez_Gfx_Status {
 	if enabled != 0 && enabled != 1 do return .Invalid_Argument
 	return ez_gfx_window_set_snapshot_cache(window, enabled != 0)
 }
 
 
+@(private)
 ez_gfx_window_destroy :: proc(window: ^Ez_Gfx_Window) -> Ez_Gfx_Status {
 	if status := validate_window(window); status != .Ok do return status
 	window_destroy(window)
@@ -1263,12 +314,14 @@ ez_gfx_window_destroy :: proc(window: ^Ez_Gfx_Window) -> Ez_Gfx_Status {
 }
 
 
+@(private)
 ez_gfx_shader_compile :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_Program) -> Ez_Gfx_Status {
 	if status := validate_shader(desc, program); status != .Ok do return status
 	return status_from_bool(shader_compile(desc, program))
 }
 
 
+@(private)
 ez_gfx_shader_destroy :: proc(program: ^Ez_Gfx_Shader_Program) -> Ez_Gfx_Status {
 	if program == nil do return .Invalid_Argument
 	if status := validate_context(get_current_ctx()); status != .Ok do return status
@@ -1282,6 +335,7 @@ ez_gfx_enable_all_decoders :: proc() -> Ez_Gfx_Status {
 }
 
 
+@(private)
 ez_gfx_vertex_manager_begin :: proc(manager: ^Ez_Gfx_Vertex_Manager) -> Ez_Gfx_Status {
 	if manager == nil do return .Invalid_Argument
 	if status := validate_context(get_current_ctx()); status != .Ok do return status
@@ -1523,6 +577,7 @@ ez_gfx_unload_texture :: proc(texture_id: Ez_Gfx_Texture_ID) -> Ez_Gfx_Texture_E
 }
 
 
+@(private)
 ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> Ez_Gfx_Status {
 	if status := validate_window(window); status != .Ok do return status
 	if window.framebuffer_width <= 0 || window.framebuffer_height <= 0 do return .Not_Ready
@@ -1600,60 +655,9 @@ ez_gfx_structured_buffer_write :: proc(
 }
 
 
-@(private)
-render_add_vertex_pipeline_from_c :: proc(
-	owner: ^Ez_Gfx_C_Context,
-	shader: ^Ez_Gfx_Shader_Program,
-	indirect: Ez_Gfx_Indirect_Buffer_Handle,
-	bindings: [^]Ez_Gfx_C_Binding,
-	binding_count: u32,
-	dynamic_state: ^Ez_Gfx_C_Dynamic_State,
-	push_constants: rawptr,
-	push_constant_size: u32,
-) -> Ez_Gfx_Status {
-	if owner == nil do return .Invalid_Context
-	odin_bindings: [EZ_GFX_C_MAX_BINDINGS]Ez_Gfx_Render_Binding
-	if !c_copy_bindings(bindings, binding_count, owner, &odin_bindings) do return .Invalid_Argument
-	odin_dynamic, dynamic_ok := c_build_dynamic_state(dynamic_state)
-	if !dynamic_ok do return .Invalid_Argument
-	_, status := ez_gfx_render_add_vertex_pipeline_raw(
-		shader,
-		indirect,
-		odin_bindings[:int(binding_count)],
-		odin_dynamic,
-		push_constants,
-		push_constant_size,
-	)
-	return status
-}
 
 
 @(private)
-render_add_compute_pipeline_from_c :: proc(
-	owner: ^Ez_Gfx_C_Context,
-	shader: ^Ez_Gfx_Shader_Program,
-	dispatch_x, dispatch_y, dispatch_z: u32,
-	bindings: [^]Ez_Gfx_C_Binding,
-	binding_count: u32,
-	push_constants: rawptr,
-	push_constant_size: u32,
-) -> Ez_Gfx_Status {
-	if owner == nil do return .Invalid_Context
-	odin_bindings: [EZ_GFX_C_MAX_BINDINGS]Ez_Gfx_Render_Binding
-	if !c_copy_bindings(bindings, binding_count, owner, &odin_bindings) do return .Invalid_Argument
-	_, status := ez_gfx_render_add_compute_pipeline_raw(
-		shader,
-		dispatch_x,
-		dispatch_y,
-		dispatch_z,
-		odin_bindings[:int(binding_count)],
-		push_constants,
-		push_constant_size,
-	)
-	return status
-}
-
-
 ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> Ez_Gfx_Status {
 	if status := validate_window(window); status != .Ok do return status
 	if len(path) == 0 do return .Invalid_Argument
@@ -1701,11 +705,13 @@ ez_gfx_render_acquire_structured_buffer :: proc(
 	return view, .Ok
 }
 
+@(private)
 ez_gfx_render_add_compute_pipeline :: proc {
 	ez_gfx_render_add_compute_pipeline_without_push_constants,
 	ez_gfx_render_add_compute_pipeline_with_push_constants,
 }
 
+@(private)
 ez_gfx_render_add_compute_pipeline_without_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	dispatch_x, dispatch_y, dispatch_z: u32,
@@ -1717,6 +723,7 @@ ez_gfx_render_add_compute_pipeline_without_push_constants :: proc(
 	return ez_gfx_render_add_compute_pipeline_raw(shader, dispatch_x, dispatch_y, dispatch_z, bindings, nil, 0)
 }
 
+@(private)
 ez_gfx_render_add_compute_pipeline_with_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	dispatch_x, dispatch_y, dispatch_z: u32,
@@ -1738,12 +745,14 @@ ez_gfx_render_add_compute_pipeline_with_push_constants :: proc(
 	)
 }
 
+@(private)
 ez_gfx_render_add_vertex_pipeline :: proc {
 	ez_gfx_render_add_vertex_pipeline_without_push_constants,
 	ez_gfx_render_add_vertex_pipeline_with_dynamic_state_without_push_constants,
 	ez_gfx_render_add_vertex_pipeline_with_dynamic_state_and_push_constants,
 }
 
+@(private)
 ez_gfx_render_add_vertex_pipeline_without_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
@@ -1755,6 +764,7 @@ ez_gfx_render_add_vertex_pipeline_without_push_constants :: proc(
 	return ez_gfx_render_add_vertex_pipeline_raw(shader, indirect, bindings, {}, nil, 0)
 }
 
+@(private)
 ez_gfx_render_add_vertex_pipeline_with_dynamic_state_without_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
@@ -1767,6 +777,7 @@ ez_gfx_render_add_vertex_pipeline_with_dynamic_state_without_push_constants :: p
 	return ez_gfx_render_add_vertex_pipeline_raw(shader, indirect, bindings, dynamic_state, nil, 0)
 }
 
+@(private)
 ez_gfx_render_add_vertex_pipeline_with_dynamic_state_and_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
@@ -1796,11 +807,13 @@ ez_gfx_config_screenshot_enabled :: proc() -> bool { return config_screenshot_en
 
 // Focused public helpers used by tests and by host integrations that need
 // deterministic queries without taking ownership of internal managers.
+@(private)
 ez_gfx_ctx_next_timeline_value :: proc(ctx: ^Ez_Gfx_Ctx) -> u64 {
 	if ctx == nil do return 0
 	return ctx_next_timeline_value(ctx)
 }
 
+@(private)
 ez_gfx_ctx_get_info :: proc(info: ^Ez_Gfx_Ctx_Info) -> Ez_Gfx_Status {
 	if info == nil do return .Invalid_Argument
 	if status := validate_context(get_current_ctx()); status != .Ok do return status
@@ -1852,6 +865,7 @@ ez_gfx_vertex_manager_create :: proc(
 	return .Ok
 }
 
+@(private)
 ez_gfx_shader_reflect :: proc(
 	desc: Ez_Gfx_Shader_Desc,
 	program: ^Ez_Gfx_Shader_Program,
@@ -1876,6 +890,31 @@ ez_gfx_render_target_describe :: proc(
 	id = render_target_describe(width, height, debug_label)
 	if !id.ok do return id, .Native_Failure
 	return id, .Ok
+}
+
+ez_gfx_render_target_describe_handle :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	width: u32,
+	height: u32,
+	debug_label: cstring,
+) -> (
+	handle: Ez_Gfx_Render_Target_Handle,
+	status: Ez_Gfx_Status,
+) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	id, describe_status := ez_gfx_render_target_describe(width, height, debug_label)
+	if describe_status != .Ok do return 0, describe_status
+	local, err := ga.insert(&ctx.render_target_arena, id)
+	if err != .None do return 0, arena_status(err)
+	packed, pack_status := pack_child_handle(ctx, .Render_Target, local)
+	if pack_status != .Ok {
+		_ = ga.remove(&ctx.render_target_arena, local)
+		return 0, pack_status
+	}
+	return Ez_Gfx_Render_Target_Handle(packed), .Ok
 }
 
 ez_gfx_screenshot_read_swapchain_bgra :: proc(
@@ -2093,6 +1132,7 @@ ez_gfx_shader_target_name_equals_cstring :: proc(
 	return shader_target_name_equals_cstring(name, name_len, other)
 }
 
+@(private)
 ez_gfx_shader_validate_unique_target_declarations :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 ) -> Ez_Gfx_Status {
@@ -2134,1313 +1174,766 @@ ez_gfx_screenshot_write_png :: proc(
 	return .Ok
 }
 
-// C adapter bookkeeping remains private to the facade. Live registries make
-// opaque C handles fail closed before a stale address can be dereferenced.
 @(private)
-c_status :: proc(status: Ez_Gfx_Status) -> i32 {
-	switch status {
-	case .Ok:
-		return EZ_GFX_C_RESULT_OK
-	case .Invalid_Argument:
-		return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	case .Invalid_Context:
-		return EZ_GFX_C_RESULT_INVALID_CONTEXT
-	case .Native_Failure:
-		return EZ_GFX_C_RESULT_NATIVE_FAILURE
-	case .Not_Ready:
-		return EZ_GFX_C_RESULT_NOT_READY
+context_arena: ga.Arena(Ez_Gfx_Ctx)
+@(private)
+context_arena_ready: bool
+@(private)
+context_arena_mutex: sync.Mutex
+
+@(private)
+arena_status :: proc(err: ga.Error) -> Ez_Gfx_Status {
+	switch err {
+	case .None:
+		return .Ok
+	case .Invalid_Handle:
+		return .Invalid_Context
+	case .Out_Of_Memory, .Generation_Exhausted, .Capacity_Exhausted:
+		return .Native_Failure
 	}
-	return EZ_GFX_C_RESULT_NATIVE_FAILURE
+	return .Native_Failure
 }
 
 @(private)
-EZ_GFX_C_MAX_BINDINGS :: EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS
-
-c_live_handles: [dynamic]Ez_Gfx_C_Live_Handle
-c_live_handles_mutex: sync.Mutex
-c_next_live_handle: u64 = 1
-
-@(private)
-Ez_Gfx_C_Handle_Kind :: enum u8 {
-	Context,
-	Surface,
-	Shader,
-	Indirect,
-	Structured,
-}
-
-@(private)
-Ez_Gfx_C_Live_Handle :: struct {
-	kind:   Ez_Gfx_C_Handle_Kind,
-	handle: u64,
-	value:  rawptr,
-}
-
-// C handles are monotonic IDs rather than allocation addresses. This prevents
-// a stale handle from becoming valid if its old wrapper address is recycled.
-@(private)
-c_handle_register :: proc(kind: Ez_Gfx_C_Handle_Kind, value: rawptr) -> u64 {
-	if value == nil do return 0
-	sync.mutex_lock(&c_live_handles_mutex)
-	defer sync.mutex_unlock(&c_live_handles_mutex)
-	if c_next_live_handle == 0 {
-		panic("C handle space exhausted")
-	}
-	handle := c_next_live_handle
-	c_next_live_handle += 1
-	append(&c_live_handles, Ez_Gfx_C_Live_Handle{
-		kind = kind,
-		handle = handle,
-		value = value,
-	})
-	return handle
-}
-
-@(private)
-c_handle_unregister :: proc(kind: Ez_Gfx_C_Handle_Kind, handle: u64) {
-	if handle == 0 do return
-	sync.mutex_lock(&c_live_handles_mutex)
-	defer sync.mutex_unlock(&c_live_handles_mutex)
-	for live, index in c_live_handles {
-		if live.kind == kind && live.handle == handle {
-			ordered_remove(&c_live_handles, index)
-			return
-		}
-	}
-}
-
-@(private)
-c_handle_find :: proc(kind: Ez_Gfx_C_Handle_Kind, handle: u64) -> rawptr {
-	if handle == 0 do return nil
-	sync.mutex_lock(&c_live_handles_mutex)
-	defer sync.mutex_unlock(&c_live_handles_mutex)
-	for live in c_live_handles {
-		if live.kind == kind && live.handle == handle do return live.value
-	}
-	return nil
-}
-
-@(private)
-c_context_register :: proc(ctx: ^Ez_Gfx_C_Context) {
-	if ctx == nil do return
-	ctx.opaque_handle = c_handle_register(.Context, rawptr(ctx))
-}
-
-@(private)
-c_context_unregister :: proc(ctx: ^Ez_Gfx_C_Context) {
-	if ctx == nil do return
-	c_handle_unregister(.Context, ctx.opaque_handle)
-	ctx.opaque_handle = 0
-}
-
-@(private)
-c_resource_register :: proc(kind: Ez_Gfx_C_Handle_Kind, value: rawptr) -> u64 {
-	return c_handle_register(kind, value)
-}
-
-@(private)
-c_resource_unregister :: proc(kind: Ez_Gfx_C_Handle_Kind, handle: u64) {
-	c_handle_unregister(kind, handle)
-}
-
-
-@(private)
-c_resource_owner :: proc(resource: Ez_Gfx_C_Live_Handle) -> ^Ez_Gfx_C_Context {
-	switch resource.kind {
-	case .Context:
-		return nil
-	case .Surface:
-		surface := cast(^Ez_Gfx_C_Surface)resource.value
-		return surface.owner
-	case .Shader:
-		shader := cast(^Ez_Gfx_C_Shader)resource.value
-		return shader.owner
-	case .Indirect:
-		indirect := cast(^Ez_Gfx_C_Indirect)resource.value
-		return indirect.owner
-	case .Structured:
-		structured := cast(^Ez_Gfx_C_Structured)resource.value
-		return structured.owner
-	}
-	return nil
-}
-
-@(private)
-c_resource_take_owned :: proc(
-	owner: ^Ez_Gfx_C_Context,
-) -> (resource: Ez_Gfx_C_Live_Handle, found: bool) {
-	if owner == nil do return
-	sync.mutex_lock(&c_live_handles_mutex)
-	defer sync.mutex_unlock(&c_live_handles_mutex)
-	for live_resource, index in c_live_handles {
-		if c_resource_owner(live_resource) == owner {
-			ordered_remove(&c_live_handles, index)
-			return live_resource, true
-		}
-	}
-	return
-}
-
-// Destroys wrappers while their owner's native context remains usable. The
-// registry entry is removed first so later C destroy calls are idempotent.
-@(private)
-c_resource_destroy_owned :: proc(owner: ^Ez_Gfx_C_Context) {
-	for {
-		resource, found := c_resource_take_owned(owner)
-		if !found do return
-		switch resource.kind {
-		case .Context:
-			panic("context entered resource destruction")
-		case .Surface:
-			surface := cast(^Ez_Gfx_C_Surface)resource.value
-			_ = ez_gfx_window_destroy(&surface.surface)
-			free(surface)
-		case .Shader:
-			shader := cast(^Ez_Gfx_C_Shader)resource.value
-			_ = ez_gfx_shader_destroy(&shader.shader)
-			c_shader_strings_destroy(shader)
-			free(shader)
-		case .Indirect:
-			free(cast(^Ez_Gfx_C_Indirect)resource.value)
-		case .Structured:
-			free(cast(^Ez_Gfx_C_Structured)resource.value)
-		}
-	}
-}
-
-@(private)
-c_context_from_handle :: proc(handle: u64) -> ^Ez_Gfx_C_Context {
-	return cast(^Ez_Gfx_C_Context)c_handle_find(.Context, handle)
-}
-
-@(private)
-c_surface_from_handle :: proc(handle: u64) -> ^Ez_Gfx_C_Surface {
-	return cast(^Ez_Gfx_C_Surface)c_handle_find(.Surface, handle)
-}
-
-@(private)
-c_shader_from_handle :: proc(handle: u64) -> ^Ez_Gfx_C_Shader {
-	return cast(^Ez_Gfx_C_Shader)c_handle_find(.Shader, handle)
-}
-
-@(private)
-c_indirect_from_handle :: proc(handle: u64) -> ^Ez_Gfx_C_Indirect {
-	return cast(^Ez_Gfx_C_Indirect)c_handle_find(.Indirect, handle)
-}
-
-@(private)
-c_structured_from_handle :: proc(handle: u64) -> ^Ez_Gfx_C_Structured {
-	return cast(^Ez_Gfx_C_Structured)c_handle_find(.Structured, handle)
-}
-
-@(private)
-c_context_handle :: proc(ctx: ^Ez_Gfx_C_Context) -> u64 {
-	if ctx == nil do return 0
-	return ctx.opaque_handle
-}
-
-@(private)
-c_surface_handle :: proc(surface: ^Ez_Gfx_C_Surface) -> u64 {
-	if surface == nil do return 0
-	return surface.opaque_handle
-}
-
-@(private)
-c_shader_handle :: proc(shader: ^Ez_Gfx_C_Shader) -> u64 {
-	if shader == nil do return 0
-	return shader.opaque_handle
-}
-
-@(private)
-c_indirect_handle :: proc(indirect: ^Ez_Gfx_C_Indirect) -> u64 {
-	if indirect == nil do return 0
-	return indirect.opaque_handle
-}
-
-@(private)
-c_structured_handle :: proc(structured: ^Ez_Gfx_C_Structured) -> u64 {
-	if structured == nil do return 0
-	return structured.opaque_handle
-}
-
-@(private)
-c_clone_cstring :: proc(value: cstring) -> []u8 {
-	if value == nil do return nil
-	source := shader_cstring_to_string(value)
-	bytes := make([]u8, len(source) + 1)
-	if len(source) > 0 {
-		mem.copy(raw_data(bytes), raw_data(source), len(source))
-	}
-	bytes[len(source)] = 0
-	return bytes
-}
-
-@(private)
-c_shader_string :: proc(bytes: []u8) -> cstring {
-	if len(bytes) == 0 do return nil
-	return cast(cstring)raw_data(bytes)
-}
-
-@(private)
-c_shader_strings_destroy :: proc(shader: ^Ez_Gfx_C_Shader) {
-	if shader == nil do return
-	for bytes in shader.string_data {
-		if raw_data(bytes) != nil {
-			delete(bytes)
-		}
-	}
-	shader.string_data = {}
-}
-
-@(private)
-c_use_context :: proc(owner: ^Ez_Gfx_C_Context) -> rawptr {
-	if owner == nil do return nil
-	return &owner.ctx
-}
-
-@(private)
-c_build_dynamic_state :: proc(
-	state: ^Ez_Gfx_C_Dynamic_State,
-) -> (
-	render_state: Ez_Gfx_Render_Dynamic_State,
-	ok: bool,
-) {
-	if state == nil do return render_state, true
-	if state.cull_mode > 3 || state.front_face > 1 {
-		return render_state, false
-	}
-	if state.primitive_type >= u32(len(Ez_Gfx_Primitive_Type)) || state.blend_mode > u32(Ez_Gfx_Blend_Mode.Alpha) {
-		return render_state, false
-	}
-	switch state.cull_mode {
-	case 0:
-		render_state.cull_mode = {}
-	case 1:
-		render_state.cull_mode = {.FRONT}
-	case 2:
-		render_state.cull_mode = {.BACK}
-	case 3:
-		render_state.cull_mode = {.FRONT, .BACK}
-	}
-	if state.front_face == 0 {
-		render_state.front_face = .COUNTER_CLOCKWISE
-	} else {
-		render_state.front_face = .CLOCKWISE
-	}
-	render_state.primitive_type = Ez_Gfx_Primitive_Type(state.primitive_type)
-	render_state.blend_mode = Ez_Gfx_Blend_Mode(state.blend_mode)
-	return render_state, true
-}
-
-@(private)
-c_copy_bindings :: proc(
-	source: [^]Ez_Gfx_C_Binding,
-	count: u32,
-	owner: ^Ez_Gfx_C_Context,
-	destination: ^[EZ_GFX_C_MAX_BINDINGS]Ez_Gfx_Render_Binding,
-) -> bool {
-	if count > EZ_GFX_C_MAX_BINDINGS do return false
-	if count > 0 && source == nil do return false
-	for i in 0 ..< int(count) {
-		c_binding := source[i]
-		binding := &destination[i]
-		binding^ = {}
-		if c_binding.name == nil do return false
-		binding.name = c_binding.name
-		if c_binding.structured != 0 {
-			structured := c_structured_from_handle(c_binding.structured)
-			if structured == nil || structured.owner != owner || !structured.handle.ok do return false
-			binding.structured = structured.handle
-		}
-		if c_binding.indirect != 0 {
-			indirect := c_indirect_from_handle(c_binding.indirect)
-			if indirect == nil || indirect.owner != owner || !indirect.handle.ok do return false
-			binding.indirect = indirect.handle
-		}
-	}
+ensure_context_arena :: proc() -> bool {
+	if context_arena_ready do return true
+	sync.mutex_lock(&context_arena_mutex)
+	defer sync.mutex_unlock(&context_arena_mutex)
+	if context_arena_ready do return true
+	if ga.init(&context_arena, runtime.default_context().allocator) != .None do return false
+	context_arena_ready = true
 	return true
 }
-@(private)
-IMGUI_C_SHADER_PATH :: cstring("examples/4_imgui/imgui.slang")
-@(private)
-IMGUI_C_IDENTITY_INDEX_COUNT :: 65536
 
 @(private)
-c_imgui_context :: proc(owner: ^Ez_Gfx_C_Context) -> ^im.Context {
-	if owner == nil || owner.imgui_context == nil do return nil
-	return cast(^im.Context)owner.imgui_context
+ctx_child_arenas_init :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+	if ga.init(&ctx.handle_identity_arena) != .None do return false
+	if ga.init(&ctx.surface_arena) != .None do return false
+	if ga.init(&ctx.shader_arena) != .None do return false
+	if ga.init(&ctx.indirect_arena) != .None do return false
+	if ga.init(&ctx.structured_arena) != .None do return false
+	if ga.init(&ctx.render_target_arena) != .None do return false
+	if ga.init(&ctx.texture_arena) != .None do return false
+	return true
 }
 
 @(private)
-c_imgui_init :: proc(owner: ^Ez_Gfx_C_Context) -> bool {
-	if owner == nil do return false
-	if owner.imgui_context != nil {
-		im.set_current_context(c_imgui_context(owner))
-		return true
-	}
+ctx_child_arenas_destroy :: proc(ctx: ^Ez_Gfx_Ctx) {
+	ga.destroy(&ctx.handle_identity_arena)
+	ga.destroy(&ctx.surface_arena)
+	ga.destroy(&ctx.shader_arena)
+	ga.destroy(&ctx.indirect_arena)
+	ga.destroy(&ctx.structured_arena)
+	ga.destroy(&ctx.render_target_arena)
+	ga.destroy(&ctx.texture_arena)
+}
 
-	imgui_context := im.create_context()
-	if imgui_context == nil do return false
-	owner.imgui_context = imgui_context
-	im.set_current_context(imgui_context)
-	im.CHECKVERSION()
+@(private)
+resolve_context :: proc(handle: Ez_Gfx_Context_Handle) -> (^Ez_Gfx_Ctx, Ez_Gfx_Status) {
+	if !ensure_context_arena() do return nil, .Native_Failure
+	parts, ok := handle_unpack(u64(handle))
+	if !ok || !parts.is_context do return nil, .Invalid_Context
+	ctx, err := ga.get(&context_arena, handle_context_local(parts))
+	if err != .None do return nil, arena_status(err)
+	return ctx, .Ok
+}
 
-	io := im.get_io()
-	io.ini_filename = nil
-	io.backend_flags += {.Renderer_Has_Textures}
-	io.display_framebuffer_scale = {1, 1}
-	io.delta_time = 1.0 / 60.0
+@(private)
+with_context :: proc(handle: Ez_Gfx_Context_Handle) -> (^Ez_Gfx_Ctx, rawptr, Ez_Gfx_Status) {
+	ctx, status := resolve_context(handle)
+	if status != .Ok do return nil, nil, status
+	previous := context.user_ptr
+	context.user_ptr = ctx
+	return ctx, previous, .Ok
+}
 
-	if !shader_compile({
-		path = IMGUI_C_SHADER_PATH,
-		vertex_entry = EZ_GFX_INTERNAL_DEFAULT_VERTEX_ENTRY,
-		fragment_entry = EZ_GFX_INTERNAL_DEFAULT_FRAGMENT_ENTRY,
-	}, &owner.imgui_shader) {
-		im.destroy_context(imgui_context)
-		owner.imgui_context = nil
-		return false
-	}
-	owner.imgui_shader_loaded = true
-
-	indices := make([]u32, IMGUI_C_IDENTITY_INDEX_COUNT)
-	defer delete(indices)
-	for index in 0 ..< IMGUI_C_IDENTITY_INDEX_COUNT {
-		indices[index] = u32(index)
-	}
-	allocation, ok := vertex_manager_schedule_upload(
-		&owner.ctx.vertex_manager,
-		.Indices,
-		"",
-		&owner.ctx.vertex_manager.index_heap,
-		raw_data(indices),
-		IMGUI_C_IDENTITY_INDEX_COUNT,
-		vk.DeviceSize(size_of(u32)),
-	)
+@(private)
+pack_child_handle :: proc(ctx: ^Ez_Gfx_Ctx, kind: Ez_Gfx_Handle_Resource_Kind, typed_local: ga.Handle) -> (u64, Ez_Gfx_Status) {
+	identity_local, err := ga.insert(&ctx.handle_identity_arena, Ez_Gfx_Handle_Identity{kind = kind, local = typed_local})
+	if err != .None do return 0, arena_status(err)
+	value, ok := handle_pack_child(ctx.local_handle, identity_local)
 	if !ok {
-		shader_destroy(&owner.imgui_shader)
-		owner.imgui_shader_loaded = false
-		im.destroy_context(imgui_context)
-		owner.imgui_context = nil
-		return false
+		_ = ga.remove(&ctx.handle_identity_arena, identity_local)
+		return 0, .Native_Failure
 	}
-	owner.imgui_identity_index_start = allocation.start_index
-	owner.imgui_identity_index_loaded = true
-	return true
+	return value, .Ok
 }
 
 @(private)
-c_imgui_upload_textures :: proc(
-	owner: ^Ez_Gfx_C_Context,
-	draw_data: ^im.Draw_Data,
-) -> bool {
-	if owner == nil || draw_data == nil || draw_data.textures == nil do return true
+resolve_child_identity :: proc(ctx: ^Ez_Gfx_Ctx, packed: u64, expected_kind: Ez_Gfx_Handle_Resource_Kind) -> (identity_local, typed_local: ga.Handle, status: Ez_Gfx_Status) {
+	parts, ok := handle_unpack(packed)
+	if !ok || parts.is_context || handle_context_local(parts) != ctx.local_handle do return {}, {}, .Invalid_Context
+	identity_local = handle_child_local(parts)
+	identity, err := ga.get(&ctx.handle_identity_arena, identity_local)
+	if err != .None do return {}, {}, .Invalid_Context
+	if identity.kind != expected_kind do return {}, {}, .Invalid_Context
+	return identity_local, identity.local, .Ok
+}
 
-	textures := draw_data.textures^
-	for texture in mem.slice_ptr(textures.data, int(textures.size)) {
-		if texture == nil do continue
-		#partial switch texture.status {
-		case .Want_Create, .Want_Updates:
-			byte_count := int(im.texture_data_get_size_in_bytes(texture))
-			pixels := im.texture_data_get_pixels(texture)
-			if pixels == nil || byte_count <= 0 do return false
+@(private)
+remove_child_identity :: proc(ctx: ^Ez_Gfx_Ctx, packed: u64, expected_kind: Ez_Gfx_Handle_Resource_Kind) -> (typed_local: ga.Handle, status: Ez_Gfx_Status) {
+	identity_local, local, identity_status := resolve_child_identity(ctx, packed, expected_kind)
+	if identity_status != .Ok do return {}, identity_status
+	_ = ga.remove(&ctx.handle_identity_arena, identity_local)
+	return local, .Ok
+}
 
-			if owner.imgui_font_texture_loaded {
-				ctx_wait_idle()
-				_ = unload_texture(owner.imgui_font_texture_id)
-				owner.imgui_font_texture_loaded = false
+@(private)
+resolve_surface :: proc(ctx: ^Ez_Gfx_Ctx, handle: Ez_Gfx_Surface_Handle) -> (^Ez_Gfx_Window, Ez_Gfx_Status) {
+	_, local, status := resolve_child_identity(ctx, u64(handle), .Surface)
+	if status != .Ok do return nil, status
+	window, err := ga.get(&ctx.surface_arena, local)
+	if err != .None do return nil, .Invalid_Context
+	return window, .Ok
+}
+
+@(private)
+resolve_shader :: proc(ctx: ^Ez_Gfx_Ctx, handle: Ez_Gfx_Shader_Handle) -> (^Ez_Gfx_Shader_Program, Ez_Gfx_Status) {
+	_, local, status := resolve_child_identity(ctx, u64(handle), .Shader)
+	if status != .Ok do return nil, status
+	shader, err := ga.get(&ctx.shader_arena, local)
+	if err != .None do return nil, .Invalid_Context
+	return shader, .Ok
+}
+
+@(private)
+resolve_indirect :: proc(ctx: ^Ez_Gfx_Ctx, handle: Ez_Gfx_Indirect_Handle) -> (^Ez_Gfx_Indirect_Buffer_Handle, Ez_Gfx_Status) {
+	_, local, status := resolve_child_identity(ctx, u64(handle), .Indirect)
+	if status != .Ok do return nil, status
+	indirect, err := ga.get(&ctx.indirect_arena, local)
+	if err != .None do return nil, .Invalid_Context
+	return indirect, .Ok
+}
+
+@(private)
+resolve_structured :: proc(ctx: ^Ez_Gfx_Ctx, handle: Ez_Gfx_Structured_Handle) -> (^Ez_Gfx_Structured_Buffer_Handle, Ez_Gfx_Status) {
+	_, local, status := resolve_child_identity(ctx, u64(handle), .Structured)
+	if status != .Ok do return nil, status
+	structured, err := ga.get(&ctx.structured_arena, local)
+	if err != .None do return nil, .Invalid_Context
+	return structured, .Ok
+}
+
+@(private)
+resolve_texture :: proc(ctx: ^Ez_Gfx_Ctx, handle: Ez_Gfx_Texture_Handle) -> (Ez_Gfx_Texture_ID, ga.Handle, Ez_Gfx_Texture_Error) {
+	_, local, status := resolve_child_identity(ctx, u64(handle), .Texture)
+	if status != .Ok do return 0, {}, .Invalid_Context
+	texture, err := ga.get(&ctx.texture_arena, local)
+	if err != .None do return 0, {}, .Not_Found
+	return texture^, local, .None
+}
+
+ez_gfx_context_create :: proc(desc: Ez_Gfx_Ctx_Desc = {}) -> (handle: Ez_Gfx_Context_Handle, status: Ez_Gfx_Status) {
+	if !ensure_context_arena() do return 0, .Native_Failure
+	if desc.surface_platform != EZ_GFX_SURFACE_PLATFORM_GLFW && desc.surface_platform != EZ_GFX_SURFACE_PLATFORM_WIN32 {
+		return 0, .Invalid_Argument
+	}
+	local, err := ga.insert(&context_arena, Ez_Gfx_Ctx{})
+	if err != .None do return 0, arena_status(err)
+	ctx, get_err := ga.get(&context_arena, local)
+	if get_err != .None do return 0, arena_status(get_err)
+	ctx.local_handle = local
+	if !ctx_child_arenas_init(ctx) {
+		_ = ga.remove(&context_arena, local)
+		return 0, .Native_Failure
+	}
+	packed, pack_ok := handle_pack_context(local)
+	if !pack_ok {
+		ctx_child_arenas_destroy(ctx)
+		_ = ga.remove(&context_arena, local)
+		return 0, .Native_Failure
+	}
+	previous := context.user_ptr
+	context.user_ptr = ctx
+	status = ez_gfx_ctx_create_instance(ctx, desc)
+	context.user_ptr = previous
+	if status != .Ok {
+		ctx_child_arenas_destroy(ctx)
+		_ = ga.remove(&context_arena, local)
+		return 0, status
+	}
+	return packed, .Ok
+}
+
+ez_gfx_context_wait_idle :: proc(handle: Ez_Gfx_Context_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	_ = ctx
+	return ez_gfx_ctx_wait_idle()
+}
+
+ez_gfx_context_destroy :: proc(handle: Ez_Gfx_Context_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	for {
+		if ga.count(&ctx.surface_arena) == 0 do break
+		removed := false
+		for slot, index in ctx.surface_arena.slots {
+			if slot.occupied {
+				local := ga.Handle{slot = u32(index), generation = slot.generation}
+				if window, err := ga.get(&ctx.surface_arena, local); err == .None {
+					window_destroy(window)
+				}
+				_ = ga.remove(&ctx.surface_arena, local)
+				removed = true
+				break
 			}
-
-			pixel_data := make([]u8, byte_count)
-			mem.copy(raw_data(pixel_data), pixels, byte_count)
-			// The texture manager's decode workers borrow this memory until their
-			// completion callback. Keep every upload alive until context teardown.
-			append(&owner.imgui_texture_data, pixel_data)
-			owner.imgui_font_atlas_pixels = pixel_data
-
-			regions := [1]Ez_Gfx_Texture_Memory_Region{{data = pixel_data}}
-			texture_desc := Ez_Gfx_Load_Texture_Desc {
-				source_format      = .RGBA,
-				destination_format = .R8G8B8A8_UNORM,
-				width              = u32(texture.width),
-				height             = u32(texture.height),
-				generate_mips      = false,
-				min_filter         = .Linear,
-				mag_filter         = .Linear,
-				address_mode_u     = .Clamp_To_Edge,
-				address_mode_v     = .Clamp_To_Edge,
-				address_mode_w     = .Clamp_To_Edge,
-				debug_label        = "imgui font atlas",
+		}
+		if !removed do break
+	}
+	for {
+		if ga.count(&ctx.shader_arena) == 0 do break
+		removed := false
+		for slot, index in ctx.shader_arena.slots {
+			if slot.occupied {
+				local := ga.Handle{slot = u32(index), generation = slot.generation}
+				if shader, err := ga.get(&ctx.shader_arena, local); err == .None {
+					shader_destroy(shader)
+				}
+				_ = ga.remove(&ctx.shader_arena, local)
+				removed = true
+				break
 			}
-			texture_id, texture_error := load_texture(regions[:], texture_desc)
-			if texture_error != .None do return false
-			owner.imgui_font_texture_id = texture_id
-			owner.imgui_font_texture_loaded = true
-			im.texture_data_set_tex_id(texture, im.Texture_ID(texture_id))
-			im.texture_data_set_status(texture, .OK)
-		case .Want_Destroy:
-			texture_id := Ez_Gfx_Texture_ID(im.texture_data_get_tex_id(texture))
-			if texture_id == owner.imgui_font_texture_id && owner.imgui_font_texture_loaded {
-				ctx_wait_idle()
-				_ = unload_texture(texture_id)
-				owner.imgui_font_texture_loaded = false
-			}
-			im.texture_data_set_status(texture, .Destroyed)
+		}
+		if !removed do break
+	}
+	_ = ez_gfx_ctx_destroy()
+	for bytes in ctx.c_texture_data do delete(bytes)
+	if raw_data(ctx.c_texture_data) != nil do delete(ctx.c_texture_data)
+	for bytes in ctx.imgui_texture_data do delete(bytes)
+	if raw_data(ctx.imgui_texture_data) != nil do delete(ctx.imgui_texture_data)
+	local := ctx.local_handle
+	handle_identity_arena := ctx.handle_identity_arena
+	surface_arena := ctx.surface_arena
+	shader_arena := ctx.shader_arena
+	indirect_arena := ctx.indirect_arena
+	structured_arena := ctx.structured_arena
+	render_target_arena := ctx.render_target_arena
+	texture_arena := ctx.texture_arena
+	_ = ga.remove(&context_arena, local)
+	ga.clear(&handle_identity_arena)
+	ga.destroy(&handle_identity_arena)
+	ga.destroy(&surface_arena)
+	ga.destroy(&shader_arena)
+	ga.destroy(&indirect_arena)
+	ga.destroy(&structured_arena)
+	ga.destroy(&render_target_arena)
+	ga.destroy(&texture_arena)
+	return .Ok
+}
+
+ez_gfx_surface_create :: proc(context_handle: Ez_Gfx_Context_Handle, desc: Ez_Gfx_Surface_Desc) -> (handle: Ez_Gfx_Surface_Handle, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	window := Ez_Gfx_Window {
+		native_window = desc.native_window,
+		native_display = desc.native_display,
+		surface_platform = desc.platform,
+		cache_presented_snapshots = desc.cache_presented_snapshots,
+		framebuffer_width = c.int(desc.width),
+		framebuffer_height = c.int(desc.height),
+	}
+	local, err := ga.insert(&ctx.surface_arena, window)
+	if err != .None do return 0, arena_status(err)
+	window_ptr, get_err := ga.get(&ctx.surface_arena, local)
+	if get_err != .None {
+		_ = ga.remove(&ctx.surface_arena, local)
+		return 0, arena_status(get_err)
+	}
+	status = ez_gfx_window_create_surface(window_ptr)
+	if status != .Ok {
+		_ = ga.remove(&ctx.surface_arena, local)
+		return 0, status
+	}
+	packed, pack_status := pack_child_handle(ctx, .Surface, local)
+	if pack_status != .Ok {
+		window_destroy(window_ptr)
+		_ = ga.remove(&ctx.surface_arena, local)
+		return 0, pack_status
+	}
+	return Ez_Gfx_Surface_Handle(packed), .Ok
+}
+
+ez_gfx_surface_destroy :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	local, identity_status := remove_child_identity(ctx, u64(surface_handle), .Surface)
+	if identity_status != .Ok do return identity_status
+	window, err := ga.get(&ctx.surface_arena, local)
+	if err != .None do return .Invalid_Context
+	status = ez_gfx_window_destroy(window)
+	_ = ga.remove(&ctx.surface_arena, local)
+	return status
+}
+
+ez_gfx_surface_init_device :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	window, surface_status := resolve_surface(ctx, surface_handle)
+	if surface_status != .Ok do return surface_status
+	return ez_gfx_ctx_init_device(window.surface)
+}
+
+ez_gfx_surface_resize :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle, width, height: u32) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	window, surface_status := resolve_surface(ctx, surface_handle)
+	if surface_status != .Ok do return surface_status
+	return ez_gfx_window_recreate_swapchain_u32(window, width, height)
+}
+
+ez_gfx_surface_get_extent :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle) -> (width, height: u32, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	window, surface_status := resolve_surface(ctx, surface_handle)
+	if surface_status != .Ok do return 0, 0, surface_status
+	w, h, size_status := ez_gfx_window_get_framebuffer_size(window)
+	return u32(max(w, 0)), u32(max(h, 0)), size_status
+}
+
+ez_gfx_surface_resize_pending :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle) -> (bool, Ez_Gfx_Status) {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return false, status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	window, surface_status := resolve_surface(ctx, surface_handle)
+	if surface_status != .Ok do return false, surface_status
+	return ez_gfx_window_resize_pending(window)
+}
+
+ez_gfx_surface_set_snapshot_cache :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle, enabled: bool) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	window, surface_status := resolve_surface(ctx, surface_handle)
+	if surface_status != .Ok do return surface_status
+	return ez_gfx_window_set_snapshot_cache(window, enabled)
+}
+
+ez_gfx_shader_create :: proc(context_handle: Ez_Gfx_Context_Handle, desc: Ez_Gfx_Shader_Desc) -> (handle: Ez_Gfx_Shader_Handle, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	local, err := ga.insert(&ctx.shader_arena, Ez_Gfx_Shader_Program{})
+	if err != .None do return 0, arena_status(err)
+	shader, get_err := ga.get(&ctx.shader_arena, local)
+	if get_err != .None {
+		_ = ga.remove(&ctx.shader_arena, local)
+		return 0, arena_status(get_err)
+	}
+	status = ez_gfx_shader_compile(desc, shader)
+	if status != .Ok {
+		_ = ga.remove(&ctx.shader_arena, local)
+		return 0, status
+	}
+	packed, pack_status := pack_child_handle(ctx, .Shader, local)
+	if pack_status != .Ok {
+		_ = ez_gfx_shader_destroy(shader)
+		_ = ga.remove(&ctx.shader_arena, local)
+		return 0, pack_status
+	}
+	return Ez_Gfx_Shader_Handle(packed), .Ok
+}
+
+ez_gfx_shader_release :: proc(context_handle: Ez_Gfx_Context_Handle, shader_handle: Ez_Gfx_Shader_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	local, identity_status := remove_child_identity(ctx, u64(shader_handle), .Shader)
+	if identity_status != .Ok do return identity_status
+	shader, err := ga.get(&ctx.shader_arena, local)
+	if err != .None do return .Invalid_Context
+	status = ez_gfx_shader_destroy(shader)
+	_ = ga.remove(&ctx.shader_arena, local)
+	return status
+}
+
+ez_gfx_texture_load :: proc(context_handle: Ez_Gfx_Context_Handle, regions: []Ez_Gfx_Texture_Memory_Region, desc: Ez_Gfx_Load_Texture_Desc) -> (handle: Ez_Gfx_Texture_Handle, status: Ez_Gfx_Texture_Error) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, .Invalid_Context
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	texture_id, texture_status := ez_gfx_load_texture(regions, desc)
+	if texture_status != .None do return 0, texture_status
+	local, err := ga.insert(&ctx.texture_arena, texture_id)
+	if err != .None {
+		_ = unload_texture(texture_id)
+		return 0, .Out_Of_Memory
+	}
+	packed, pack_status := pack_child_handle(ctx, .Texture, local)
+	if pack_status != .Ok {
+		_ = ga.remove(&ctx.texture_arena, local)
+		_ = unload_texture(texture_id)
+		return 0, .Out_Of_Texture_Handles
+	}
+	return Ez_Gfx_Texture_Handle(packed), .None
+}
+
+
+ez_gfx_texture_binding_index :: proc(context_handle: Ez_Gfx_Context_Handle, texture_handle: Ez_Gfx_Texture_Handle) -> (u32, Ez_Gfx_Texture_Error) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, .Invalid_Context
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	texture_id, _, err := resolve_texture(ctx, texture_handle)
+	if err != .None do return 0, err
+	return u32(texture_id), .None
+}
+ez_gfx_texture_unload :: proc(context_handle: Ez_Gfx_Context_Handle, texture_handle: Ez_Gfx_Texture_Handle) -> Ez_Gfx_Texture_Error {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return .Invalid_Context
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	texture_id, local, err := resolve_texture(ctx, texture_handle)
+	if err != .None do return err
+	_, identity_status := remove_child_identity(ctx, u64(texture_handle), .Texture)
+	if identity_status != .Ok do return .Not_Found
+	remove_err := ga.remove(&ctx.texture_arena, local)
+	if remove_err != .None do return .Not_Found
+	return unload_texture(texture_id)
+}
+
+@(private)
+resolve_public_bindings :: proc(
+	ctx: ^Ez_Gfx_Ctx,
+	bindings: []Ez_Gfx_Public_Render_Binding,
+	out: ^[EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS]Ez_Gfx_Render_Binding,
+) -> Ez_Gfx_Status {
+	if len(bindings) > EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS do return .Invalid_Argument
+	if len(bindings) > 0 && out == nil do return .Invalid_Argument
+	for i in 0 ..< len(bindings) {
+		binding := &out[i]
+		public := bindings[i]
+		binding^ = {}
+		if public.name == nil do return .Invalid_Argument
+		binding.name = public.name
+		if public.structured != 0 {
+			structured, status := resolve_structured(ctx, public.structured)
+			if status != .Ok || structured == nil || !structured.ok do return .Invalid_Context
+			binding.structured = structured^
+		}
+		if public.indirect != 0 {
+			indirect, status := resolve_indirect(ctx, public.indirect)
+			if status != .Ok || indirect == nil || !indirect.ok do return .Invalid_Context
+			binding.indirect = indirect^
+		}
+		if public.render_target != 0 {
+			_, local, identity_status := resolve_child_identity(ctx, u64(public.render_target), .Render_Target)
+			if identity_status != .Ok do return identity_status
+			id, err := ga.get(&ctx.render_target_arena, local)
+			if err != .None || id == nil || !id.ok do return .Invalid_Context
+			binding.render_target = id^
 		}
 	}
-	return true
+	return .Ok
 }
 
-// Releases ImGui GPU objects before the owning Vulkan context is destroyed.
-// Pixel buffers intentionally remain owned by Ez_Gfx_C_Context until after the
-// texture workers have shut down in ez_gfx_c_context_destroy.
-@(private)
-c_imgui_destroy :: proc(owner: ^Ez_Gfx_C_Context) {
-	if owner == nil do return
-	if owner.imgui_context != nil {
-		im.set_current_context(c_imgui_context(owner))
-	}
-	if owner.imgui_font_texture_loaded {
-		ctx_wait_idle()
-		_ = unload_texture(owner.imgui_font_texture_id)
-		owner.imgui_font_texture_loaded = false
-	}
-	if owner.imgui_shader_loaded {
-		ctx_wait_idle()
-		shader_destroy(&owner.imgui_shader)
-		owner.imgui_shader_loaded = false
-	}
-	if owner.imgui_context != nil {
-		im.destroy_context(c_imgui_context(owner))
-		owner.imgui_context = nil
-	}
-	owner.imgui_font_texture_id = 0
-	owner.imgui_font_atlas_pixels = nil
-	owner.imgui_identity_index_start = 0
-	owner.imgui_identity_index_loaded = false
-}
-@(private)
-c_context_for_handle :: proc "c" (
-	context_handle: u64,
-) -> (
-	odin_context: runtime.Context,
-	owner: ^Ez_Gfx_C_Context,
-	status: i32,
-) {
-	odin_context = runtime.default_context()
-	context = odin_context
-	owner = c_context_from_handle(context_handle)
-	if owner == nil do return odin_context, nil, EZ_GFX_C_RESULT_INVALID_CONTEXT
-	odin_context.user_ptr = c_use_context(owner)
-	if odin_context.user_ptr == nil do return odin_context, nil, EZ_GFX_C_RESULT_INVALID_CONTEXT
-	return odin_context, owner, EZ_GFX_C_RESULT_OK
+ez_gfx_enable_all_decoders_for_context :: proc(context_handle: Ez_Gfx_Context_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_enable_all_decoders()
 }
 
-@(private)
-c_context_surface_for_handle :: proc "c" (
-	context_handle, surface_handle: u64,
-) -> (
-	odin_context: runtime.Context,
-	owner: ^Ez_Gfx_C_Context,
-	surface: ^Ez_Gfx_C_Surface,
-	status: i32,
-) {
-	odin_context, owner, status = c_context_for_handle(context_handle)
-	c_context := odin_context
-	if status != EZ_GFX_C_RESULT_OK do return c_context, owner, nil, status
-	context = c_context
-	// Odin context scope is lexical, so the C adapter reuses c_context for its
-	// own subsequent public-call scope after this helper returns.
-	surface = c_surface_from_handle(surface_handle)
-	if surface == nil || surface.owner != owner {
-		return c_context, owner, nil, EZ_GFX_C_RESULT_INVALID_CONTEXT
-	}
-	return c_context, owner, surface, EZ_GFX_C_RESULT_OK
+ez_gfx_context_get_info :: proc(context_handle: Ez_Gfx_Context_Handle, info: ^Ez_Gfx_Ctx_Info) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_ctx_get_info(info)
 }
 
-
-
-// C ABI exports. Link names are intentionally attached only to these C adapters.
-
-@(link_name="ez_gfx_c_abi_version")
-@(export)
-ez_gfx_c_abi_version :: proc "c" () -> u32 {
-	return EZ_GFX_C_ABI_VERSION
+ez_gfx_context_set_present_mode :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	mode: vk.PresentModeKHR,
+) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_ctx_set_swapchain_present_mode(mode)
 }
 
-@(link_name="ez_gfx_c_context_create")
-@(export)
-ez_gfx_c_context_create :: proc "c" (
-	desc: ^Ez_Gfx_C_Context_Desc,
-	out_context: ^u64,
-) -> i32 {
-	context = runtime.default_context()
-	if out_context == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_context^ = 0
-	if desc == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	// A failed creation must restore the caller's prior Odin context.
-	previous_user_ptr := context.user_ptr
-	owner := new(Ez_Gfx_C_Context)
-	context.user_ptr = c_use_context(owner)
-	if context.user_ptr == nil {
-		context.user_ptr = previous_user_ptr
-		return EZ_GFX_C_RESULT_INVALID_CONTEXT
-	}
-	odin_desc := Ez_Gfx_Ctx_Desc {
-		enable_debug      = desc.enable_debug != 0,
-		enable_validation = desc.enable_validation != 0,
-		surface_platform  = desc.surface_platform,
-	}
-	status := ez_gfx_ctx_create_instance(&owner.ctx, odin_desc)
-	if status != .Ok {
-		context.user_ptr = previous_user_ptr
-		free(owner)
-		return c_status(status)
-	}
-	c_context_register(owner)
-	out_context^ = c_context_handle(owner)
-	return EZ_GFX_C_RESULT_OK
+ez_gfx_vertex_heap_create :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	name: string,
+	capacity, stride: vk.DeviceSize,
+) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_vertex_manager_add_heap(&ctx.vertex_manager, name, capacity, stride)
 }
 
-
-@(link_name="ez_gfx_c_context_wait_idle")
-@(export)
-ez_gfx_c_context_wait_idle :: proc "c" (context_handle: u64) -> i32 {
-	odin_context, _, status := c_context_for_handle(context_handle)
-	if status != EZ_GFX_C_RESULT_OK do return status
-	context = odin_context
-	return c_status(ez_gfx_ctx_wait_idle())
+ez_gfx_index_heap_create :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	capacity: vk.DeviceSize,
+	debug_name: cstring = nil,
+) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_gpu_heap_create(&ctx.vertex_manager.index_heap, capacity, vk.DeviceSize(size_of(u32)), {.INDEX_BUFFER}, debug_name)
 }
 
-@(link_name="ez_gfx_c_context_destroy")
-@(export)
-ez_gfx_c_context_destroy :: proc "c" (context_handle: u64) {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return
-	context = c_context
-	c_context_unregister(owner)
-	c_imgui_destroy(owner)
-	c_resource_destroy_owned(owner)
-	_ = ez_gfx_ctx_destroy()
-	for bytes in owner.texture_data {
-		delete(bytes)
-	}
-	if raw_data(owner.texture_data) != nil {
-		delete(owner.texture_data)
-	}
-	for bytes in owner.imgui_texture_data {
-		delete(bytes)
-	}
-	if raw_data(owner.imgui_texture_data) != nil {
-		delete(owner.imgui_texture_data)
-	}
-	// No later Odin API call may observe the context after its owner is freed.
-	context.user_ptr = nil
-	free(owner)
+ez_gfx_vertex_upload_indices :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	indices: []u32,
+	source_stride: vk.DeviceSize = 0,
+) -> (start_index: u32, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_vertex_manager_upload_indices(&ctx.vertex_manager, indices, source_stride)
 }
 
-@(link_name="ez_gfx_c_surface_create")
-@(export)
-ez_gfx_c_surface_create :: proc "c" (
-	desc: ^Ez_Gfx_C_Surface_Desc,
-	out_surface: ^u64,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	if out_surface == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_surface^ = 0
-	if desc == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	context = c_context
-	surface := new(Ez_Gfx_C_Surface)
-	surface.owner = owner
-	surface.surface = Ez_Gfx_Window {
-		native_window       = desc.window,
-		native_display      = desc.display,
-		surface_platform    = desc.platform,
-		cache_presented_snapshots = false,
-		framebuffer_width   = 0,
-		framebuffer_height  = 0,
-	}
-	status := ez_gfx_window_create_surface_u32(&surface.surface, desc.width, desc.height)
-	if status != .Ok {
-		free(surface)
-		return c_status(status)
-	}
-	surface.opaque_handle = c_resource_register(.Surface, rawptr(surface))
-	out_surface^ = c_surface_handle(surface)
-	return EZ_GFX_C_RESULT_OK
+ez_gfx_vertex_upload :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	heap_name: string,
+	vertices: []$T,
+	source_stride: vk.DeviceSize = 0,
+) -> (start_index: u32, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_vertex_manager_upload_vertices(&ctx.vertex_manager, heap_name, vertices, source_stride)
 }
 
-@(link_name="ez_gfx_c_context_init_device")
-@(export)
-ez_gfx_c_context_init_device :: proc "c" (surface_handle: u64, context_handle: u64) -> i32 {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_ctx_init_device(surface.surface.surface))
-}
-
-@(link_name="ez_gfx_c_surface_resize")
-@(export)
-ez_gfx_c_surface_resize :: proc "c" (
-	surface_handle: u64,
-	width, height: u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_window_recreate_swapchain_u32(
-		&surface.surface,
-		width,
-		height,
-	))
-}
-
-@(link_name="ez_gfx_c_surface_get_extent")
-@(export)
-ez_gfx_c_surface_get_extent :: proc "c" (
-	surface_handle: u64,
-	out_width: ^u32,
-	out_height: ^u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	if out_width == nil || out_height == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_width^ = 0
-	out_height^ = 0
-	width, height, status := ez_gfx_window_get_framebuffer_size(&surface.surface)
-	out_width^ = u32(max(width, 0))
-	out_height^ = u32(max(height, 0))
-	return c_status(status)
-}
-@(link_name="ez_gfx_c_surface_resize_pending")
-@(export)
-ez_gfx_c_surface_resize_pending :: proc "c" (
-	surface_handle: u64,
-	out_pending: ^i32,
-	context_handle: u64,
-) -> i32 {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	if out_pending == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_pending^ = 0
-	pending, status := ez_gfx_window_resize_pending(&surface.surface)
-	out_pending^ = i32(pending)
-	return c_status(status)
-}
-
-@(link_name="ez_gfx_c_surface_set_snapshot_cache")
-@(export)
-ez_gfx_c_surface_set_snapshot_cache :: proc "c" (
-	surface_handle: u64,
-	enabled: i32,
-	context_handle: u64,
-) -> i32 {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_window_set_snapshot_cache_i32(&surface.surface, enabled))
-}
-
-@(link_name="ez_gfx_c_surface_destroy")
-@(export)
-ez_gfx_c_surface_destroy :: proc "c" (surface_handle: u64, context_handle: u64) {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return
-	context = c_context
-	c_resource_unregister(.Surface, surface_handle)
-	_ = ez_gfx_window_destroy(&surface.surface)
-	free(surface)
-}
-
-@(link_name="ez_gfx_c_shader_compile")
-@(export)
-ez_gfx_c_shader_compile :: proc "c" (
-	desc: ^Ez_Gfx_C_Shader_Desc,
-	out_shader: ^u64,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	if out_shader == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_shader^ = 0
-	if desc == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	context = c_context
-	shader := new(Ez_Gfx_C_Shader)
-	shader.owner = owner
-	shader.string_data[0] = c_clone_cstring(desc.path)
-	shader.string_data[1] = c_clone_cstring(desc.vertex_entry)
-	shader.string_data[2] = c_clone_cstring(desc.fragment_entry)
-	shader.string_data[3] = c_clone_cstring(desc.compute_entry)
-	odin_desc := Ez_Gfx_Shader_Desc {
-		path           = c_shader_string(shader.string_data[0]),
-		vertex_entry   = c_shader_string(shader.string_data[1]),
-		fragment_entry = c_shader_string(shader.string_data[2]),
-		compute_entry  = c_shader_string(shader.string_data[3]),
-		kind           = Ez_Gfx_Shader_Kind(desc.kind),
-	}
-	status := ez_gfx_shader_compile(odin_desc, &shader.shader)
-	if status != .Ok {
-		c_shader_strings_destroy(shader)
-		free(shader)
-		return c_status(status)
-	}
-	shader.opaque_handle = c_resource_register(.Shader, rawptr(shader))
-	out_shader^ = c_shader_handle(shader)
-	return EZ_GFX_C_RESULT_OK
-}
-
-@(link_name="ez_gfx_c_shader_destroy")
-@(export)
-ez_gfx_c_shader_destroy :: proc "c" (shader_handle: u64, context_handle: u64) {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return
-	context = c_context
-	shader := c_shader_from_handle(shader_handle)
-	if shader == nil || shader.owner != owner do return
-	_ = ez_gfx_shader_destroy(&shader.shader)
-	c_resource_unregister(.Shader, shader_handle)
-	c_shader_strings_destroy(shader)
-	free(shader)
-}
-
-@(link_name="ez_gfx_c_vertex_heap_create")
-@(export)
-ez_gfx_c_vertex_heap_create :: proc "c" (
-	name: cstring,
-	capacity: u64,
-	stride: u64,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_vertex_manager_add_heap(
-		&owner.ctx.vertex_manager,
-		shader_cstring_to_string(name),
-		vk.DeviceSize(capacity),
-		vk.DeviceSize(stride),
-	))
-}
-
-@(link_name="ez_gfx_c_index_heap_create")
-@(export)
-ez_gfx_c_index_heap_create :: proc "c" (
-	capacity: u64,
-	debug_name: cstring,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_gpu_heap_create(
-		&owner.ctx.vertex_manager.index_heap,
-		vk.DeviceSize(capacity),
-		vk.DeviceSize(size_of(u32)),
-		{.INDEX_BUFFER},
-		debug_name,
-	))
-}
-
-@(link_name="ez_gfx_c_vertex_upload_indices")
-@(export)
-ez_gfx_c_vertex_upload_indices :: proc "c" (
-	data: rawptr,
-	count: u32,
-	out_start_index: ^u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	if out_start_index == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_start_index^ = 0
-	context = c_context
-	start_index, status := ez_gfx_vertex_manager_upload_indices_raw(
-		&owner.ctx.vertex_manager,
-		data,
-		count,
-	)
-	out_start_index^ = start_index
-	return c_status(status)
-}
-
-@(link_name="ez_gfx_c_vertex_upload")
-@(export)
-ez_gfx_c_vertex_upload :: proc "c" (
-	heap_name: cstring,
+ez_gfx_vertex_upload_raw :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	heap_name: string,
 	data: rawptr,
 	element_count: u32,
-	element_size: u64,
-	out_start_index: ^u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	if out_start_index == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_start_index^ = 0
-	context = c_context
-	start_index, status := ez_gfx_vertex_manager_upload_raw(
-		&owner.ctx.vertex_manager,
-		shader_cstring_to_string(heap_name),
-		data,
-		element_count,
-		vk.DeviceSize(element_size),
-	)
-	out_start_index^ = start_index
-	return c_status(status)
+	element_size: vk.DeviceSize,
+) -> (start_index: u32, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_vertex_manager_upload_raw(&ctx.vertex_manager, heap_name, data, element_count, element_size)
 }
 
-@(link_name="ez_gfx_c_enable_all_decoders")
-@(export)
-ez_gfx_c_enable_all_decoders :: proc "c" (context_handle: u64) -> i32 {
-	c_context, _, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_enable_all_decoders())
+ez_gfx_begin_render_surface :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	surface, surface_status := resolve_surface(ctx, surface_handle)
+	if surface_status != .Ok do return surface_status
+	return ez_gfx_begin_render(surface)
 }
 
-@(link_name="ez_gfx_c_texture_load")
-@(export)
-ez_gfx_c_texture_load :: proc "c" (
-	data: rawptr,
-	data_size: u64,
-	desc: ^Ez_Gfx_C_Texture_Desc,
-	out_texture_id: ^u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return i32(Ez_Gfx_Texture_Error.Invalid_Context)
-	if out_texture_id == nil do return i32(Ez_Gfx_Texture_Error.Invalid_Arguments)
-	out_texture_id^ = 0
-	context = c_context
-	owned_bytes, texture_id, err := ez_gfx_texture_load_bytes(data, data_size, desc)
-	if err != .None do return i32(err)
-	append(&owner.texture_data, owned_bytes)
-	out_texture_id^ = u32(texture_id)
-	return i32(err)
+ez_gfx_finish_render_context :: proc(context_handle: Ez_Gfx_Context_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	return ez_gfx_finish_render()
 }
 
-@(link_name="ez_gfx_c_texture_unload")
-@(export)
-ez_gfx_c_texture_unload :: proc "c" (
-	texture_id: u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, _, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return i32(Ez_Gfx_Texture_Error.Invalid_Context)
-	context = c_context
-	return i32(ez_gfx_unload_texture(Ez_Gfx_Texture_ID(texture_id)))
-}
-
-@(link_name="ez_gfx_c_begin_render")
-@(export)
-ez_gfx_c_begin_render :: proc "c" (surface_handle: u64, context_handle: u64) -> i32 {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_begin_render(&surface.surface))
-}
-
-@(link_name="ez_gfx_c_acquire_indirect")
-@(export)
-ez_gfx_c_acquire_indirect :: proc "c" (
+ez_gfx_acquire_indirect :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
 	capacity: u32,
 	debug_name: cstring,
-	out_indirect: ^u64,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	if out_indirect == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_indirect^ = 0
-	context = c_context
-	handle, status := ez_gfx_render_acquire_indirect_buffer(vk.DrawIndexedIndirectCommand, capacity, debug_name)
-	if status != .Ok {
-		return c_status(status)
+) -> (handle: Ez_Gfx_Indirect_Handle, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	internal, acquire_status := ez_gfx_render_acquire_indirect_buffer(vk.DrawIndexedIndirectCommand, capacity, debug_name)
+	if acquire_status != .Ok do return 0, acquire_status
+	local, err := ga.insert(&ctx.indirect_arena, internal)
+	if err != .None do return 0, arena_status(err)
+	packed, pack_status := pack_child_handle(ctx, .Indirect, local)
+	if pack_status != .Ok {
+		_ = ga.remove(&ctx.indirect_arena, local)
+		return 0, pack_status
 	}
-	indirect := new(Ez_Gfx_C_Indirect)
-	indirect.owner = owner
-	indirect.handle = handle
-	indirect.opaque_handle = c_resource_register(.Indirect, rawptr(indirect))
-	out_indirect^ = c_indirect_handle(indirect)
-	return EZ_GFX_C_RESULT_OK
+	return Ez_Gfx_Indirect_Handle(packed), .Ok
 }
 
-@(link_name="ez_gfx_c_indirect_write_draw")
-@(export)
-ez_gfx_c_indirect_write_draw :: proc "c" (
-	indirect_handle: u64,
+ez_gfx_indirect_write_draw :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	indirect_handle: Ez_Gfx_Indirect_Handle,
 	index: u32,
-	command: ^Ez_Gfx_C_Draw_Indexed_Command,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	indirect := c_indirect_from_handle(indirect_handle)
-	if indirect == nil || indirect.owner != owner {
-		return EZ_GFX_C_RESULT_INVALID_CONTEXT
-	}
-	if command == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	odin_command := vk.DrawIndexedIndirectCommand {
-		indexCount    = command.index_count,
-		instanceCount = command.instance_count,
-		firstIndex    = command.first_index,
-		vertexOffset  = command.vertex_offset,
-		firstInstance = command.first_instance,
-	}
-	return c_status(ez_gfx_indirect_buffer_write_draw(&indirect.handle, index, odin_command))
+	command: vk.DrawIndexedIndirectCommand,
+) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	indirect, indirect_status := resolve_indirect(ctx, indirect_handle)
+	if indirect_status != .Ok do return indirect_status
+	return ez_gfx_indirect_buffer_write_draw(indirect, index, command)
 }
 
-@(link_name="ez_gfx_c_indirect_set_draw_count")
-@(export)
-ez_gfx_c_indirect_set_draw_count :: proc "c" (
-	indirect_handle: u64,
+ez_gfx_indirect_set_draw_count :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	indirect_handle: Ez_Gfx_Indirect_Handle,
 	count: u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	indirect := c_indirect_from_handle(indirect_handle)
-	if indirect == nil || indirect.owner != owner {
-		return EZ_GFX_C_RESULT_INVALID_CONTEXT
-	}
-	return c_status(ez_gfx_indirect_buffer_set_draw_count(&indirect.handle, count))
+) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	indirect, indirect_status := resolve_indirect(ctx, indirect_handle)
+	if indirect_status != .Ok do return indirect_status
+	return ez_gfx_indirect_buffer_set_draw_count(indirect, count)
 }
 
-@(link_name="ez_gfx_c_indirect_release")
-@(export)
-ez_gfx_c_indirect_release :: proc "c" (indirect_handle: u64, context_handle: u64) {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return
-	context = c_context
-	indirect := c_indirect_from_handle(indirect_handle)
-	if indirect == nil || indirect.owner != owner do return
-	c_resource_unregister(.Indirect, indirect_handle)
-	free(indirect)
+ez_gfx_indirect_release :: proc(context_handle: Ez_Gfx_Context_Handle, indirect_handle: Ez_Gfx_Indirect_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	local, identity_status := remove_child_identity(ctx, u64(indirect_handle), .Indirect)
+	if identity_status != .Ok do return identity_status
+	_ = ga.remove(&ctx.indirect_arena, local)
+	return .Ok
 }
 
-@(link_name="ez_gfx_c_structured_acquire")
-@(export)
-ez_gfx_c_structured_acquire :: proc "c" (
-	element_size: u32,
+ez_gfx_acquire_structured :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	$T: typeid,
 	element_count: u32,
 	debug_name: cstring,
-	out_structured: ^u64,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	if out_structured == nil do return EZ_GFX_C_RESULT_INVALID_ARGUMENT
-	out_structured^ = 0
-	context = c_context
-	handle, status := ez_gfx_render_acquire_structured_buffer_bytes(element_size, element_count, debug_name)
-	if status != .Ok do return c_status(status)
-	structured := new(Ez_Gfx_C_Structured)
-	structured.owner = owner
-	structured.handle = handle
-	structured.opaque_handle = c_resource_register(.Structured, rawptr(structured))
-	out_structured^ = c_structured_handle(structured)
-	return EZ_GFX_C_RESULT_OK
+) -> (handle: Ez_Gfx_Structured_Handle, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	view, acquire_status := ez_gfx_render_acquire_structured_buffer(T, element_count, debug_name)
+	if acquire_status != .Ok do return 0, acquire_status
+	local, err := ga.insert(&ctx.structured_arena, view.handle)
+	if err != .None do return 0, arena_status(err)
+	packed, pack_status := pack_child_handle(ctx, .Structured, local)
+	if pack_status != .Ok {
+		_ = ga.remove(&ctx.structured_arena, local)
+		return 0, pack_status
+	}
+	return Ez_Gfx_Structured_Handle(packed), .Ok
 }
 
-@(link_name="ez_gfx_c_structured_write")
-@(export)
-ez_gfx_c_structured_write :: proc "c" (
-	structured_handle: u64,
+ez_gfx_acquire_structured_bytes :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	element_size, element_count: u32,
+	debug_name: cstring,
+) -> (handle: Ez_Gfx_Structured_Handle, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return 0, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	internal, acquire_status := ez_gfx_render_acquire_structured_buffer_bytes(element_size, element_count, debug_name)
+	if acquire_status != .Ok do return 0, acquire_status
+	local, err := ga.insert(&ctx.structured_arena, internal)
+	if err != .None do return 0, arena_status(err)
+	packed, pack_status := pack_child_handle(ctx, .Structured, local)
+	if pack_status != .Ok {
+		_ = ga.remove(&ctx.structured_arena, local)
+		return 0, pack_status
+	}
+	return Ez_Gfx_Structured_Handle(packed), .Ok
+}
+
+ez_gfx_structured_write :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	structured_handle: Ez_Gfx_Structured_Handle,
 	data: rawptr,
 	data_size: u64,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	structured := c_structured_from_handle(structured_handle)
-	if structured == nil || structured.owner != owner {
-		return EZ_GFX_C_RESULT_INVALID_CONTEXT
+) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	structured, structured_status := resolve_structured(ctx, structured_handle)
+	if structured_status != .Ok do return structured_status
+	return ez_gfx_structured_buffer_write(structured, data, data_size)
+}
+
+ez_gfx_structured_release :: proc(context_handle: Ez_Gfx_Context_Handle, structured_handle: Ez_Gfx_Structured_Handle) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	local, identity_status := remove_child_identity(ctx, u64(structured_handle), .Structured)
+	if identity_status != .Ok do return identity_status
+	_ = ga.remove(&ctx.structured_arena, local)
+	return .Ok
+}
+
+ez_gfx_render_add_vertex_pipeline_handles :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	shader_handle: Ez_Gfx_Shader_Handle,
+	indirect_handle: Ez_Gfx_Indirect_Handle,
+	bindings: []Ez_Gfx_Public_Render_Binding,
+	dynamic_state: Ez_Gfx_Render_Dynamic_State = {},
+	push_constant_data: rawptr = nil,
+	push_constant_size: u32 = 0,
+) -> (descriptor: Ez_Gfx_Vertex_Pipeline_Descriptor, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return descriptor, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	shader, shader_status := resolve_shader(ctx, shader_handle)
+	if shader_status != .Ok do return descriptor, shader_status
+	indirect, indirect_status := resolve_indirect(ctx, indirect_handle)
+	if indirect_status != .Ok do return descriptor, indirect_status
+	odin_bindings: [EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS]Ez_Gfx_Render_Binding
+	if binding_status := resolve_public_bindings(ctx, bindings, &odin_bindings); binding_status != .Ok {
+		return descriptor, binding_status
 	}
-	return c_status(ez_gfx_structured_buffer_write(&structured.handle, data, data_size))
+	return ez_gfx_render_add_vertex_pipeline_raw(shader, indirect^, odin_bindings[:len(bindings)], dynamic_state, push_constant_data, push_constant_size)
 }
 
-@(link_name="ez_gfx_c_structured_release")
-@(export)
-ez_gfx_c_structured_release :: proc "c" (structured_handle: u64, context_handle: u64) {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return
-	context = c_context
-	structured := c_structured_from_handle(structured_handle)
-	if structured == nil || structured.owner != owner do return
-	c_resource_unregister(.Structured, structured_handle)
-	free(structured)
-}
-
-@(link_name="ez_gfx_c_render_add_vertex_pipeline")
-@(export)
-ez_gfx_c_render_add_vertex_pipeline :: proc "c" (
-	shader_handle: u64,
-	indirect_handle: u64,
-	bindings: [^]Ez_Gfx_C_Binding,
-	binding_count: u32,
-	dynamic_state: ^Ez_Gfx_C_Dynamic_State,
-	push_constants: rawptr,
-	push_constant_size: u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	shader := c_shader_from_handle(shader_handle)
-	indirect := c_indirect_from_handle(indirect_handle)
-	if shader == nil || shader.owner != owner || indirect == nil || indirect.owner != owner {
-		return EZ_GFX_C_RESULT_INVALID_CONTEXT
-	}
-	return c_status(render_add_vertex_pipeline_from_c(
-		owner,
-		&shader.shader,
-		indirect.handle,
-		bindings,
-		binding_count,
-		dynamic_state,
-		push_constants,
-		push_constant_size,
-	))
-}
-
-@(link_name="ez_gfx_c_render_add_compute_pipeline")
-@(export)
-ez_gfx_c_render_add_compute_pipeline :: proc "c" (
-	shader_handle: u64,
+ez_gfx_render_add_compute_pipeline_handles :: proc(
+	context_handle: Ez_Gfx_Context_Handle,
+	shader_handle: Ez_Gfx_Shader_Handle,
 	dispatch_x, dispatch_y, dispatch_z: u32,
-	bindings: [^]Ez_Gfx_C_Binding,
-	binding_count: u32,
-	push_constants: rawptr,
-	push_constant_size: u32,
-	context_handle: u64,
-) -> i32 {
-	c_context, owner, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	shader := c_shader_from_handle(shader_handle)
-	if shader == nil || shader.owner != owner {
-		return EZ_GFX_C_RESULT_INVALID_CONTEXT
+	bindings: []Ez_Gfx_Public_Render_Binding,
+	push_constant_data: rawptr = nil,
+	push_constant_size: u32 = 0,
+) -> (descriptor: Ez_Gfx_Compute_Pipeline_Descriptor, status: Ez_Gfx_Status) {
+	ctx, previous, ctx_status := with_context(context_handle)
+	if ctx_status != .Ok do return descriptor, ctx_status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	shader, shader_status := resolve_shader(ctx, shader_handle)
+	if shader_status != .Ok do return descriptor, shader_status
+	odin_bindings: [EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS]Ez_Gfx_Render_Binding
+	if binding_status := resolve_public_bindings(ctx, bindings, &odin_bindings); binding_status != .Ok {
+		return descriptor, binding_status
 	}
-	return c_status(render_add_compute_pipeline_from_c(
-		owner,
-		&shader.shader,
-		dispatch_x,
-		dispatch_y,
-		dispatch_z,
-		bindings,
-		binding_count,
-		push_constants,
-		push_constant_size,
-	))
+	return ez_gfx_render_add_compute_pipeline_raw(shader, dispatch_x, dispatch_y, dispatch_z, odin_bindings[:len(bindings)], push_constant_data, push_constant_size)
 }
 
-@(link_name="ez_gfx_c_finish_render")
-@(export)
-ez_gfx_c_finish_render :: proc "c" (context_handle: u64) -> i32 {
-	c_context, _, context_status := c_context_for_handle(context_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_finish_render())
-}
-
-@(link_name="ez_gfx_c_screenshot_save")
-@(export)
-ez_gfx_c_screenshot_save :: proc "c" (
-	surface_handle: u64,
-	path: cstring,
-	context_handle: u64,
-) -> i32 {
-	c_context, _, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	return c_status(ez_gfx_screenshot_save_window(&surface.surface, shader_cstring_to_string(path)))
-}
-@(link_name="ez_gfx_c_imgui_render_demo")
-@(export)
-ez_gfx_c_imgui_render_demo :: proc "c" (surface_handle: u64, context_handle: u64) -> i32 {
-	c_context, owner, surface, context_status := c_context_surface_for_handle(context_handle, surface_handle)
-	if context_status != EZ_GFX_C_RESULT_OK do return context_status
-	context = c_context
-	if !c_imgui_init(owner) do return EZ_GFX_C_RESULT_NATIVE_FAILURE
-
-	width, height := window_get_framebuffer_size(&surface.surface)
-	if width <= 0 || height <= 0 do return EZ_GFX_C_RESULT_NOT_READY
-	im.set_current_context(c_imgui_context(owner))
-	io := im.get_io()
-	io.display_size = {f32(width), f32(height)}
-
-	im.new_frame()
-	im.show_demo_window(nil)
-	im.render()
-	draw_data := im.get_draw_data()
-	if draw_data == nil || !draw_data.valid do return EZ_GFX_C_RESULT_NATIVE_FAILURE
-	if !c_imgui_upload_textures(owner, draw_data) {
-		return EZ_GFX_C_RESULT_NATIVE_FAILURE
-	}
-
-	if draw_data.cmd_lists_count <= 0 || draw_data.total_vtx_count <= 0 || draw_data.total_idx_count <= 0 {
-		if status := ez_gfx_begin_render(&surface.surface); status != .Ok do return c_status(status)
-		return c_status(ez_gfx_finish_render())
-	}
-
-	total_vtx := int(draw_data.total_vtx_count)
-	total_idx := int(draw_data.total_idx_count)
-	total_cmds := 0
-	cmd_lists := mem.slice_ptr(draw_data.cmd_lists.data, int(draw_data.cmd_lists_count))
-	for cmd_list in cmd_lists {
-		if cmd_list == nil do continue
-		for cmd in mem.slice_ptr(cmd_list.cmd_buffer.data, int(cmd_list.cmd_buffer.size)) {
-			if cmd.user_callback == nil do total_cmds += 1
-		}
-	}
-	if total_cmds == 0 do return EZ_GFX_C_RESULT_NATIVE_FAILURE
-
-	vertices := make([]Ez_Gfx_C_ImGui_Vertex, total_vtx)
-	indices := make([]u32, total_idx)
-	commands := make([]Ez_Gfx_C_ImGui_Draw_Command, total_cmds)
-	defer delete(vertices)
-	defer delete(indices)
-	defer delete(commands)
-
-	display_pos := draw_data.display_pos
-	framebuffer_scale := draw_data.framebuffer_scale
-	vtx_offset := 0
-	idx_offset := 0
-	cmd_offset := 0
-	for cmd_list in cmd_lists {
-		if cmd_list == nil do continue
-		vtx := mem.slice_ptr(cmd_list.vtx_buffer.data, int(cmd_list.vtx_buffer.size))
-		for vertex_index in 0 ..< len(vtx) {
-			source := vtx[vertex_index]
-			destination := &vertices[vtx_offset + vertex_index]
-			destination.pos = {
-				(source.pos.x - display_pos.x) * framebuffer_scale.x,
-				(source.pos.y - display_pos.y) * framebuffer_scale.y,
-			}
-			destination.uv = source.uv
-			destination.col = source.col
-		}
-
-		idx := mem.slice_ptr(cmd_list.idx_buffer.data, int(cmd_list.idx_buffer.size))
-		for index_index in 0 ..< len(idx) {
-			indices[idx_offset + index_index] = u32(idx[index_index])
-		}
-
-		cmds := mem.slice_ptr(cmd_list.cmd_buffer.data, int(cmd_list.cmd_buffer.size))
-		for source_index in 0 ..< len(cmds) {
-			source := &cmds[source_index]
-			if source.user_callback != nil do continue
-			destination := &commands[cmd_offset]
-			clip := source.clip_rect
-			destination.clip_rect = {
-				(clip.x - display_pos.x) * framebuffer_scale.x,
-				(clip.y - display_pos.y) * framebuffer_scale.y,
-				(clip.z - display_pos.x) * framebuffer_scale.x,
-				(clip.w - display_pos.y) * framebuffer_scale.y,
-			}
-			destination.texture_id = u32(im.draw_cmd_get_tex_id(source))
-			destination.idx_offset = u32(idx_offset) + source.idx_offset
-			destination.vtx_offset = u32(vtx_offset) + source.vtx_offset
-			cmd_offset += 1
-		}
-		vtx_offset += len(vtx)
-		idx_offset += len(idx)
-	}
-
-	if status := ez_gfx_begin_render(&surface.surface); status != .Ok do return c_status(status)
-	vertex_buffer, vertex_status := ez_gfx_render_acquire_structured_buffer(
-		Ez_Gfx_C_ImGui_Vertex,
-		u32(total_vtx),
-		"imgui vertices",
-	)
-	if vertex_status != .Ok {
-		get_current_ctx().render = {}
-		return c_status(vertex_status)
-	}
-	index_buffer, index_status := ez_gfx_render_acquire_structured_buffer(
-		u32,
-		u32(total_idx),
-		"imgui indices",
-	)
-	if index_status != .Ok {
-		get_current_ctx().render = {}
-		return c_status(index_status)
-	}
-	command_buffer, command_status := ez_gfx_render_acquire_structured_buffer(
-		Ez_Gfx_C_ImGui_Draw_Command,
-		u32(total_cmds),
-		"imgui draw commands",
-	)
-	if command_status != .Ok {
-		get_current_ctx().render = {}
-		return c_status(command_status)
-	}
-	mem.copy(vertex_buffer.elements, raw_data(vertices), len(vertices) * size_of(Ez_Gfx_C_ImGui_Vertex))
-	mem.copy(index_buffer.elements, raw_data(indices), len(indices) * size_of(u32))
-	mem.copy(command_buffer.elements, raw_data(commands), len(commands) * size_of(Ez_Gfx_C_ImGui_Draw_Command))
-
-	indirect, indirect_status := ez_gfx_render_acquire_indirect_buffer(
-		vk.DrawIndexedIndirectCommand,
-		u32(total_cmds),
-		"imgui indirect draws",
-	)
-	if indirect_status != .Ok {
-		get_current_ctx().render = {}
-		return c_status(indirect_status)
-	}
-	bindings := [3]Ez_Gfx_Render_Binding {
-		{name = "imgui_vertices", structured = vertex_buffer.handle},
-		{name = "imgui_indices", structured = index_buffer.handle},
-		{name = "imgui_commands", structured = command_buffer.handle},
-	}
-	push := Ez_Gfx_C_ImGui_Push_Constants{display_size = {
-		draw_data.display_size.x * draw_data.framebuffer_scale.x,
-		draw_data.display_size.y * draw_data.framebuffer_scale.y,
-	}}
-	_, pipeline_status := ez_gfx_render_add_vertex_pipeline(
-		&owner.imgui_shader,
-		indirect,
-		bindings[:],
-		{blend_mode = .Alpha},
-		push,
-	)
-	if pipeline_status != .Ok {
-		get_current_ctx().render = {}
-		return c_status(pipeline_status)
-	}
-
-	active_command := 0
-	for cmd_list in cmd_lists {
-		if cmd_list == nil do continue
-		cmds := mem.slice_ptr(cmd_list.cmd_buffer.data, int(cmd_list.cmd_buffer.size))
-		for source_index in 0 ..< len(cmds) {
-			source := &cmds[source_index]
-			if source.user_callback != nil do continue
-			draw := vk.DrawIndexedIndirectCommand {
-				indexCount = source.elem_count,
-				instanceCount = 1,
-				firstIndex = owner.imgui_identity_index_start,
-				vertexOffset = 0,
-				firstInstance = u32(active_command),
-			}
-			if status := ez_gfx_indirect_buffer_write_draw(&indirect, u32(active_command), draw); status != .Ok {
-				get_current_ctx().render = {}
-				return c_status(status)
-			}
-			active_command += 1
-		}
-	}
-	if status := ez_gfx_indirect_buffer_set_draw_count(&indirect, u32(active_command)); status != .Ok {
-		get_current_ctx().render = {}
-		return c_status(status)
-	}
-	return c_status(ez_gfx_finish_render())
+ez_gfx_screenshot_save :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle, path: string) -> Ez_Gfx_Status {
+	ctx, previous, status := with_context(context_handle)
+	if status != .Ok do return status
+	context.user_ptr = ctx
+	defer context.user_ptr = previous
+	surface, surface_status := resolve_surface(ctx, surface_handle)
+	if surface_status != .Ok do return surface_status
+	return ez_gfx_screenshot_save_window(surface, path)
 }

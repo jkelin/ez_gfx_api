@@ -1,10 +1,11 @@
 #+private
 package tests
 
+import shared "../examples/shared"
 import gfx "../src"
-import "core:fmt"
 import image "core:image"
 import "core:os"
+import "core:strings"
 import "core:testing"
 
 SNAPSHOT_DIR :: "tests/snapshots"
@@ -16,7 +17,7 @@ Snapshot_Options :: struct {
 
 expect_window_snapshot :: proc(
 	t: ^testing.T,
-	window: ^gfx.Ez_Gfx_Window,
+	window: ^shared.Example_Window,
 	name: string,
 	options: Snapshot_Options = {},
 ) {
@@ -24,14 +25,6 @@ expect_window_snapshot :: proc(
 	if tolerance == 0 {
 		tolerance = SNAPSHOT_CHANNEL_TOLERANCE
 	}
-
-	width := int(window.swapchain.extent.width)
-	height := int(window.swapchain.extent.height)
-	bgra: []u8
-	if !testing.expect(t, gfx.ez_gfx_screenshot_read_swapchain_bgra(&window.swapchain, &bgra) == .Ok) {
-		return
-	}
-	defer delete(bgra)
 
 	current_path := snapshot_current_path(name)
 	defer delete(current_path)
@@ -41,18 +34,20 @@ expect_window_snapshot :: proc(
 	if !testing.expect(t, snapshot_ensure_dir(), "failed to create snapshot output directory") {
 		return
 	}
-	testing.expectf(
+	if !testing.expectf(
 		t,
-		gfx.ez_gfx_screenshot_write_png(current_path, width, height, bgra) == .Ok,
+		gfx.ez_gfx_screenshot_save(window.ctx, window.surface, current_path) == .Ok,
 		"failed to write current snapshot: %v",
 		current_path,
-	)
-
-	rgba, conversion_status := gfx.ez_gfx_screenshot_bgra_to_rgba(bgra, width, height)
-	if !testing.expect(t, conversion_status == .Ok, "failed to convert captured snapshot pixels") {
+	) {
 		return
 	}
-	defer delete(rgba)
+
+	current, width, height, current_loaded := snapshot_load_png_rgba(current_path)
+	if !testing.expectf(t, current_loaded, "missing or invalid current snapshot: %v", current_path) {
+		return
+	}
+	defer delete(current)
 
 	expected, expected_width, expected_height, loaded := snapshot_load_png_rgba(expected_path)
 	if !testing.expectf(
@@ -79,7 +74,7 @@ expect_window_snapshot :: proc(
 		return
 	}
 
-	diff := snapshot_compare_rgba(expected, rgba, width, height, tolerance)
+	diff := snapshot_compare_rgba(expected, current, width, height, tolerance)
 	testing.expectf(
 		t,
 		diff.different_pixels == 0,
@@ -141,62 +136,36 @@ snapshot_load_png_rgba :: proc(path: string) -> (
 	defer delete(bytes)
 
 	img, img_err := image.load_from_bytes(bytes, {.alpha_add_if_missing})
-	if img_err != nil || img == nil {
+	if img_err != nil {
 		return nil, 0, 0, false
 	}
 	defer image.destroy(img)
-	if img.width <= 0 || img.height <= 0 || img.depth != 8 || img.channels != 4 {
+	if img.width <= 0 || img.height <= 0 || len(img.pixels.buf) != img.width * img.height * 4 {
 		return nil, 0, 0, false
 	}
-
-	decoded, alloc_err := make([]u8, img.width * img.height * 4)
-	if alloc_err != nil {
-		return nil, 0, 0, false
-	}
-	for i in 0 ..< len(decoded) {
-		decoded[i] = img.pixels.buf[i]
-	}
-	return decoded, img.width, img.height, true
-}
-
-snapshot_ensure_dir :: proc() -> bool {
-	if os.exists(SNAPSHOT_DIR) {
-		return true
-	}
-	return os.make_directory(SNAPSHOT_DIR) == nil
-}
-
-snapshot_expected_path :: proc(name: string) -> string {
-	return snapshot_path(name, ".expected.png")
+	pixels = make([]u8, len(img.pixels.buf))
+	copy(pixels, img.pixels.buf[:])
+	return pixels, img.width, img.height, true
 }
 
 snapshot_current_path :: proc(name: string) -> string {
-	return snapshot_path(name, ".current.png")
+	return snapshot_path(name, "current")
+}
+
+snapshot_expected_path :: proc(name: string) -> string {
+	return snapshot_path(name, "expected")
 }
 
 snapshot_path :: proc(name, suffix: string) -> string {
-	separator := "/"
-	size := len(SNAPSHOT_DIR) + len(separator) + len(name) + len(suffix)
-	bytes, alloc_err := make([]byte, size)
-	if alloc_err != nil {
-		return ""
-	}
-	offset := 0
-	for value in SNAPSHOT_DIR {
-		bytes[offset] = byte(value)
-		offset += 1
-	}
-	for value in separator {
-		bytes[offset] = byte(value)
-		offset += 1
-	}
-	for value in name {
-		bytes[offset] = byte(value)
-		offset += 1
-	}
-	for value in suffix {
-		bytes[offset] = byte(value)
-		offset += 1
-	}
-	return string(bytes)
+	file_name := strings.concatenate({name, ".", suffix, ".png"})
+	defer delete(file_name)
+	path, err := os.join_path({SNAPSHOT_DIR, file_name}, context.allocator)
+	if err != nil do return ""
+	return path
+}
+
+snapshot_ensure_dir :: proc() -> bool {
+	if os.is_dir(SNAPSHOT_DIR) do return true
+	err := os.make_directory(SNAPSHOT_DIR)
+	return err == nil || os.is_dir(SNAPSHOT_DIR)
 }

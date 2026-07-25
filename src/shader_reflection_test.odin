@@ -1,7 +1,7 @@
+#+test
 #+private
-package tests
+package ez_gfx
 
-import gfx "../src"
 import "core:os"
 import "core:testing"
 
@@ -12,7 +12,7 @@ Shader_Case :: struct {
 	expected_declarations: int,
 }
 
-shader_test_ctx: gfx.Ez_Gfx_Ctx
+shader_test_ctx: Ez_Gfx_Ctx
 
 @(test)
 valid_targets_reflects_metadata :: proc(t: ^testing.T) {
@@ -58,30 +58,30 @@ missing_declaration_fails_reflection :: proc(t: ^testing.T) {
 
 @(test)
 duplicate_target_declarations_are_rejected :: proc(t: ^testing.T) {
-	program: gfx.Ez_Gfx_Shader_Program
+	program: Ez_Gfx_Shader_Program
 	testing.expect_value(
 		t,
-		gfx.ez_gfx_copy_shader_target_name_cstring(
+		ez_gfx_copy_shader_target_name_cstring(
 			program.target_declarations[0].name[:],
 			&program.target_declarations[0].name_len,
 			"depth",
 		),
-		gfx.Ez_Gfx_Status.Ok,
+		Ez_Gfx_Status.Ok,
 	)
 	testing.expect_value(
 		t,
-		gfx.ez_gfx_copy_shader_target_name_cstring(
+		ez_gfx_copy_shader_target_name_cstring(
 			program.target_declarations[1].name[:],
 			&program.target_declarations[1].name_len,
 			"depth",
 		),
-		gfx.Ez_Gfx_Status.Ok,
+		Ez_Gfx_Status.Ok,
 	)
 	program.target_declaration_count = 2
 	testing.expect_value(
 		t,
-		gfx.ez_gfx_shader_validate_unique_target_declarations(&program),
-		gfx.Ez_Gfx_Status.Native_Failure,
+		ez_gfx_shader_validate_unique_target_declarations(&program),
+		Ez_Gfx_Status.Native_Failure,
 	)
 }
 
@@ -111,7 +111,7 @@ compute_structured_reflects_metadata :: proc(t: ^testing.T) {
 	if !ok do return
 
 	testing.expect_value(t, program.structured_buffer_binding_count, 1)
-	testing.expect_value(t, program.structured_buffer_bindings[0].access, gfx.Ez_Gfx_Buffer_Access.Read_Write)
+	testing.expect_value(t, program.structured_buffer_bindings[0].access, Ez_Gfx_Buffer_Access.Read_Write)
 	testing.expect(t, program.structured_buffer_bindings[0].stages == {.COMPUTE})
 }
 
@@ -125,7 +125,7 @@ compute_indirect_reflects_count_and_elements :: proc(t: ^testing.T) {
 	element_binding := &program.structured_buffer_bindings[1]
 	testing.expect(
 		t,
-		gfx.ez_gfx_shader_target_name_equals_cstring(
+		ez_gfx_shader_target_name_equals_cstring(
 			count_binding.name[:],
 			count_binding.name_len,
 			"draws.count",
@@ -133,14 +133,14 @@ compute_indirect_reflects_count_and_elements :: proc(t: ^testing.T) {
 	)
 	testing.expect(
 		t,
-		gfx.ez_gfx_shader_target_name_equals_cstring(
+		ez_gfx_shader_target_name_equals_cstring(
 			element_binding.name[:],
 			element_binding.name_len,
 			"draws.elements",
 		),
 	)
-	testing.expect_value(t, count_binding.access, gfx.Ez_Gfx_Buffer_Access.Read_Write)
-	testing.expect_value(t, element_binding.access, gfx.Ez_Gfx_Buffer_Access.Read_Write)
+	testing.expect_value(t, count_binding.access, Ez_Gfx_Buffer_Access.Read_Write)
+	testing.expect_value(t, element_binding.access, Ez_Gfx_Buffer_Access.Read_Write)
 	testing.expect_value(t, count_binding.binding, u32(0))
 	testing.expect_value(t, element_binding.binding, u32(1))
 	testing.expect(t, count_binding.stages == {.COMPUTE})
@@ -154,7 +154,7 @@ graphics_structured_reflects_metadata :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, program.vertex_heap_binding_count, 1)
 	testing.expect_value(t, program.structured_buffer_binding_count, 1)
-	testing.expect_value(t, program.structured_buffer_bindings[0].access, gfx.Ez_Gfx_Buffer_Access.Read)
+	testing.expect_value(t, program.structured_buffer_bindings[0].access, Ez_Gfx_Buffer_Access.Read)
 }
 
 @(test)
@@ -222,16 +222,16 @@ reflect_shader :: proc(
 	t: ^testing.T,
 	path: cstring,
 ) -> (
-	program: gfx.Ez_Gfx_Shader_Program,
+	program: Ez_Gfx_Shader_Program,
 	ok: bool,
 ) {
 	_ = t
 	context.user_ptr = &shader_test_ctx
-	ok = gfx.ez_gfx_shader_reflect(
+	ok = ez_gfx_shader_reflect(
 		{
 			path = path,
-			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
-			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+			vertex_entry = EZ_GFX_DEFAULT_VERTEX_ENTRY,
+			fragment_entry = EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 		},
 		&program,
 	) == .Ok
@@ -242,15 +242,15 @@ reflect_compute_shader :: proc(
 	t: ^testing.T,
 	path: cstring,
 ) -> (
-	program: gfx.Ez_Gfx_Shader_Program,
+	program: Ez_Gfx_Shader_Program,
 	ok: bool,
 ) {
 	_ = t
 	context.user_ptr = &shader_test_ctx
-	ok = gfx.ez_gfx_shader_reflect(
+	ok = ez_gfx_shader_reflect(
 		{
 			path = path,
-			compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
+			compute_entry = EZ_GFX_DEFAULT_COMPUTE_ENTRY,
 			kind = .Compute,
 		},
 		&program,

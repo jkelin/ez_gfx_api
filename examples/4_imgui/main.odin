@@ -37,14 +37,14 @@ ImGui_Draw_Command :: struct {
 }
 
 App :: struct {
-	ctx:                      gfx.Ez_Gfx_Ctx,
-	windows:                  [shared.EXAMPLE_MAX_WINDOWS]gfx.Ez_Gfx_Window,
+	ctx:                      gfx.Ez_Gfx_Context_Handle,
+	windows:                  [shared.EXAMPLE_MAX_WINDOWS]shared.Example_Window,
 	window_count:             int,
-	shader:                   gfx.Ez_Gfx_Shader_Program,
+	shader:                   gfx.Ez_Gfx_Shader_Handle,
 	shader_loaded:            bool,
 	imgui_context:            ^im.Context,
 	imgui_initialized:        bool,
-	font_texture_id:          gfx.Ez_Gfx_Texture_ID,
+	font_texture_id:          gfx.Ez_Gfx_Texture_Handle,
 	font_texture_loaded:      bool,
 	font_atlas_pixels:        []u8,
 	identity_index_start:     u32,
@@ -54,7 +54,6 @@ App :: struct {
 
 main :: proc() {
 	app := new(App)
-	context.user_ptr = &app.ctx
 	defer free(app)
 	defer cleanup(app)
 	init_app(app)
@@ -64,27 +63,29 @@ main :: proc() {
 init_app :: proc(app: ^App) {
 	assert(shared.example_glfw_init())
 
-	context.user_ptr = &app.ctx
-	assert(gfx.ez_gfx_enable_all_decoders() == .Ok, "failed to enable image decoders")
+	fmt.println("checkpoint: instance create")
+	ctx_handle, ctx_status := gfx.ez_gfx_context_create({
+		enable_debug = true,
+		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
+	})
+	assert(ctx_status == .Ok)
+	app.ctx = ctx_handle
+
+	assert(gfx.ez_gfx_enable_all_decoders_for_context(app.ctx) == .Ok, "failed to enable image decoders")
 	app.window_count = 1
 	main_window := &app.windows[0]
 
 	assert(
-		shared.example_window_create(main_window, "ez_gfx_api Dear ImGui", WIDTH, HEIGHT),
+		shared.example_window_create(main_window, app.ctx, "ez_gfx_api Dear ImGui", WIDTH, HEIGHT),
 	)
 	imgui_early_init(app, main_window)
 
-	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {
-		enable_debug = true,
-		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
-	}) == .Ok)
-	assert(gfx.ez_gfx_window_create_surface(main_window) == .Ok)
-	assert(gfx.ez_gfx_ctx_init_device(main_window.surface) == .Ok)
-	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height) == .Ok)
+	assert(gfx.ez_gfx_surface_init_device(app.ctx, main_window.surface) == .Ok)
+	assert(gfx.ez_gfx_surface_resize(app.ctx, main_window.surface, u32(main_window.framebuffer_width), u32(main_window.framebuffer_height)) == .Ok)
 	imgui_gpu_init(app)
 }
 
-imgui_early_init :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
+imgui_early_init :: proc(app: ^App, window: ^shared.Example_Window) {
 	im.CHECKVERSION()
 	app.imgui_context = im.create_context()
 	app.imgui_initialized = true
@@ -97,23 +98,17 @@ imgui_early_init :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 }
 
 imgui_gpu_init :: proc(app: ^App) {
-	assert(gfx.ez_gfx_shader_compile({
-				path = IMGUI_SHADER_PATH,
-				vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
-				fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
-			},
-			&app.shader,) == .Ok)
+	shader_handle, shader_status := gfx.ez_gfx_shader_create(app.ctx, {
+		path = IMGUI_SHADER_PATH,
+		vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
+		fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
+	})
+	assert(shader_status == .Ok)
+	app.shader = shader_handle
 	app.shader_loaded = true
 
-	gfx.ez_gfx_vertex_manager_begin(&app.ctx.vertex_manager)
 	index_heap_bytes := vk.DeviceSize(IDENTITY_INDEX_COUNT * size_of(u32)) + 4096
-	gfx.ez_gfx_gpu_heap_create(
-		&app.ctx.vertex_manager.index_heap,
-		index_heap_bytes,
-		vk.DeviceSize(size_of(u32)),
-		{.INDEX_BUFFER},
-		"imgui identity index heap",
-	)
+	gfx.ez_gfx_index_heap_create(app.ctx, index_heap_bytes, "imgui identity index heap")
 	imgui_upload_identity_indices(app)
 }
 
@@ -128,13 +123,13 @@ imgui_update_textures :: proc(app: ^App, draw_data: ^im.Draw_Data) {
 			imgui_upload_texture(app, tex)
 		case .Want_Destroy:
 			if tex.unused_frames > 0 {
-				gpu_id := gfx.Ez_Gfx_Texture_ID(im.texture_data_get_tex_id(tex))
-				if gpu_id != 0 {
-					_ = gfx.ez_gfx_unload_texture(gpu_id)
+				gpu_id := u32(im.texture_data_get_tex_id(tex))
+				if gpu_id != 0 && app.font_texture_loaded {
+					_ = gfx.ez_gfx_texture_unload(app.ctx, app.font_texture_id)
 				}
 				im.texture_data_set_tex_id(tex, 0)
 				im.texture_data_set_status(tex, .Destroyed)
-				if gpu_id == app.font_texture_id {
+				if gpu_id != 0 {
 					app.font_texture_loaded = false
 				}
 			}
@@ -155,13 +150,14 @@ imgui_upload_texture :: proc(app: ^App, tex: ^im.Texture_Data) {
 	}
 	mem.copy(raw_data(app.font_atlas_pixels), pixels, byte_count)
 
-	existing_id := gfx.Ez_Gfx_Texture_ID(im.texture_data_get_tex_id(tex))
+	existing_id := u32(im.texture_data_get_tex_id(tex))
 	if existing_id != 0 && app.font_texture_loaded {
-		_ = gfx.ez_gfx_unload_texture(existing_id)
+		_ = gfx.ez_gfx_texture_unload(app.ctx, app.font_texture_id)
 		app.font_texture_loaded = false
 	}
 
-	texture_id, texture_err := gfx.ez_gfx_load_texture(
+	texture_handle, texture_err := gfx.ez_gfx_texture_load(
+		app.ctx,
 		[]gfx.Ez_Gfx_Texture_Memory_Region{{data = app.font_atlas_pixels}},
 		{
 			source_format = .RGBA,
@@ -177,9 +173,11 @@ imgui_upload_texture :: proc(app: ^App, tex: ^im.Texture_Data) {
 		},
 	)
 	assert(texture_err == .None, "failed to schedule imgui texture upload")
+	texture_id, binding_err := gfx.ez_gfx_texture_binding_index(app.ctx, texture_handle)
+	assert(binding_err == .None, "failed to resolve imgui texture binding")
 	im.texture_data_set_tex_id(tex, im.Texture_ID(texture_id))
 	im.texture_data_set_status(tex, .OK)
-	app.font_texture_id = texture_id
+	app.font_texture_id = texture_handle
 	app.font_texture_loaded = true
 }
 
@@ -189,8 +187,8 @@ imgui_upload_identity_indices :: proc(app: ^App) {
 	for i in 0 ..< IDENTITY_INDEX_COUNT {
 		indices[i] = u32(i)
 	}
-	index_start, upload_status := gfx.ez_gfx_vertex_manager_upload_indices(
-		&app.ctx.vertex_manager,
+	index_start, upload_status := gfx.ez_gfx_vertex_upload_indices(
+		app.ctx,
 		indices,
 	)
 	assert(upload_status == .Ok, "failed to upload ImGui identity indices")
@@ -215,11 +213,11 @@ run :: proc(app: ^App) {
 		frame_count += 1
 	}
 
-	gfx.ez_gfx_ctx_wait_idle()
+	gfx.ez_gfx_context_wait_idle(app.ctx)
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		assert(gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
+		assert(gfx.ez_gfx_screenshot_save(app.ctx, main_window.surface, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
 	}
 }
 
@@ -228,7 +226,7 @@ imgui_cmd_list_at :: proc(draw_data: ^im.Draw_Data, index: int) -> ^im.Draw_List
 	return cmd_lists[index]
 }
 
-draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
+draw_frame :: proc(app: ^App, window: ^shared.Example_Window) {
 	if !app.glfw_callbacks_installed {
 		ig_glfw.install_callbacks(shared.example_window_handle(window))
 		app.glfw_callbacks_installed = true
@@ -240,16 +238,16 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 
 	draw_data := im.get_draw_data()
 	if draw_data == nil || !draw_data.valid {
-		if gfx.ez_gfx_begin_render(window) != .Ok do return
-		assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish ImGui render")
+		if gfx.ez_gfx_begin_render_surface(app.ctx, window.surface) != .Ok do return
+		assert(gfx.ez_gfx_finish_render_context(app.ctx) == .Ok, "failed to finish ImGui render")
 		return
 	}
 
 	imgui_update_textures(app, draw_data)
 
 	if draw_data.cmd_lists_count == 0 {
-		if gfx.ez_gfx_begin_render(window) != .Ok do return
-		assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish ImGui render")
+		if gfx.ez_gfx_begin_render_surface(app.ctx, window.surface) != .Ok do return
+		assert(gfx.ez_gfx_finish_render_context(app.ctx) == .Ok, "failed to finish ImGui render")
 		return
 	}
 
@@ -266,8 +264,8 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		}
 	}
 	if total_cmds == 0 {
-		if gfx.ez_gfx_begin_render(window) != .Ok do return
-		assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish ImGui render")
+		if gfx.ez_gfx_begin_render_surface(app.ctx, window.surface) != .Ok do return
+		assert(gfx.ez_gfx_finish_render_context(app.ctx) == .Ok, "failed to finish ImGui render")
 		return
 	}
 
@@ -325,15 +323,17 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		idx_offset += len(idx)
 	}
 
-	if gfx.ez_gfx_begin_render(window) != .Ok do return
+	if gfx.ez_gfx_begin_render_surface(app.ctx, window.surface) != .Ok do return
 
-	vertex_buffer, vertex_buffer_status := gfx.ez_gfx_render_acquire_structured_buffer(
+	vertex_buffer, vertex_buffer_status := gfx.ez_gfx_acquire_structured(
+		app.ctx,
 		ImGui_Vertex,
 		u32(total_vtx),
 		"imgui vertices",
 	)
-	index_buffer, index_buffer_status := gfx.ez_gfx_render_acquire_structured_buffer(u32, u32(total_idx), "imgui indices")
-	command_buffer, command_buffer_status := gfx.ez_gfx_render_acquire_structured_buffer(
+	index_buffer, index_buffer_status := gfx.ez_gfx_acquire_structured(app.ctx, u32, u32(total_idx), "imgui indices")
+	command_buffer, command_buffer_status := gfx.ez_gfx_acquire_structured(
+		app.ctx,
 		ImGui_Draw_Command,
 		u32(total_cmds),
 		"imgui draw commands",
@@ -345,25 +345,21 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		"failed to acquire ImGui buffers",
 	)
 
-	mem.copy(vertex_buffer.elements, raw_data(vertices), len(vertices) * size_of(ImGui_Vertex))
-	mem.copy(index_buffer.elements, raw_data(indices), len(indices) * size_of(u32))
-	mem.copy(
-		command_buffer.elements,
-		raw_data(commands),
-		len(commands) * size_of(ImGui_Draw_Command),
-	)
+	assert(gfx.ez_gfx_structured_write(app.ctx, vertex_buffer, raw_data(vertices), u64(len(vertices) * size_of(ImGui_Vertex))) == .Ok)
+	assert(gfx.ez_gfx_structured_write(app.ctx, index_buffer, raw_data(indices), u64(len(indices) * size_of(u32))) == .Ok)
+	assert(gfx.ez_gfx_structured_write(app.ctx, command_buffer, raw_data(commands), u64(len(commands) * size_of(ImGui_Draw_Command))) == .Ok)
 
-	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
-		vk.DrawIndexedIndirectCommand,
+	indirect, indirect_status := gfx.ez_gfx_acquire_indirect(
+		app.ctx,
 		u32(total_cmds),
 		"imgui indirect draws",
 	)
 	assert(indirect_status == .Ok, "failed to acquire ImGui indirect buffer")
 
-	bindings := [3]gfx.Ez_Gfx_Render_Binding {
-		{name = "imgui_vertices", structured = vertex_buffer.handle},
-		{name = "imgui_indices", structured = index_buffer.handle},
-		{name = "imgui_commands", structured = command_buffer.handle},
+	bindings := [3]gfx.Ez_Gfx_Public_Render_Binding {
+		{name = "imgui_vertices", structured = vertex_buffer},
+		{name = "imgui_indices", structured = index_buffer},
+		{name = "imgui_commands", structured = command_buffer},
 	}
 
 	framebuffer_size := [2]f32 {
@@ -372,12 +368,14 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	}
 	push := ImGui_Push_Constants{display_size = framebuffer_size}
 
-	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(
-		&app.shader,
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline_handles(
+		app.ctx,
+		app.shader,
 		indirect,
 		bindings[:],
 		{blend_mode = .Alpha},
-		push,
+		rawptr(&push),
+		u32(size_of(ImGui_Push_Constants)),
 	)
 	assert(pipeline_status == .Ok, "failed to add ImGui pipeline")
 
@@ -395,37 +393,36 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 				vertexOffset  = 0,
 				firstInstance = u32(active_cmd),
 			}
-			assert(gfx.ez_gfx_indirect_buffer_write_draw(&indirect, u32(active_cmd), draw) == .Ok, "failed to write ImGui draw")
+			assert(gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, u32(active_cmd), draw) == .Ok, "failed to write ImGui draw")
 			active_cmd += 1
 		}
 	}
-	assert(gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, u32(active_cmd)) == .Ok, "failed to set ImGui draw count")
+	assert(gfx.ez_gfx_indirect_set_draw_count(app.ctx, indirect, u32(active_cmd)) == .Ok, "failed to set ImGui draw count")
 
-	assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish ImGui render")
+	assert(gfx.ez_gfx_finish_render_context(app.ctx) == .Ok, "failed to finish ImGui render")
 }
 
 cleanup :: proc(app: ^App) {
-	context.user_ptr = &app.ctx
 	if app.imgui_initialized {
 		ig_glfw.shutdown()
 		im.destroy_context(app.imgui_context)
 		app.imgui_initialized = false
 	}
 	if app.font_texture_loaded {
-		_ = gfx.ez_gfx_unload_texture(app.font_texture_id)
+		_ = gfx.ez_gfx_texture_unload(app.ctx, app.font_texture_id)
 		app.font_texture_loaded = false
 	}
 	if len(app.font_atlas_pixels) > 0 {
 		delete(app.font_atlas_pixels)
 	}
 	if app.shader_loaded {
-		gfx.ez_gfx_shader_destroy(&app.shader)
+		gfx.ez_gfx_shader_release(app.ctx, app.shader)
 		app.shader_loaded = false
 	}
 	for i in 0 ..< app.window_count {
 		shared.example_window_destroy(&app.windows[i])
 	}
 	app.window_count = 0
-	gfx.ez_gfx_ctx_destroy()
+	gfx.ez_gfx_context_destroy(app.ctx)
 	shared.example_glfw_terminate()
 }

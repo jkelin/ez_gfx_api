@@ -73,7 +73,10 @@ vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
 // Creates the Vulkan instance; call before creating any window surface.
 ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {}) -> bool {
 	context.user_ptr = ctx
-	vk.load_proc_addresses_custom(vulkan_global_proc_loader)
+	global_proc: rawptr
+	vulkan_global_proc_loader(&global_proc, "vkGetInstanceProcAddr")
+	if global_proc == nil do return false
+	vk.load_proc_addresses_global(global_proc)
 
 	ctx.enable_validation = desc.enable_validation
 	ctx.enable_debug = desc.enable_debug
@@ -222,6 +225,7 @@ ctx_get_info :: proc(info: ^Ez_Gfx_Ctx_Info) -> bool {
 	info^ = {}
 	info.swapchain_present_mode_count = ctx.swapchain_present_mode_count
 	info.swapchain_present_mode = ctx.swapchain_present_mode
+	info.validation_counts = ctx.validation_counts
 	for i in 0 ..< ctx.swapchain_present_mode_count {
 		info.swapchain_present_modes[i] = ctx.swapchain_present_modes[i]
 	}

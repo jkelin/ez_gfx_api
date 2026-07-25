@@ -57,6 +57,7 @@ public static class Example06
             imageTextures.Add(primitive.TextureIndex, texture);
             textures.Add(texture);
         }
+        uint fallbackBindingIndex = graphics.GetTextureBindingIndex(fallback);
 
         ulong positionBytes = checked((ulong)scene.Primitives.Sum(static primitive => primitive.Positions.Length / 3 * 16));
         ulong normalBytes = checked((ulong)scene.Primitives.Sum(static primitive => primitive.Normals.Length / 3 * 16));
@@ -75,16 +76,18 @@ public static class Example06
             uint uvStart = vertices.UploadVertices("uv", ToUvVec4Bytes(primitive.Uvs), primitive.Uvs.Length / 2, 16);
             uint[] globalIndices = primitive.Indices.Select(index => checked(index + vertexStart)).ToArray();
             uint firstIndex = vertices.UploadIndices(globalIndices);
-            uint textureId = primitive.TextureIndex >= 0 && imageTextures.TryGetValue(primitive.TextureIndex, out TextureResource? texture)
-                ? texture.Id
-                : fallback.Id;
+            uint textureBindingIndex = fallbackBindingIndex;
+            if (primitive.TextureIndex >= 0 && imageTextures.TryGetValue(primitive.TextureIndex, out TextureResource? texture))
+            {
+                textureBindingIndex = graphics.GetTextureBindingIndex(texture);
+            }
             records.Add(new PrimitiveRecord(
                 firstIndex,
                 checked((uint)globalIndices.Length),
                 vertexStart,
                 normalStart,
                 uvStart,
-                textureId,
+                textureBindingIndex,
                 primitive.Transform));
         }
         graphics.WaitIdle();
@@ -162,7 +165,7 @@ public static class Example06
             BitConverter.TryWriteBytes(bytes.AsSpan(offset + 8, 4), record.VertexOffset);
             BitConverter.TryWriteBytes(bytes.AsSpan(offset + 12, 4), record.NormalOffset);
             BitConverter.TryWriteBytes(bytes.AsSpan(offset + 16, 4), record.UvOffset);
-            BitConverter.TryWriteBytes(bytes.AsSpan(offset + 20, 4), record.TextureId);
+            BitConverter.TryWriteBytes(bytes.AsSpan(offset + 20, 4), record.TextureBindingIndex);
             Buffer.BlockCopy(ExampleHost.ColumnMatrixPush(record.Transform), 0, bytes, offset + 32, 64);
         }
         return bytes;
@@ -174,6 +177,6 @@ public static class Example06
         uint VertexOffset,
         uint NormalOffset,
         uint UvOffset,
-        uint TextureId,
+        uint TextureBindingIndex,
         Matrix4x4 Transform);
 }
