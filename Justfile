@@ -42,6 +42,8 @@ apply_vendor_patches:
 # Keep system-installed implicit Vulkan overlays out of automated runs.
 [env("VK_LOADER_LAYERS_DISABLE", "GalaxyOverlayVkLayer*")]
 [env("VK_IMPLICIT_LAYER_PATH", "out")]
+[env("EZ_GFX_HIDDEN_WINDOW", "1")]
+[env("EZ_GFX_SCREENSHOT", "1")]
 test: copy_slang_dll
   odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
 
@@ -106,3 +108,51 @@ example_4_agent: (example_agent "4_imgui" "example_4")
 example_5_agent: (example_agent "5_helmet_cgltf" "example_5")
 
 example_6_agent: (example_agent "6_sponza_ktx2" "example_6")
+
+build-native-dll: copy_slang_dll
+  mkdir -p out
+  odin build src -build-mode:dll -out:out/ez_gfx_native.dll
+
+verify-native-exports: build-native-dll
+  python tools/verify_exports.py --dll out/ez_gfx_native.dll
+
+check-bindings:
+  dotnet build csharp/EzGfx.Native/EzGfx.Native.csproj --configuration Release -p:CheckGeneratedBindingArtifact=true
+
+build-csharp:
+  dotnet build csharp/EzGfx.sln --configuration Release
+
+native-smoke: verify-native-exports build-csharp
+  dotnet run --project csharp/EzGfx.Native.Smoke/EzGfx.Native.Smoke.csproj --configuration Release --no-build
+
+run-odin-examples: copy_slang_dll
+  mkdir -p artifacts/odin
+  EZ_GFX_MAX_FRAMES=1 EZ_GFX_HIDDEN_WINDOW=1 EZ_GFX_SCREENSHOT=1 odin run examples/1_triangle -keep-executable -out:out/example_1.exe
+  cp screenshot.png artifacts/odin/Example01.png
+  EZ_GFX_MAX_FRAMES=1 EZ_GFX_HIDDEN_WINDOW=1 EZ_GFX_SCREENSHOT=1 odin run examples/2_textured_cube -keep-executable -out:out/example_2.exe
+  cp screenshot.png artifacts/odin/Example02.png
+  EZ_GFX_MAX_FRAMES=1 EZ_GFX_HIDDEN_WINDOW=1 EZ_GFX_SCREENSHOT=1 odin run examples/3_compute_structured_buffer -keep-executable -out:out/example_3.exe
+  cp screenshot.png artifacts/odin/Example03.png
+  EZ_GFX_MAX_FRAMES=1 EZ_GFX_HIDDEN_WINDOW=1 EZ_GFX_SCREENSHOT=1 odin run examples/4_imgui -keep-executable -out:out/example_4.exe
+  cp screenshot.png artifacts/odin/Example04.png
+  EZ_GFX_MAX_FRAMES=1 EZ_GFX_HIDDEN_WINDOW=1 EZ_GFX_SCREENSHOT=1 odin run examples/5_helmet_cgltf -keep-executable -out:out/example_5.exe
+  cp screenshot.png artifacts/odin/Example05.png
+  EZ_GFX_MAX_FRAMES=1 EZ_GFX_HIDDEN_WINDOW=1 EZ_GFX_SCREENSHOT=1 odin run examples/6_sponza_ktx2 -keep-executable -out:out/example_6.exe
+  cp screenshot.png artifacts/odin/Example06.png
+
+run-csharp-examples: verify-native-exports build-csharp
+  mkdir -p artifacts/csharp
+  dotnet run --project csharp/EzGfx.Examples/EzGfx.Examples.csproj --configuration Release --no-build -- --example 1 --frames 1 --screenshot artifacts/csharp/Example01.png
+  dotnet run --project csharp/EzGfx.Examples/EzGfx.Examples.csproj --configuration Release --no-build -- --example 2 --frames 1 --screenshot artifacts/csharp/Example02.png
+  dotnet run --project csharp/EzGfx.Examples/EzGfx.Examples.csproj --configuration Release --no-build -- --example 3 --frames 1 --screenshot artifacts/csharp/Example03.png
+  dotnet run --project csharp/EzGfx.Examples/EzGfx.Examples.csproj --configuration Release --no-build -- --example 4 --frames 1 --screenshot artifacts/csharp/Example04.png
+  dotnet run --project csharp/EzGfx.Examples/EzGfx.Examples.csproj --configuration Release --no-build -- --example 5 --frames 1 --screenshot artifacts/csharp/Example05.png
+  dotnet run --project csharp/EzGfx.Examples/EzGfx.Examples.csproj --configuration Release --no-build -- --example 6 --frames 1 --screenshot artifacts/csharp/Example06.png
+
+compare-csharp-examples: run-odin-examples run-csharp-examples
+  python tools/compare_images.py --reference artifacts/odin/Example01.png --candidate artifacts/csharp/Example01.png --max-diff 0 --max-changed-pixels 0
+  python tools/compare_images.py --reference artifacts/odin/Example02.png --candidate artifacts/csharp/Example02.png --max-diff 0 --max-changed-pixels 0
+  python tools/compare_images.py --reference artifacts/odin/Example03.png --candidate artifacts/csharp/Example03.png --max-diff 0 --max-changed-pixels 0
+  python tools/compare_images.py --reference artifacts/odin/Example04.png --candidate artifacts/csharp/Example04.png --max-diff 0 --max-changed-pixels 0
+  python tools/compare_images.py --reference artifacts/odin/Example05.png --candidate artifacts/csharp/Example05.png --max-diff 0 --max-changed-pixels 0
+  python tools/compare_images.py --reference artifacts/odin/Example06.png --candidate artifacts/csharp/Example06.png --max-diff 0 --max-changed-pixels 0

@@ -1436,7 +1436,6 @@ ez_gfx_render_graph_submit_command :: proc(
 	sync.mutex_unlock(&ctx.queue_mutex)
 	if result != .SUCCESS {
 		fmt.eprintln("failed to submit render graph node")
-		ez_gfx_window_set_should_close(render.window, true)
 		return false
 	}
 	return true

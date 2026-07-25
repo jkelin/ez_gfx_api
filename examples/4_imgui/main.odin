@@ -37,7 +37,7 @@ ImGui_Draw_Command :: struct {
 
 App :: struct {
 	ctx:                      gfx.Ez_Gfx_Ctx,
-	windows:                  [gfx.MAX_WINDOWS]gfx.Ez_Gfx_Window,
+	windows:                  [shared.EXAMPLE_MAX_WINDOWS]gfx.Ez_Gfx_Window,
 	window_count:             int,
 	shader:                   gfx.Ez_Gfx_Shader_Program,
 	shader_loaded:            bool,
@@ -59,7 +59,7 @@ main :: proc() {
 }
 
 init_app :: proc(app: ^App) {
-	assert(gfx.ez_gfx_glfw_init())
+	assert(shared.example_glfw_init())
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	assert(gfx.ez_gfx_enable_all_decoders(), "failed to enable image decoders")
@@ -67,14 +67,17 @@ init_app :: proc(app: ^App) {
 	main_window := &app.windows[0]
 
 	assert(
-		gfx.ez_gfx_window_create(main_window, "ez_gfx_api Dear ImGui", WIDTH, HEIGHT),
+		shared.example_window_create(main_window, "ez_gfx_api Dear ImGui", WIDTH, HEIGHT),
 	)
 	imgui_early_init(app, main_window)
 
-	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}))
+	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {
+		enable_debug = true,
+		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
+	}))
 	assert(gfx.ez_gfx_window_create_surface(main_window))
 	assert(gfx.ez_gfx_ctx_init_device(main_window.surface))
-	assert(gfx.ez_gfx_window_recreate_swapchain(main_window))
+	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height))
 	imgui_gpu_init(app)
 }
 
@@ -87,7 +90,7 @@ imgui_early_init :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	io.ini_filename = nil
 	io.backend_flags += {.Renderer_Has_Textures}
 	assert(io.fonts != nil)
-	assert(ig_glfw.init_for_other(window.handle, false))
+	assert(ig_glfw.init_for_other(shared.example_window_handle(window), false))
 }
 
 imgui_gpu_init :: proc(app: ^App) {
@@ -197,15 +200,18 @@ imgui_upload_identity_indices :: proc(app: ^App) {
 run :: proc(app: ^App) {
 	main_window := &app.windows[0]
 	run_seconds := gfx.ez_gfx_config_run_seconds()
+	max_frames := gfx.ez_gfx_config_max_frames()
 	screenshot_enabled := gfx.ez_gfx_config_screenshot_enabled()
 	start_time := glfw.GetTime()
+	frame_count := 0
 
-	for !gfx.ez_gfx_window_should_close(main_window) {
-		gfx.ez_gfx_window_poll_events()
+	for !shared.example_window_should_close(main_window) {
+		shared.example_window_poll_events(main_window)
 		shared.example_handle_window_input(main_window)
-
+		if max_frames > 0 && frame_count >= max_frames do break
 		if run_seconds > 0 && glfw.GetTime() - start_time >= run_seconds do break
 		draw_frame(app, main_window)
+		frame_count += 1
 	}
 
 	gfx.ez_gfx_ctx_wait_idle()
@@ -226,7 +232,7 @@ imgui_cmd_list_at :: proc(draw_data: ^im.Draw_Data, index: int) -> ^im.Draw_List
 
 draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 	if !app.glfw_callbacks_installed {
-		ig_glfw.install_callbacks(window.handle)
+		ig_glfw.install_callbacks(shared.example_window_handle(window))
 		app.glfw_callbacks_installed = true
 	}
 	ig_glfw.new_frame()
@@ -423,9 +429,9 @@ cleanup :: proc(app: ^App) {
 		app.shader_loaded = false
 	}
 	for i in 0 ..< app.window_count {
-		gfx.ez_gfx_window_destroy(&app.windows[i])
+		shared.example_window_destroy(&app.windows[i])
 	}
 	app.window_count = 0
 	gfx.ez_gfx_ctx_destroy()
-	gfx.ez_gfx_glfw_terminate()
+	shared.example_glfw_terminate()
 }

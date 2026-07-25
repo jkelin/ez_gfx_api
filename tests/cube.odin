@@ -4,7 +4,6 @@ import shared "../examples/shared"
 import gfx "../src"
 import "core:math"
 import "core:testing"
-import "vendor:glfw"
 import vk "vendor:vulkan"
 
 CUBE_TEST_FRAMES :: 2
@@ -91,8 +90,8 @@ cube_renders_without_validation_errors :: proc(t: ^testing.T) {
 	target_frames := max(CUBE_TEST_FRAMES, int(app.window.swapchain.image_count) + 1)
 	for frames_drawn < target_frames && attempts < 60 {
 		attempts += 1
-		gfx.ez_gfx_window_poll_events()
-		if gfx.ez_gfx_window_should_close(&app.window) do return
+		shared.example_window_poll_events(&app.window)
+		if shared.example_window_should_close(&app.window) do return
 		if cube_test_draw_frame(&app, f32(frames_drawn) * 0.25) {
 			frames_drawn += 1
 		}
@@ -145,17 +144,14 @@ cube_push_constant_size_mismatch_fails_cleanly :: proc(t: ^testing.T) {
 }
 
 cube_test_init_app :: proc(app: ^Cube_Test_App) -> bool {
-	if !gfx.ez_gfx_glfw_init() do return false
+	if !shared.example_glfw_init() do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	app.camera = shared.orbit_camera_default()
-	if !gfx.ez_gfx_window_create(
-		&app.window,
+	if !shared.example_window_create(&app.window,
 		"ez_gfx_api cube test",
 		WIDTH,
-		HEIGHT,
-		hidden = true,
-	) {
+		HEIGHT) {
 		return false
 	}
 	if !gfx.ez_gfx_ctx_create_instance(
@@ -172,7 +168,7 @@ cube_test_init_app :: proc(app: ^Cube_Test_App) -> bool {
 	}
 	if !gfx.ez_gfx_window_create_surface(&app.window) do return false
 	if !gfx.ez_gfx_ctx_init_device(app.window.surface) do return false
-	if !gfx.ez_gfx_window_recreate_swapchain(&app.window) do return false
+	if !gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) do return false
 	return cube_test_init_resources(app)
 }
 
@@ -301,9 +297,9 @@ cube_test_cleanup :: proc(app: ^Cube_Test_App) {
 		_ = gfx.ez_gfx_unload_texture(app.texture_id)
 		app.texture_scheduled = false
 	}
-	gfx.ez_gfx_window_destroy(&app.window)
+	shared.example_window_destroy(&app.window)
 	gfx.ez_gfx_ctx_destroy()
-	gfx.ez_gfx_glfw_terminate()
+	shared.example_glfw_terminate()
 }
 
 cube_test_reset_validation_counts :: proc(app: ^Cube_Test_App) {

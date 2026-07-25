@@ -1,6 +1,5 @@
 # TODO
 
-- Fix present-ready semaphore lifetime before teardown; the test run reports `vkDestroySemaphore` destroying a semaphore while it is still in use by the graphics queue.
 - Decouple graphics pipeline caching from descriptor set/pool ownership. `Ez_Gfx_Pipeline_Record` still owns both `VkPipeline` and descriptor resources; `render_target_manager.version` mitigates stale render-target image views on resize, but vertex heap rebinding and per-frame descriptor lifetimes are still tied to cached pipeline records.
 
 - Add hardware per-draw scissor support for ImGui and other UI renderers. Example 4 currently enforces clip rectangles in the fragment shader via `discard`, which is correct but less efficient than dynamic scissor state.

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)\Generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <AdditionalFiles Include="..\..\include\ez_gfx_api.h" />
+    <Compile Remove="Generated\**" />
+    <ProjectReference Include="..\EzGfx.BindingGenerator\EzGfx.BindingGenerator.csproj">
+      <OutputItemType>Analyzer</OutputItemType>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+  <Target Name="ExposeGeneratedBindingArtifact" AfterTargets="CoreCompile" Condition="'$(CheckGeneratedBindingArtifact)' != 'true'">
+    <Copy
+      SourceFiles="$(CompilerGeneratedFilesOutputPath)\EzGfx.BindingGenerator\EzGfx.BindingGenerator.EzGfxHeaderGenerator\EzGfxNative.g.cs"
+      DestinationFiles="$(MSBuildProjectDirectory)\Generated\EzGfxNative.g.cs" />
+  </Target>
+
+  <Target Name="CheckGeneratedBindingArtifact" AfterTargets="CoreCompile" Condition="'$(CheckGeneratedBindingArtifact)' == 'true'">
+    <Error
+      Condition="!Exists('$(CompilerGeneratedFilesOutputPath)\EzGfx.BindingGenerator\EzGfx.BindingGenerator.EzGfxHeaderGenerator\EzGfxNative.g.cs')"
+      Text="The Roslyn generator did not emit EzGfxNative.g.cs." />
+    <Error
+      Condition="!Exists('$(MSBuildProjectDirectory)\Generated\EzGfxNative.g.cs')"
+      Text="The tracked generated binding artifact is missing: Generated\EzGfxNative.g.cs." />
+    <GetFileHash
+      Files="$(CompilerGeneratedFilesOutputPath)\EzGfx.BindingGenerator\EzGfx.BindingGenerator.EzGfxHeaderGenerator\EzGfxNative.g.cs">
+      <Output TaskParameter="Items" ItemName="_GeneratedSourceHash" />
+    </GetFileHash>
+    <GetFileHash
+      Files="$(MSBuildProjectDirectory)\Generated\EzGfxNative.g.cs">
+      <Output TaskParameter="Items" ItemName="_GeneratedArtifactHash" />
+    </GetFileHash>
+    <Error
+      Condition="'@(_GeneratedSourceHash->'%(FileHash)')' != '@(_GeneratedArtifactHash->'%(FileHash)')'"
+      Text="Generated\EzGfxNative.g.cs is stale. Run a normal EzGfx.Native build to refresh it." />
+  </Target>
+</Project>

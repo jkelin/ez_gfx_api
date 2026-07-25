@@ -29,11 +29,12 @@ ez_gfx_current_render: Ez_Gfx_Render
 
 ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 	ctx := ez_gfx_get_current_ctx()
-	if ctx == nil do return false
+	if ctx == nil || window == nil do return false
 	if ez_gfx_current_render.active {
 		fmt.eprintln("ez_gfx_begin_render called while a render is already active")
 		return false
 	}
+	if window.framebuffer_width <= 0 || window.framebuffer_height <= 0 do return false
 
 	render := &ez_gfx_current_render
 	render^ = {}
@@ -48,7 +49,6 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 
 	swapchain := &window.swapchain
 	if swapchain.image_count == 0 {
-		_ = ez_gfx_window_recreate_swapchain(window)
 		render.active = false
 		return false
 	}
@@ -91,13 +91,12 @@ ez_gfx_begin_render :: proc(window: ^Ez_Gfx_Window) -> bool {
 		&render.image_index,
 	)
 	if acquire_result == .ERROR_OUT_OF_DATE_KHR {
-		_ = ez_gfx_window_recreate_swapchain(window)
+		window.framebuffer_resized = true
 		render.active = false
 		return false
 	}
 	if acquire_result != .SUCCESS && acquire_result != .SUBOPTIMAL_KHR {
 		fmt.eprintf("failed to acquire swapchain image: %v\n", acquire_result)
-		ez_gfx_window_set_should_close(window, true)
 		render.active = false
 		return false
 	}
@@ -420,6 +419,8 @@ ez_gfx_finish_render :: proc() -> bool {
 		return false
 	}
 	if !ez_gfx_render_graph_execute(render) {
+		// A failed graph must not leave the thread-local render active for the next frame.
+		render^ = {}
 		return false
 	}
 
@@ -453,14 +454,18 @@ ez_gfx_render_submit_and_present :: proc(render: ^Ez_Gfx_Render) -> bool {
 	sync.mutex_lock(&render.ctx.queue_mutex)
 	present_result := vk.QueuePresentKHR(render.ctx.graphics_queue, &present_info)
 	sync.mutex_unlock(&render.ctx.queue_mutex)
-	if present_result == .ERROR_OUT_OF_DATE_KHR ||
-	   present_result == .SUBOPTIMAL_KHR ||
-	   window.framebuffer_resized {
-		window.framebuffer_resized = false
-		_ = ez_gfx_window_recreate_swapchain(window)
+	if present_result == .ERROR_OUT_OF_DATE_KHR {
+		// A live resize or minimize can invalidate the surface after command
+		// submission. Treat this as a retryable frame; the parent poller owns
+		// the next swapchain recreation and examples must not assert-crash.
+		window.framebuffer_resized = true
+		return true
+	} else if present_result == .SUBOPTIMAL_KHR || window.framebuffer_resized {
+		window.framebuffer_resized = true
+		swapchain.last_presented_index = render.image_index
+		swapchain.has_presented_image = true
 	} else if present_result != .SUCCESS {
 		fmt.eprintf("failed to present swapchain image: %v\n", present_result)
-		ez_gfx_window_set_should_close(window, true)
 		return false
 	} else {
 		swapchain.last_presented_index = render.image_index

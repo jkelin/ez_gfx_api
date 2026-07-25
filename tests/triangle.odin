@@ -1,10 +1,10 @@
 package tests
 
+import shared "../examples/shared"
 import gfx "../src"
 import intrinsics "base:intrinsics"
 import "core:fmt"
 import "core:testing"
-import "vendor:glfw"
 import vk "vendor:vulkan"
 
 WIDTH :: 640
@@ -118,7 +118,7 @@ present_modes_can_be_queried_and_changed :: proc(t: ^testing.T) {
 		gfx.ez_gfx_ctx_set_swapchain_present_mode(requested),
 		"present mode test failed to accept a supported mode",
 	)
-	if !testing.expect(t, gfx.ez_gfx_window_recreate_swapchain(&app.window)) {
+	if !testing.expect(t, gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height)) {
 		return
 	}
 
@@ -524,16 +524,13 @@ vertex_upload_callback :: proc(
 }
 
 triangle_init_app :: proc(app: ^Triangle_App) -> bool {
-	if !gfx.ez_gfx_glfw_init() do return false
+	if !shared.example_glfw_init() do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	if !gfx.ez_gfx_window_create(
-		&app.window,
+	if !shared.example_window_create(&app.window,
 		"ez_gfx_api triangle",
 		WIDTH,
-		HEIGHT,
-		hidden = true,
-	) {
+		HEIGHT) {
 		return false
 	}
 	if !gfx.ez_gfx_ctx_create_instance(
@@ -551,7 +548,7 @@ triangle_init_app :: proc(app: ^Triangle_App) -> bool {
 	}
 	if !gfx.ez_gfx_window_create_surface(&app.window) do return false
 	if !gfx.ez_gfx_ctx_init_device(app.window.surface) do return false
-	if !gfx.ez_gfx_window_recreate_swapchain(&app.window) do return false
+	if !gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) do return false
 	return triangle_init_resources(app)
 }
 
@@ -594,8 +591,8 @@ triangle_run_frames :: proc(app: ^Triangle_App) -> bool {
 	target_frames := max(TRIANGLE_FRAMES, int(app.window.swapchain.image_count) + 1)
 	for frames_drawn < target_frames && attempts < 60 {
 		attempts += 1
-		gfx.ez_gfx_window_poll_events()
-		if gfx.ez_gfx_window_should_close(&app.window) do return false
+		shared.example_window_poll_events(&app.window)
+		if shared.example_window_should_close(&app.window) do return false
 		if triangle_draw_frame(app) {
 			frames_drawn += 1
 		}
@@ -651,7 +648,7 @@ triangle_cleanup :: proc(app: ^Triangle_App) {
 		gfx.ez_gfx_shader_destroy(&app.shader)
 		app.shader_loaded = false
 	}
-	gfx.ez_gfx_window_destroy(&app.window)
+	shared.example_window_destroy(&app.window)
 	gfx.ez_gfx_ctx_destroy()
-	gfx.ez_gfx_glfw_terminate()
+	shared.example_glfw_terminate()
 }

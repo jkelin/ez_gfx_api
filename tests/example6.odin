@@ -76,8 +76,8 @@ example6_sponza_ktx2_renders_without_validation_errors :: proc(t: ^testing.T) {
 	target_frames := max(EXAMPLE6_TEST_FRAMES, int(app.window.swapchain.image_count) + 1)
 	for frames_drawn < target_frames && attempts < 60 {
 		attempts += 1
-		gfx.ez_gfx_window_poll_events()
-		if gfx.ez_gfx_window_should_close(&app.window) do return
+		shared.example_window_poll_events(&app.window)
+		if shared.example_window_should_close(&app.window) do return
 		if example6_test_draw_frame(&app) {
 			frames_drawn += 1
 		}
@@ -95,7 +95,7 @@ example6_sponza_ktx2_renders_without_validation_errors :: proc(t: ^testing.T) {
 }
 
 example6_test_init_app :: proc(app: ^Example6_Test_App) -> bool {
-	if !gfx.ez_gfx_glfw_init() do return false
+	if !shared.example_glfw_init() do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	app.camera = shared.orbit_camera_default()
@@ -106,13 +106,10 @@ example6_test_init_app :: proc(app: ^Example6_Test_App) -> bool {
 	}
 	shared.orbit_camera_apply_start(&app.camera, EXAMPLE6_ORBIT_CENTER, app.camera_start)
 
-	if !gfx.ez_gfx_window_create(
-		&app.window,
+	if !shared.example_window_create(&app.window,
 		"ez_gfx_api example 6 test",
 		WIDTH,
-		HEIGHT,
-		hidden = true,
-	) {
+		HEIGHT) {
 		return false
 	}
 	if !gfx.ez_gfx_ctx_create_instance(
@@ -128,7 +125,7 @@ example6_test_init_app :: proc(app: ^Example6_Test_App) -> bool {
 	}
 	if !gfx.ez_gfx_window_create_surface(&app.window) do return false
 	if !gfx.ez_gfx_ctx_init_device(app.window.surface) do return false
-	if !gfx.ez_gfx_window_recreate_swapchain(&app.window) do return false
+	if !gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) do return false
 	return example6_test_init_resources(app)
 }
 
@@ -420,9 +417,9 @@ example6_test_cleanup :: proc(app: ^Example6_Test_App) {
 		gfx.ez_gfx_shader_destroy(&app.draw_shader)
 		app.draw_shader_loaded = false
 	}
-	gfx.ez_gfx_window_destroy(&app.window)
+	shared.example_window_destroy(&app.window)
 	gfx.ez_gfx_ctx_destroy()
-	gfx.ez_gfx_glfw_terminate()
+	shared.example_glfw_terminate()
 }
 
 example6_test_reset_validation_counts :: proc(app: ^Example6_Test_App) {

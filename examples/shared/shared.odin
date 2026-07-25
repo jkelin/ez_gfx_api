@@ -2,11 +2,15 @@ package shared
 
 import gfx "../../src"
 import "core:math"
+import "core:strings"
 import "core:math/linalg"
+import win "core:sys/windows"
 import "vendor:glfw"
 
 Mat4 :: [4][4]f32
 Vec3 :: linalg.Vector3f32
+EXAMPLE_MAX_WINDOWS :: 1
+EXAMPLE_RESIZE_DEBOUNCE_SECONDS :: 0.05
 
 // glTF coordinates are in meters. Example 2's cube spans [-1, 1] per axis,
 // which is treated as a 1 meter cube (2 world units across).
@@ -32,14 +36,145 @@ Orbit_Camera_Start :: struct {
 
 orbit_camera_scroll_y: f64
 
+example_glfw_init :: proc() -> bool {
+	if !glfw.Init() do return false
+	glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
+	glfw.WindowHint(glfw.VISIBLE, !gfx.ez_gfx_config_hidden_window())
+	return true
+}
+
+example_glfw_terminate :: proc() {
+	glfw.Terminate()
+}
+
+example_window_create :: proc(
+	window: ^gfx.Ez_Gfx_Window,
+	title: string,
+	width, height: int,
+) -> bool {
+	if window == nil || width <= 0 || height <= 0 do return false
+	title_c, title_err := strings.clone_to_cstring(title)
+	if title_err != nil do return false
+	defer delete(title_c)
+	handle := glfw.CreateWindow(i32(width), i32(height), title_c, nil, nil)
+	if handle == nil do return false
+	window.host_window = rawptr(handle)
+	when ODIN_OS == .Windows {
+		window.native_window = rawptr(glfw.GetWin32Window(handle))
+		window.native_display = rawptr(win.GetModuleHandleW(nil))
+		window.surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32
+	} else {
+		window.native_window = rawptr(handle)
+		window.native_display = nil
+		window.surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_GLFW
+	}
+	width_px, height_px := glfw.GetFramebufferSize(handle)
+	window.framebuffer_width = width_px
+	window.framebuffer_height = height_px
+	window.cache_presented_snapshots = gfx.ez_gfx_config_screenshot_enabled()
+	return true
+}
+
+example_window_handle :: proc(window: ^gfx.Ez_Gfx_Window) -> glfw.WindowHandle {
+	if window == nil || window.host_window == nil do return nil
+	return cast(glfw.WindowHandle)window.host_window
+}
+
+example_window_should_close :: proc(window: ^gfx.Ez_Gfx_Window) -> bool {
+	handle := example_window_handle(window)
+	if handle == nil do return true
+	return glfw.WindowShouldClose(handle) != b32(false)
+}
+
+example_window_poll_events :: proc(window: ^gfx.Ez_Gfx_Window) {
+	for {
+		glfw.PollEvents()
+		handle := example_window_handle(window)
+		if handle == nil do return
+		if glfw.WindowShouldClose(handle) != b32(false) do return
+
+		width, height := glfw.GetFramebufferSize(handle)
+		if width <= 0 || height <= 0 {
+			// Minimized GLFW windows report a zero framebuffer. Keep that
+			// state in the renderer and wait for a restore event instead of
+			// acquiring from the stale swapchain.
+			window.framebuffer_width = width
+			window.framebuffer_height = height
+			window.framebuffer_resized = true
+			glfw.WaitEvents()
+			continue
+		}
+
+		if width != window.framebuffer_width || height != window.framebuffer_height {
+			// Live resize emits many framebuffer sizes. Wait for a short
+			// quiet interval so the device is idled and the swapchain rebuilt
+			// once after the user stops dragging.
+			window.framebuffer_width = width
+			window.framebuffer_height = height
+			window.framebuffer_resized = true
+			glfw.WaitEventsTimeout(EXAMPLE_RESIZE_DEBOUNCE_SECONDS)
+			continue
+		}
+
+		if window.framebuffer_resized {
+			_ = gfx.ez_gfx_window_recreate_swapchain(window, width, height)
+		}
+		return
+	}
+}
+
+example_window_destroy :: proc(window: ^gfx.Ez_Gfx_Window) {
+	if window == nil do return
+	handle := example_window_handle(window)
+	gfx.ez_gfx_window_destroy(window)
+	if handle != nil {
+		glfw.DestroyWindow(handle)
+	}
+	window.host_window = nil
+}
+
+example_window_set_should_close :: proc(window: ^gfx.Ez_Gfx_Window, value: bool) {
+	handle := example_window_handle(window)
+	if handle != nil {
+		glfw.SetWindowShouldClose(handle, b32(value))
+	}
+}
+
+example_window_get_framebuffer_size :: proc(window: ^gfx.Ez_Gfx_Window) -> (int, int) {
+	handle := example_window_handle(window)
+	if handle == nil do return 0, 0
+	width, height := glfw.GetFramebufferSize(handle)
+	return int(width), int(height)
+}
+
+example_window_install_scroll_callback :: proc(window: ^gfx.Ez_Gfx_Window) {
+	handle := example_window_handle(window)
+	if handle != nil {
+		glfw.SetScrollCallback(handle, orbit_camera_scroll_callback)
+	}
+}
+
+example_window_cursor_pos :: proc(window: ^gfx.Ez_Gfx_Window) -> (f64, f64) {
+	handle := example_window_handle(window)
+	if handle == nil do return 0, 0
+	return glfw.GetCursorPos(handle)
+}
+
+example_window_left_button_pressed :: proc(window: ^gfx.Ez_Gfx_Window) -> bool {
+	handle := example_window_handle(window)
+	return handle != nil && glfw.GetMouseButton(handle, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+}
+
+
 example_handle_window_input :: proc(window: ^gfx.Ez_Gfx_Window) {
-	if glfw.GetKey(window.handle, glfw.KEY_ESCAPE) == glfw.PRESS {
-		gfx.ez_gfx_window_set_should_close(window, true)
+	handle := example_window_handle(window)
+	if handle != nil && glfw.GetKey(handle, glfw.KEY_ESCAPE) == glfw.PRESS {
+		example_window_set_should_close(window, true)
 	}
 }
 
 orbit_camera_install_callbacks :: proc(window: ^gfx.Ez_Gfx_Window) {
-	glfw.SetScrollCallback(window.handle, orbit_camera_scroll_callback)
+	example_window_install_scroll_callback(window)
 }
 
 orbit_camera_default :: proc() -> Orbit_Camera {
@@ -83,7 +218,7 @@ orbit_camera_update :: proc(
 		camera.distance = start.distance
 	}
 
-	x, y := glfw.GetCursorPos(window.handle)
+	x, y := example_window_cursor_pos(window)
 	cursor_delta: [2]f32
 	if camera.previous_cursor_valid {
 		cursor_delta = {
@@ -94,7 +229,7 @@ orbit_camera_update :: proc(
 	camera.previous_cursor = {x, y}
 	camera.previous_cursor_valid = true
 
-	if glfw.GetMouseButton(window.handle, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS {
+	if example_window_left_button_pressed(window) {
 		mouse_sensitivity := math.to_radians_f32(0.18)
 		camera.yaw -= cursor_delta.x * mouse_sensitivity
 		camera.pitch += cursor_delta.y * mouse_sensitivity

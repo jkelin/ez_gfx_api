@@ -1,5 +1,6 @@
 package tests
 
+import shared "../examples/shared"
 import gfx "../src"
 import "core:testing"
 import vk "vendor:vulkan"
@@ -29,7 +30,7 @@ render_target_fork_join_synchronizes_without_validation_errors :: proc(t: ^testi
 	app: Render_Target_Graph_App
 	if !testing.expect(
 		t,
-		render_target_graph_init_app(&app, cstring("ez_gfx_api fork join"), shader_paths[:]),
+		render_target_graph_init_app(&app, "ez_gfx_api fork join", shader_paths[:]),
 	) {
 		render_target_graph_cleanup(&app)
 		return
@@ -51,7 +52,7 @@ load_target_preserves_previous_frame_without_validation_errors :: proc(t: ^testi
 	app: Render_Target_Graph_App
 	if !testing.expect(
 		t,
-		render_target_graph_init_app(&app, cstring("ez_gfx_api load target"), shader_paths[:]),
+		render_target_graph_init_app(&app, "ez_gfx_api load target", shader_paths[:]),
 	) {
 		render_target_graph_cleanup(&app)
 		return
@@ -77,7 +78,7 @@ managed_rwtexture_store_load_matches_snapshot :: proc(t: ^testing.T) {
 	app: Render_Target_Graph_App
 	if !testing.expect(
 		t,
-		render_target_graph_init_app(&app, cstring("ez_gfx_api managed rwtexture"), shader_paths[:]),
+		render_target_graph_init_app(&app, "ez_gfx_api managed rwtexture", shader_paths[:]),
 	) {
 		render_target_graph_cleanup(&app)
 		return
@@ -100,7 +101,7 @@ described_render_target_binds_explicit_id_per_pipeline :: proc(t: ^testing.T) {
 	app: Render_Target_Graph_App
 	if !testing.expect(
 		t,
-		render_target_graph_init_app(&app, cstring("ez_gfx_api explicit target"), shader_paths[:]),
+		render_target_graph_init_app(&app, "ez_gfx_api explicit target", shader_paths[:]),
 	) {
 		render_target_graph_cleanup(&app)
 		return
@@ -231,7 +232,7 @@ render_target_describe_stale_id_fails_pipeline_bind :: proc(t: ^testing.T) {
 	app: Render_Target_Graph_App
 	if !testing.expect(
 		t,
-		render_target_graph_init_app(&app, cstring("ez_gfx_api stale target id"), shader_paths[:]),
+		render_target_graph_init_app(&app, "ez_gfx_api stale target id", shader_paths[:]),
 	) {
 		render_target_graph_cleanup(&app)
 		return
@@ -256,16 +257,13 @@ render_target_describe_stale_id_fails_pipeline_bind :: proc(t: ^testing.T) {
 }
 
 render_target_describe_init_ctx :: proc(app: ^Render_Target_Graph_App) -> bool {
-	if !gfx.ez_gfx_glfw_init() do return false
+	if !shared.example_glfw_init() do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	if !gfx.ez_gfx_window_create(
-		&app.window,
-		cstring("ez_gfx_api render target describe"),
+	if !shared.example_window_create(&app.window,
+		"ez_gfx_api render target describe",
 		WIDTH,
-		HEIGHT,
-		hidden = true,
-	) {
+		HEIGHT) {
 		return false
 	}
 	if !gfx.ez_gfx_ctx_create_instance(
@@ -285,23 +283,23 @@ render_target_describe_init_ctx :: proc(app: ^Render_Target_Graph_App) -> bool {
 
 render_target_describe_cleanup :: proc(app: ^Render_Target_Graph_App) {
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	gfx.ez_gfx_window_destroy(&app.window)
+	shared.example_window_destroy(&app.window)
 	gfx.ez_gfx_ctx_destroy()
-	gfx.ez_gfx_glfw_terminate()
+	shared.example_glfw_terminate()
 }
 
 render_target_graph_init_app :: proc(
 	app: ^Render_Target_Graph_App,
-	title: cstring,
+	title: string,
 	shader_paths: []cstring,
 ) -> bool {
 	if len(shader_paths) > GRAPH_SHADER_CAPACITY {
 		return false
 	}
-	if !gfx.ez_gfx_glfw_init() do return false
+	if !shared.example_glfw_init() do return false
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	if !gfx.ez_gfx_window_create(&app.window, title, WIDTH, HEIGHT, hidden = true) {
+	if !shared.example_window_create(&app.window, title, WIDTH, HEIGHT) {
 		return false
 	}
 	if !gfx.ez_gfx_ctx_create_instance(
@@ -317,7 +315,7 @@ render_target_graph_init_app :: proc(
 	}
 	if !gfx.ez_gfx_window_create_surface(&app.window) do return false
 	if !gfx.ez_gfx_ctx_init_device(app.window.surface) do return false
-	if !gfx.ez_gfx_window_recreate_swapchain(&app.window) do return false
+	if !gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) do return false
 	if !render_target_graph_init_shaders(app, shader_paths) do return false
 	return render_target_graph_init_vertices(app)
 }
@@ -372,8 +370,8 @@ render_target_graph_run_frame :: proc(
 	attempts := 0
 	for attempts < 60 {
 		attempts += 1
-		gfx.ez_gfx_window_poll_events()
-		if gfx.ez_gfx_window_should_close(&app.window) do return false
+		shared.example_window_poll_events(&app.window)
+		if shared.example_window_should_close(&app.window) do return false
 		if render_target_graph_draw_frame(app, shader_start, shader_count) {
 			return true
 		}
@@ -457,7 +455,7 @@ render_target_graph_cleanup :: proc(app: ^Render_Target_Graph_App) {
 			app.shader_loaded[i] = false
 		}
 	}
-	gfx.ez_gfx_window_destroy(&app.window)
+	shared.example_window_destroy(&app.window)
 	gfx.ez_gfx_ctx_destroy()
-	gfx.ez_gfx_glfw_terminate()
+	shared.example_glfw_terminate()
 }

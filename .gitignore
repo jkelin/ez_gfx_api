@@ -10,3 +10,14 @@ ez_gfx_test.exe
 tests/snapshots/*.current.png
 REVIEW.md
 .justcache
+
+artifacts/
+out/*.dll
+out/*.exp
+out/*.lib
+csharp/**/bin/
+csharp/**/obj/
+csharp/EzGfx.Native/Generated/EzGfx.BindingGenerator/
+tools/**/bin/
+tools/**/obj/
+tools/__pycache__/

@@ -377,6 +377,14 @@ ez_gfx_vertex_manager_begin :: proc(manager: ^Ez_Gfx_Vertex_Manager) {
 			"ez_gfx_vertex_manager_begin called without a current context",
 		)
 	}
+	if manager.worker != nil ||
+	   manager.upload_command_pool != vk.CommandPool(0) ||
+	   manager.index_heap.buffer.handle != vk.Buffer(0) ||
+	   manager.vertex_heap_count > 0 {
+		// A second begin is a reset request; release the previous worker,
+		// command pool, and heaps before rebuilding the manager in place.
+		ez_gfx_vertex_manager_destroy(manager)
+	}
 	manager^ = {}
 	manager.jobs = make([dynamic]Ez_Gfx_Vertex_Upload_Job)
 	manager.pending_staging = make([dynamic]Ez_Gfx_Vertex_Staging_Retire_Job)
@@ -401,14 +409,18 @@ ez_gfx_vertex_manager_create :: proc(
 	vertex_heap_names: []string,
 	vertex_stride: vk.DeviceSize,
 ) {
-	ez_gfx_vertex_manager_begin(manager)
-	ez_gfx_gpu_heap_create(
-		&manager.index_heap,
-		EZ_GFX_DEFAULT_INDEX_HEAP_BYTES,
-		vk.DeviceSize(size_of(u32)),
-		{.INDEX_BUFFER},
-		"ez_gfx index heap",
-	)
+	// Context initialization owns the manager lifetime; later callers only add
+	// application-specific heaps and must not replace its live upload resources.
+	if manager.worker == nil {
+		ez_gfx_vertex_manager_begin(manager)
+		ez_gfx_gpu_heap_create(
+			&manager.index_heap,
+			EZ_GFX_DEFAULT_INDEX_HEAP_BYTES,
+			vk.DeviceSize(size_of(u32)),
+			{.INDEX_BUFFER},
+			"ez_gfx index heap",
+		)
+	}
 
 	for name in vertex_heap_names {
 		ez_gfx_vertex_manager_add_heap(

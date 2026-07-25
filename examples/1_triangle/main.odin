@@ -20,7 +20,7 @@ TRIANGLE_POSITIONS: [3][4]f32 = {
 
 App :: struct {
 	ctx:                gfx.Ez_Gfx_Ctx,
-	windows:            [gfx.MAX_WINDOWS]gfx.Ez_Gfx_Window,
+	windows:            [shared.EXAMPLE_MAX_WINDOWS]gfx.Ez_Gfx_Window,
 	window_count:       int,
 	shader:             gfx.Ez_Gfx_Shader_Program,
 	shader_loaded:      bool,
@@ -38,7 +38,7 @@ main :: proc() {
 
 init_app :: proc(app: ^App) {
 	fmt.println("checkpoint: glfw init")
-	assert(gfx.ez_gfx_glfw_init())
+	assert(shared.example_glfw_init())
 
 	gfx.ez_gfx_set_current_ctx(&app.ctx)
 	assert(gfx.ez_gfx_enable_all_decoders(), "failed to enable image decoders")
@@ -47,16 +47,19 @@ init_app :: proc(app: ^App) {
 
 	fmt.println("checkpoint: window create")
 	assert(
-		gfx.ez_gfx_window_create(main_window, "ez_gfx_api Vulkan", WIDTH, HEIGHT),
+		shared.example_window_create(main_window, "ez_gfx_api Vulkan", WIDTH, HEIGHT),
 	)
 	fmt.println("checkpoint: instance create")
-	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {enable_debug = true}))
+	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {
+		enable_debug = true,
+		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
+	}))
 	fmt.println("checkpoint: surface create")
 	assert(gfx.ez_gfx_window_create_surface(main_window))
 	fmt.println("checkpoint: device init")
 	assert(gfx.ez_gfx_ctx_init_device(main_window.surface))
 	fmt.println("checkpoint: swapchain recreate")
-	assert(gfx.ez_gfx_window_recreate_swapchain(main_window))
+	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height))
 	fmt.println("checkpoint: triangle data init")
 	triangle_init(app)
 	fmt.println("checkpoint: init done")
@@ -75,10 +78,10 @@ triangle_init :: proc(app: ^App) {
 	)
 	app.shader_loaded = true
 
-	vertex_heap_names := [?]string{TRIANGLE_POSITION_HEAP}
-	gfx.ez_gfx_vertex_manager_create(
+	gfx.ez_gfx_vertex_manager_add_heap(
 		&app.ctx.vertex_manager,
-		vertex_heap_names[:],
+		TRIANGLE_POSITION_HEAP,
+		gfx.EZ_GFX_DEFAULT_VERTEX_HEAP_BYTES,
 		vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
 	)
 
@@ -97,13 +100,17 @@ triangle_init :: proc(app: ^App) {
 run :: proc(app: ^App) {
 	main_window := &app.windows[0]
 	run_seconds := gfx.ez_gfx_config_run_seconds()
+	max_frames := gfx.ez_gfx_config_max_frames()
 	screenshot_enabled := gfx.ez_gfx_config_screenshot_enabled()
 	start_time := glfw.GetTime()
+	frame_count := 0
 
-	for !gfx.ez_gfx_window_should_close(main_window) {
-		gfx.ez_gfx_window_poll_events()
+	for !shared.example_window_should_close(main_window) {
+		shared.example_window_poll_events(main_window)
+		if max_frames > 0 && frame_count >= max_frames do break
 		if run_seconds > 0 && glfw.GetTime() - start_time >= run_seconds do break
 		draw_frame(app, main_window)
+		frame_count += 1
 	}
 
 	gfx.ez_gfx_ctx_wait_idle()
@@ -160,9 +167,9 @@ cleanup :: proc(app: ^App) {
 		app.shader_loaded = false
 	}
 	for i in 0 ..< app.window_count {
-		gfx.ez_gfx_window_destroy(&app.windows[i])
+		shared.example_window_destroy(&app.windows[i])
 	}
 	app.window_count = 0
 	gfx.ez_gfx_ctx_destroy()
-	gfx.ez_gfx_glfw_terminate()
+	shared.example_glfw_terminate()
 }

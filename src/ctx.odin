@@ -5,10 +5,10 @@ import vma "../vendor/odin-vma"
 import intrinsics "base:intrinsics"
 import "base:runtime"
 import "core:c"
+import "core:dynlib"
 import "core:fmt"
 import "core:sync"
 import sysinfo "core:sys/info"
-import "vendor:glfw"
 import vk "vendor:vulkan"
 
 EZ_GFX_FRAMES_IN_FLIGHT :: 2
@@ -44,6 +44,8 @@ Ez_Gfx_Ctx_Desc :: struct {
 	vertex_uploaded_callback:  Ez_Gfx_Vertex_Uploaded_Callback,
 	vertex_uploaded_user_data: rawptr,
 	texture_decode_worker_count: u32,
+	surface_platform: u32,
+	instance_extensions: []cstring,
 }
 
 Ez_Gfx_Validation_Counts :: struct {
@@ -61,6 +63,7 @@ Ez_Gfx_Ctx_Info :: struct {
 
 Ez_Gfx_Ctx :: struct {
 	instance:                             vk.Instance,
+	surface_platform:                    u32,
 	debug_messenger:                      vk.DebugUtilsMessengerEXT,
 	physical_device:                      vk.PhysicalDevice,
 	device:                               vk.Device,
@@ -136,9 +139,23 @@ ez_gfx_texture_decode_worker_count_from_logical :: proc(logical_cpu_count: int) 
 	return u32(logical_cpu_count - 2)
 }
 
+vulkan_library: dynlib.Library
+
 vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
-	// GLFW owns platform loader lookup, so the sample does not link a Vulkan loader directly.
-	(^rawptr)(p)^ = glfw.GetInstanceProcAddress(nil, name)
+	if vulkan_library == nil {
+		when ODIN_OS == .Windows {
+			vulkan_library, _ = dynlib.load_library("vulkan-1.dll")
+		} else when ODIN_OS == .Linux {
+			vulkan_library, _ = dynlib.load_library("libvulkan.so.1")
+		} else when ODIN_OS == .Darwin {
+			vulkan_library, _ = dynlib.load_library("libvulkan.dylib")
+		}
+	}
+	if vulkan_library == nil do return
+	address, found := dynlib.symbol_address(vulkan_library, string(name))
+	if found {
+		(^rawptr)(p)^ = address
+	}
 }
 
 // Creates the Vulkan instance; call before creating any window surface.
@@ -148,6 +165,7 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 
 	ctx.enable_validation = desc.enable_validation
 	ctx.enable_debug = desc.enable_debug
+	ctx.surface_platform = desc.surface_platform
 	ctx.validation_callback = desc.validation_callback
 	ctx.validation_user_data = desc.validation_user_data
 	ctx.texture_loaded_callback = desc.texture_loaded_callback
@@ -160,9 +178,16 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 	ctx.debug_utils_enabled = desc.enable_validation || desc.enable_debug
 	ctx.swapchain_present_mode = .FIFO
 
-	glfw_extensions := glfw.GetRequiredInstanceExtensions()
-	if len(glfw_extensions) == 0 {
-		fmt.eprintln("GLFW did not return Vulkan instance extensions")
+	default_extensions := [?]cstring {
+		"VK_KHR_surface",
+		"VK_KHR_win32_surface",
+	}
+	instance_extensions := desc.instance_extensions
+	if len(instance_extensions) == 0 && desc.surface_platform == EZ_GFX_SURFACE_PLATFORM_WIN32 {
+		instance_extensions = default_extensions[:]
+	}
+	if len(instance_extensions) == 0 {
+		fmt.eprintln("no Vulkan instance surface extensions were supplied")
 		return false
 	}
 
@@ -186,7 +211,7 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 
 	extensions: [dynamic]cstring
 	defer delete(extensions)
-	for ext in glfw_extensions {
+	for ext in instance_extensions {
 		append(&extensions, ext)
 	}
 	if ctx.debug_utils_enabled {
@@ -264,6 +289,7 @@ ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
 	ez_gfx_ctx_name_device_objects(ctx)
 	if !ez_gfx_ctx_create_command_resources(ctx) do return false
 	if !ez_gfx_ctx_create_sync_objects(ctx) do return false
+	ez_gfx_vertex_manager_create(&ctx.vertex_manager, {}, 16)
 	if !ez_gfx_texture_manager_create(&ctx.texture_manager, ctx) do return false
 	return true
 }
