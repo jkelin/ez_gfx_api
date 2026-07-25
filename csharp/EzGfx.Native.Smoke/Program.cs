@@ -8,7 +8,7 @@ static void RunNativeAbiSmoke()
 {
     EzGfxNativeLoader.VerifyAbi();
     Console.WriteLine($"native={EzGfxNativeLoader.ResolvedPath}");
-    EzGfxResult result = EzGfxNative.EzGfxCContextCreate(
+    EzGfxResult result = EzGfxNative.EzGfxContextCreate(
         enableDebug: false,
         enableValidation: false,
         EzGfxSurfacePlatform.Win32,
@@ -20,11 +20,11 @@ static void RunNativeAbiSmoke()
 
     try
     {
-        NativeErrorsForSmoke.ThrowIfFailed("Context wait idle", EzGfxNative.EzGfxCContextWaitIdle(context));
+        NativeErrorsForSmoke.ThrowIfFailed("Context wait idle", EzGfxNative.EzGfxContextWaitIdle(context));
     }
     finally
     {
-        EzGfxNative.EzGfxCContextDestroy(context);
+        EzGfxNative.EzGfxContextDestroy(context);
     }
 
     Console.WriteLine($"abi={EzGfxNative.AbiVersion}");

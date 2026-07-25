@@ -85,7 +85,7 @@ handles_child_owner_and_cross_context_fail_closed :: proc(t: ^testing.T) {
 	_ = owner_handle
 	_ = other_handle
 
-	child_local, err := ga.insert(&owner.surface_arena, Ez_Gfx_Window{native_window = rawptr(uintptr(1)), surface_platform = EZ_GFX_SURFACE_PLATFORM_GLFW, framebuffer_width = 1, framebuffer_height = 1})
+	child_local, err := ga.insert(&owner.surface_arena, Ez_Gfx_Window{native_window = rawptr(uintptr(1)), surface_platform = u32(EZ_GFX_SURFACE_PLATFORM_GLFW), framebuffer_width = 1, framebuffer_height = 1})
 	if !testing.expect_value(t, err, ga.Error.None) do return
 	defer _ = ga.remove(&owner.surface_arena, child_local)
 	packed, pack_status := pack_child_handle(owner, .Surface, child_local)
@@ -104,7 +104,7 @@ handles_cross_kind_reuse_fails_closed :: proc(t: ^testing.T) {
 	if owner == nil do return
 	defer test_context_remove(owner)
 
-	surface_local, surface_err := ga.insert(&owner.surface_arena, Ez_Gfx_Window{native_window = rawptr(uintptr(2)), surface_platform = EZ_GFX_SURFACE_PLATFORM_GLFW, framebuffer_width = 1, framebuffer_height = 1})
+	surface_local, surface_err := ga.insert(&owner.surface_arena, Ez_Gfx_Window{native_window = rawptr(uintptr(2)), surface_platform = u32(EZ_GFX_SURFACE_PLATFORM_GLFW), framebuffer_width = 1, framebuffer_height = 1})
 	if !testing.expect_value(t, surface_err, ga.Error.None) do return
 	defer _ = ga.remove(&owner.surface_arena, surface_local)
 	packed, pack_status := pack_child_handle(owner, .Surface, surface_local)

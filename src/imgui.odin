@@ -166,7 +166,7 @@ c_imgui_destroy :: proc(context_handle: Ez_Gfx_Context_Handle, ctx: ^Ez_Gfx_Ctx)
 	ctx.imgui_identity_index_loaded = false
 }
 
-ez_gfx_imgui_destroy :: proc(context_handle: Ez_Gfx_Context_Handle) -> Ez_Gfx_Status {
+imgui_destroy :: proc(context_handle: Ez_Gfx_Context_Handle) -> Ez_Gfx_Status {
 	ctx, previous, status := with_context(context_handle)
 	if status != .Ok do return status
 	context.user_ptr = ctx
@@ -175,7 +175,7 @@ ez_gfx_imgui_destroy :: proc(context_handle: Ez_Gfx_Context_Handle) -> Ez_Gfx_St
 	return .Ok
 }
 
-ez_gfx_imgui_render_demo :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle) -> Ez_Gfx_Status {
+imgui_render_demo :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle: Ez_Gfx_Surface_Handle) -> Ez_Gfx_Status {
 	ctx, previous, status := with_context(context_handle)
 	if status != .Ok do return status
 	context.user_ptr = ctx
@@ -277,11 +277,4 @@ ez_gfx_imgui_render_demo :: proc(context_handle: Ez_Gfx_Context_Handle, surface_
 	}
 	if count_status := ez_gfx_indirect_buffer_set_draw_count(&indirect, u32(active_command)); count_status != .Ok { get_current_ctx().render = {}; return count_status }
 	return ez_gfx_finish_render()
-}
-
-@(link_name="ez_gfx_c_imgui_render_demo")
-@(export)
-ez_gfx_c_imgui_render_demo :: proc "c" (surface_handle: u64, context_handle: u64) -> i32 {
-	context = runtime.default_context()
-	return c_status(ez_gfx_imgui_render_demo(Ez_Gfx_Context_Handle(context_handle), Ez_Gfx_Surface_Handle(surface_handle)))
 }

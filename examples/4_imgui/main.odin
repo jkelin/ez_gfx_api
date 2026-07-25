@@ -386,12 +386,12 @@ draw_frame :: proc(app: ^App, window: ^shared.Example_Window) {
 		for cmd_index in 0 ..< len(cmds) {
 			src := &cmds[cmd_index]
 			if src.user_callback != nil do continue
-			draw := vk.DrawIndexedIndirectCommand {
-				indexCount    = src.elem_count,
-				instanceCount = 1,
-				firstIndex    = app.identity_index_start,
-				vertexOffset  = 0,
-				firstInstance = u32(active_cmd),
+			draw := gfx.Ez_Gfx_Draw_Indexed_Command {
+				index_count    = src.elem_count,
+				instance_count = 1,
+				first_index    = app.identity_index_start,
+				vertex_offset  = 0,
+				first_instance = u32(active_cmd),
 			}
 			assert(gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, u32(active_cmd), draw) == .Ok, "failed to write ImGui draw")
 			active_cmd += 1

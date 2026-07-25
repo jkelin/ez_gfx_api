@@ -117,7 +117,7 @@ public static class Example06
                 drawShader,
                 indirect,
                 new[] { new Binding("primitives", Structured: primitives) },
-                new DynamicState(CullMode: 2, FrontFace: 0),
+                new DynamicState(CullMode: EzGfxCullMode.Back, FrontFace: EzGfxFrontFace.CounterClockwise),
                 drawPush);
         });
         ExampleHost.SaveIfRequested(graphics, window, options.ScreenshotPath);

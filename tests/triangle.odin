@@ -45,8 +45,8 @@ Triangle_App :: struct {
 @(test)
 render_dynamic_state_zero_defaults :: proc(t: ^testing.T) {
 	state: gfx.Ez_Gfx_Render_Dynamic_State
-	testing.expect(t, state.cull_mode == vk.CullModeFlags{}, "dynamic state should default to no culling")
-	testing.expect_value(t, state.front_face, vk.FrontFace.COUNTER_CLOCKWISE)
+	testing.expect(t, state.cull_mode == gfx.Ez_Gfx_Cull_Mode.None, "dynamic state should default to no culling")
+	testing.expect_value(t, state.front_face, gfx.Ez_Gfx_Front_Face.COUNTER_CLOCKWISE)
 	testing.expect_value(t, state.primitive_type, gfx.Ez_Gfx_Primitive_Type.Triangle_List)
 	testing.expect_value(t, state.blend_mode, gfx.Ez_Gfx_Blend_Mode.None)
 	testing.expect_value(t, gfx.ez_gfx_render_dynamic_state_to_vk_topology(state.primitive_type), vk.PrimitiveTopology.TRIANGLE_LIST)
@@ -265,7 +265,7 @@ stale_indirect_handle_cannot_mutate_new_render_frame :: proc(t: ^testing.T) {
 	gfx.ez_gfx_context_wait_idle(app.ctx)
 	_ = gfx.ez_gfx_indirect_release(app.ctx, indirect)
 	if !testing.expect(t, gfx.ez_gfx_begin_render_surface(app.ctx, app.window.surface) == .Ok, "stale indirect test failed to begin next frame") do return
-	draw := vk.DrawIndexedIndirectCommand{indexCount = app.triangle_index_len, instanceCount = 1, firstIndex = app.triangle_index, vertexOffset = i32(app.triangle_vertex)}
+	draw := gfx.Ez_Gfx_Draw_Indexed_Command{index_count = app.triangle_index_len, instance_count = 1, first_index = app.triangle_index, vertex_offset = i32(app.triangle_vertex)}
 	testing.expect_value(t, gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, 0, draw), gfx.Ez_Gfx_Status.Invalid_Context)
 	_ = gfx.ez_gfx_finish_render_context(app.ctx)
 }
@@ -372,7 +372,7 @@ triangle_draw_frame :: proc(app: ^Triangle_App) -> bool {
 		_ = gfx.ez_gfx_finish_render_context(app.ctx)
 		return false
 	}
-	draw := vk.DrawIndexedIndirectCommand{indexCount = app.triangle_index_len, instanceCount = 1, firstIndex = app.triangle_index, vertexOffset = i32(app.triangle_vertex)}
+	draw := gfx.Ez_Gfx_Draw_Indexed_Command{index_count = app.triangle_index_len, instance_count = 1, first_index = app.triangle_index, vertex_offset = i32(app.triangle_vertex)}
 	if gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, 0, draw) != .Ok {
 		_ = gfx.ez_gfx_finish_render_context(app.ctx)
 		return false

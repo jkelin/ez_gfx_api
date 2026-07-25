@@ -83,7 +83,7 @@ public sealed class GraphicsWindow : GraphicsResource
         }
         NativeErrors.ThrowIfFailed(
             "Framebuffer size query",
-            EzGfxNative.EzGfxCSurfaceGetExtent(NativeValue, out uint width, out uint height, Owner.ContextValue));
+            EzGfxNative.EzGfxSurfaceGetExtent(NativeValue, out uint width, out uint height, Owner.ContextValue));
         return (width, height);
     }
 
@@ -155,7 +155,7 @@ public sealed class VertexManager : GraphicsResource
         }
         NativeErrors.ThrowIfFailed(
             "Vertex heap creation",
-            EzGfxNative.EzGfxCVertexHeapCreate(name, capacity, stride, Owner.ContextValue));
+            EzGfxNative.EzGfxVertexHeapCreate(name, capacity, stride, Owner.ContextValue));
     }
 
     public uint UploadIndices(ReadOnlySpan<uint> indices) => Owner.UploadIndices(this, indices);
@@ -192,7 +192,7 @@ public sealed class IndirectBuffer : GraphicsResource
         ObjectDisposedException.ThrowIf(_disposed, this);
         NativeErrors.ThrowIfFailed(
             "Indirect draw write",
-            EzGfxNative.EzGfxCIndirectWriteDraw(
+            EzGfxNative.EzGfxIndirectWriteDraw(
                 NativeValue,
                 index,
                 command.IndexCount,
@@ -206,7 +206,7 @@ public sealed class IndirectBuffer : GraphicsResource
     public void SetDrawCount(uint count)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        NativeErrors.ThrowIfFailed("Indirect draw count", EzGfxNative.EzGfxCIndirectSetDrawCount(NativeValue, count, Owner.ContextValue));
+        NativeErrors.ThrowIfFailed("Indirect draw count", EzGfxNative.EzGfxIndirectSetDrawCount(NativeValue, count, Owner.ContextValue));
     }
 
     public override void Dispose()
@@ -241,7 +241,7 @@ public sealed class StructuredBuffer : GraphicsResource
         {
             throw new ArgumentException("Structured data must not be empty.", nameof(data));
         }
-        NativeErrors.ThrowIfFailed("Structured buffer write", EzGfxNative.EzGfxCStructuredWrite(NativeValue, data, Owner.ContextValue));
+        NativeErrors.ThrowIfFailed("Structured buffer write", EzGfxNative.EzGfxStructuredWrite(NativeValue, data, Owner.ContextValue));
     }
 
     public override void Dispose()
@@ -297,16 +297,21 @@ public readonly record struct DrawIndexedCommand(
     int VertexOffset,
     uint FirstInstance);
 
-public readonly record struct Binding(string Name, StructuredBuffer? Structured = null, IndirectBuffer? Indirect = null) : IEzGfxBindingInput
+public readonly record struct Binding(
+    string Name,
+    StructuredBuffer? Structured = null,
+    IndirectBuffer? Indirect = null,
+    ulong RenderTarget = 0) : IEzGfxBindingInput
 {
     ulong IEzGfxBindingInput.Structured => Structured?.NativeValue ?? 0;
     ulong IEzGfxBindingInput.Indirect => Indirect?.NativeValue ?? 0;
+    ulong IEzGfxBindingInput.RenderTarget => RenderTarget;
 }
 public readonly record struct DynamicState(
-    uint CullMode = 2,
-    uint FrontFace = 0,
-    uint PrimitiveType = 0,
-    uint BlendMode = 0);
+    EzGfxCullMode CullMode = EzGfxCullMode.Back,
+    EzGfxFrontFace FrontFace = EzGfxFrontFace.CounterClockwise,
+    EzGfxPrimitiveType PrimitiveType = EzGfxPrimitiveType.TriangleList,
+    EzGfxBlendMode BlendMode = EzGfxBlendMode.None);
 
 public sealed record TextureDescription(
     EzGfxSourceTextureFormat SourceFormat,

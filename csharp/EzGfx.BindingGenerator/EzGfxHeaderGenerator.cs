@@ -73,6 +73,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
     {
         public string Doc { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+        public string Underlying { get; set; } = string.Empty;
         public List<EnumValueModel> Values { get; } = new();
     }
 
@@ -151,6 +152,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
                 EnumModel enumModel = new()
                 {
                     Name = RequiredAttribute(enumElement, "name"),
+                    Underlying = RequiredAttribute(enumElement, "underlying"),
                     Doc = OptionalAttribute(enumElement, "doc"),
                 };
                 foreach (XElement value in enumElement.Elements("value"))
@@ -399,7 +401,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             foreach (EnumModel enumModel in model.Enums)
             {
                 EmitSummary(output, enumModel.Doc, string.Empty);
-                output.AppendLine($"public enum {enumModel.Name} : int");
+                output.AppendLine($"public enum {enumModel.Name} : {EnumUnderlyingType(enumModel.Underlying)}");
                 output.AppendLine("{");
                 foreach (EnumValueModel value in enumModel.Values)
                 {
@@ -433,6 +435,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("    string Name { get; }");
             output.AppendLine("    ulong Structured { get; }");
             output.AppendLine("    ulong Indirect { get; }");
+            output.AppendLine("    ulong RenderTarget { get; }");
             output.AppendLine("}");
             output.AppendLine();
             output.AppendLine("public static unsafe partial class EzGfxNative");
@@ -551,43 +554,43 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitContextCreate(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCContextCreate(bool enableDebug, bool enableValidation, EzGfxSurfacePlatform surfacePlatform, out ulong context)");
+            output.AppendLine("    public static EzGfxResult EzGfxContextCreate(bool enableDebug, bool enableValidation, EzGfxSurfacePlatform surfacePlatform, out ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        EzGfxContextDesc description = new()");
             output.AppendLine("        {");
-            output.AppendLine("            EnableDebug = enableDebug ? 1 : 0,");
-            output.AppendLine("            EnableValidation = enableValidation ? 1 : 0,");
-            output.AppendLine("            SurfacePlatform = (uint)surfacePlatform,");
+            output.AppendLine("            EnableDebug = enableDebug ? (byte)1 : (byte)0,");
+            output.AppendLine("            EnableValidation = enableValidation ? (byte)1 : (byte)0,");
+            output.AppendLine("            SurfacePlatform = surfacePlatform,");
             output.AppendLine("        };");
-            output.AppendLine("        return RawEzGfxCContextCreate((IntPtr)(&description), out context);");
+            output.AppendLine("        return RawEzGfxContextCreate((IntPtr)(&description), out context);");
             output.AppendLine("    }");
             output.AppendLine();
         }
 
         private static void EmitSurfaceCreate(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCSurfaceCreate(IntPtr window, IntPtr display, EzGfxSurfacePlatform platform, uint width, uint height, out ulong surface, ulong context)");
+            output.AppendLine("    public static EzGfxResult EzGfxSurfaceCreate(IntPtr window, IntPtr display, EzGfxSurfacePlatform platform, uint width, uint height, out ulong surface, ulong context)");
             output.AppendLine("    {");
-            output.AppendLine("        if (window == IntPtr.Zero || display == IntPtr.Zero || width == 0 || height == 0)");
+            output.AppendLine("        if (window == IntPtr.Zero || width == 0 || height == 0 || (platform == EzGfxSurfacePlatform.Win32 && display == IntPtr.Zero))");
             output.AppendLine("        {");
-            output.AppendLine("            throw new ArgumentException(\"A non-zero parent window, display, width, and height are required.\");");
+            output.AppendLine("            throw new ArgumentException(\"A non-zero parent window, width, and height are required; Win32 also requires a display handle.\");");
             output.AppendLine("        }");
             output.AppendLine("        EzGfxSurfaceDesc description = new()");
             output.AppendLine("        {");
             output.AppendLine("            Window = window,");
             output.AppendLine("            Display = display,");
-            output.AppendLine("            Platform = (uint)platform,");
+            output.AppendLine("            Platform = platform,");
             output.AppendLine("            Width = width,");
             output.AppendLine("            Height = height,");
             output.AppendLine("        };");
-            output.AppendLine("        return RawEzGfxCSurfaceCreate((IntPtr)(&description), out surface, context);");
+            output.AppendLine("        return RawEzGfxSurfaceCreate((IntPtr)(&description), out surface, context);");
             output.AppendLine("    }");
             output.AppendLine();
         }
 
         private static void EmitShaderCompile(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCShaderCompile(string path, EzGfxShaderKind kind, string? vertexEntry, string? fragmentEntry, string? computeEntry, out ulong shader, ulong context)");
+            output.AppendLine("    public static EzGfxResult EzGfxShaderCompile(string path, EzGfxShaderKind kind, string? vertexEntry, string? fragmentEntry, string? computeEntry, out ulong shader, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        ArgumentException.ThrowIfNullOrWhiteSpace(path);");
             output.AppendLine("        int totalBytes = checked(Utf8ByteCount(path) + Utf8ByteCount(vertexEntry) + Utf8ByteCount(fragmentEntry) + Utf8ByteCount(computeEntry));");
@@ -603,9 +606,9 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("                    VertexEntry = PutUtf8(utf8, ref offset, vertexEntry),");
             output.AppendLine("                    FragmentEntry = PutUtf8(utf8, ref offset, fragmentEntry),");
             output.AppendLine("                    ComputeEntry = PutUtf8(utf8, ref offset, computeEntry),");
-            output.AppendLine("                    Kind = (uint)kind,");
+            output.AppendLine("                    Kind = kind,");
             output.AppendLine("                };");
-            output.AppendLine("                return RawEzGfxCShaderCompile((IntPtr)(&description), out shader, context);");
+            output.AppendLine("                return RawEzGfxShaderCompile((IntPtr)(&description), out shader, context);");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");
@@ -618,12 +621,12 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitVertexUploadIndices(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCVertexUploadIndices(ReadOnlySpan<uint> data, out uint startIndex, ulong context)");
+            output.AppendLine("    public static EzGfxResult EzGfxVertexUploadIndices(ReadOnlySpan<uint> data, out uint startIndex, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Index data must not be empty.\", nameof(data));");
             output.AppendLine("        fixed (uint* pointer = data)");
             output.AppendLine("        {");
-            output.AppendLine("            return RawEzGfxCVertexUploadIndices((IntPtr)pointer, checked((uint)data.Length), out startIndex, context);");
+            output.AppendLine("            return RawEzGfxVertexUploadIndices((IntPtr)pointer, checked((uint)data.Length), out startIndex, context);");
             output.AppendLine("        }");
             output.AppendLine("    }");
             output.AppendLine();
@@ -631,7 +634,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitVertexUpload(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCVertexUpload(string heapName, ReadOnlySpan<byte> data, uint elementCount, ulong elementSize, out uint startIndex, ulong context)");
+            output.AppendLine("    public static EzGfxResult EzGfxVertexUpload(string heapName, ReadOnlySpan<byte> data, uint elementCount, ulong elementSize, out uint startIndex, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        ArgumentException.ThrowIfNullOrWhiteSpace(heapName);");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Vertex data must not be empty.\", nameof(data));");
@@ -643,7 +646,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("            fixed (byte* dataPointer = data)");
             output.AppendLine("            {");
             output.AppendLine("                int offset = 0;");
-            output.AppendLine("                return RawEzGfxCVertexUpload(PutUtf8(utf8, ref offset, heapName), (IntPtr)dataPointer, elementCount, elementSize, out startIndex, context);");
+            output.AppendLine("                return RawEzGfxVertexUpload(PutUtf8(utf8, ref offset, heapName), (IntPtr)dataPointer, elementCount, elementSize, out startIndex, context);");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");
@@ -656,7 +659,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitTextureLoad(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxTextureError EzGfxCTextureLoad(ReadOnlySpan<byte> data, uint sourceFormat, uint destinationFormat, uint width, uint height, uint mipCount, bool generateMips, EzGfxTextureFilter minFilter, EzGfxTextureFilter magFilter, float maxAnisotropy, EzGfxTextureAddressMode addressModeU, EzGfxTextureAddressMode addressModeV, EzGfxTextureAddressMode addressModeW, string? debugLabel, out ulong texture, ulong context)");
+            output.AppendLine("    public static EzGfxTextureError EzGfxTextureLoad(ReadOnlySpan<byte> data, EzGfxSourceTextureFormat sourceFormat, EzGfxTextureDestinationFormat destinationFormat, uint width, uint height, uint mipCount, bool generateMips, EzGfxTextureFilter minFilter, EzGfxTextureFilter magFilter, float maxAnisotropy, EzGfxTextureAddressMode addressModeU, EzGfxTextureAddressMode addressModeV, EzGfxTextureAddressMode addressModeW, string? debugLabel, out ulong texture, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Texture data must not be empty.\", nameof(data));");
             output.AppendLine("        int totalBytes = Utf8ByteCount(debugLabel);");
@@ -674,16 +677,16 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("                    Width = width,");
             output.AppendLine("                    Height = height,");
             output.AppendLine("                    MipCount = mipCount,");
-            output.AppendLine("                    GenerateMips = generateMips ? 1 : 0,");
-            output.AppendLine("                    MinFilter = (uint)minFilter,");
-            output.AppendLine("                    MagFilter = (uint)magFilter,");
+            output.AppendLine("                    GenerateMips = generateMips ? (byte)1 : (byte)0,");
+            output.AppendLine("                    MinFilter = minFilter,");
+            output.AppendLine("                    MagFilter = magFilter,");
             output.AppendLine("                    MaxAnisotropy = maxAnisotropy,");
-            output.AppendLine("                    AddressModeU = (uint)addressModeU,");
-            output.AppendLine("                    AddressModeV = (uint)addressModeV,");
-            output.AppendLine("                    AddressModeW = (uint)addressModeW,");
+            output.AppendLine("                    AddressModeU = addressModeU,");
+            output.AppendLine("                    AddressModeV = addressModeV,");
+            output.AppendLine("                    AddressModeW = addressModeW,");
             output.AppendLine("                    DebugLabel = PutUtf8(utf8, ref offset, debugLabel),");
             output.AppendLine("                };");
-            output.AppendLine("                return (EzGfxTextureError)RawEzGfxCTextureLoad((IntPtr)dataPointer, checked((ulong)data.Length), (IntPtr)(&description), out texture, context);");
+            output.AppendLine("                return RawEzGfxTextureLoad((IntPtr)dataPointer, checked((ulong)data.Length), (IntPtr)(&description), out texture, context);");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");
@@ -696,7 +699,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitIndirectWriteDraw(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCIndirectWriteDraw(ulong indirect, uint index, uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance, ulong context)");
+            output.AppendLine("    public static EzGfxResult EzGfxIndirectWriteDraw(ulong indirect, uint index, uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        EzGfxDrawIndexedCommand command = new()");
             output.AppendLine("        {");
@@ -706,19 +709,19 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("            VertexOffset = vertexOffset,");
             output.AppendLine("            FirstInstance = firstInstance,");
             output.AppendLine("        };");
-            output.AppendLine("        return RawEzGfxCIndirectWriteDraw(indirect, index, (IntPtr)(&command), context);");
+            output.AppendLine("        return RawEzGfxIndirectWriteDraw(indirect, index, (IntPtr)(&command), context);");
             output.AppendLine("    }");
             output.AppendLine();
         }
 
         private static void EmitStructuredWrite(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCStructuredWrite(ulong structured, ReadOnlySpan<byte> data, ulong context)");
+            output.AppendLine("    public static EzGfxResult EzGfxStructuredWrite(ulong structured, ReadOnlySpan<byte> data, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Structured data must not be empty.\", nameof(data));");
             output.AppendLine("        fixed (byte* pointer = data)");
             output.AppendLine("        {");
-            output.AppendLine("            return RawEzGfxCStructuredWrite(structured, (IntPtr)pointer, checked((ulong)data.Length), context);");
+            output.AppendLine("            return RawEzGfxStructuredWrite(structured, (IntPtr)pointer, checked((ulong)data.Length), context);");
             output.AppendLine("        }");
             output.AppendLine("    }");
             output.AppendLine();
@@ -726,9 +729,9 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitRenderPipeline(StringBuilder output, bool vertex)
         {
-            string methodName = vertex ? "EzGfxCRenderAddVertexPipeline" : "EzGfxCRenderAddComputePipeline";
+            string methodName = vertex ? "EzGfxRenderAddVertexPipeline" : "EzGfxRenderAddComputePipeline";
             string parameters = vertex
-                ? "ulong shader, ulong indirect, ReadOnlySpan<TBinding> bindings, uint cullMode, uint frontFace, uint primitiveType, uint blendMode, ReadOnlySpan<byte> pushConstants, ulong context"
+                ? "ulong shader, ulong indirect, ReadOnlySpan<TBinding> bindings, EzGfxCullMode cullMode, EzGfxFrontFace frontFace, EzGfxPrimitiveType primitiveType, EzGfxBlendMode blendMode, ReadOnlySpan<byte> pushConstants, ulong context"
                 : "ulong shader, uint dispatchX, uint dispatchY, uint dispatchZ, ReadOnlySpan<TBinding> bindings, ReadOnlySpan<byte> pushConstants, ulong context";
             output.AppendLine($"    public static EzGfxResult {methodName}<TBinding>({parameters}) where TBinding : IEzGfxBindingInput");
             output.AppendLine("    {");
@@ -765,6 +768,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("                    nativeBindings[index] = new EzGfxBinding");
             output.AppendLine("                    {");
             output.AppendLine("                        Name = PutUtf8(utf8, ref offset, binding.Name),");
+            output.AppendLine("                        RenderTarget = binding.RenderTarget,");
             output.AppendLine("                        Structured = binding.Structured,");
             output.AppendLine("                        Indirect = binding.Indirect,");
             output.AppendLine("                    };");
@@ -947,6 +951,15 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
                 .Replace("\r", " ")
                 .Replace("\n", " ");
             output.AppendLine($"{indent}/// <summary>{summary}</summary>");
+        }
+
+        private static string EnumUnderlyingType(string type)
+        {
+            if (!PrimitiveTypes.TryGetValue(type, out string? primitive) || primitive == "void")
+            {
+                throw new InvalidDataException($"unsupported enum underlying type {type}");
+            }
+            return primitive;
         }
 
         private static string StructFieldType(string type, HashSet<string> handleTypes)

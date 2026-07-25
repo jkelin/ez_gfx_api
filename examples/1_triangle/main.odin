@@ -142,12 +142,12 @@ draw_frame :: proc(app: ^App, window: ^shared.Example_Window) {
 	)
 	assert(pipeline_status == .Ok, "failed to add triangle pipeline")
 
-	draw := vk.DrawIndexedIndirectCommand {
-		indexCount    = app.triangle_index_len,
-		instanceCount = 1,
-		firstIndex    = app.triangle_index,
-		vertexOffset  = i32(app.triangle_vertex),
-		firstInstance = 0,
+	draw := gfx.Ez_Gfx_Draw_Indexed_Command {
+		index_count    = app.triangle_index_len,
+		instance_count = 1,
+		first_index    = app.triangle_index,
+		vertex_offset  = i32(app.triangle_vertex),
+		first_instance = 0,
 	}
 	assert(gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, 0, draw) == .Ok, "failed to write triangle draw")
 	assert(gfx.ez_gfx_indirect_set_draw_count(app.ctx, indirect, 1) == .Ok, "failed to set triangle draw count")

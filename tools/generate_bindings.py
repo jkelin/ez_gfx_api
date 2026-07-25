@@ -247,10 +247,11 @@ def generate(root: ET.Element) -> str:
     for enum in enums:
         name = required(enum, "name")
         output.extend(type_comment(enum, "enum"))
-        output.append(f"typedef enum {name} {{")
+        output.append(f"typedef {ctype(required(enum, 'underlying'))} {name};")
+        output.append("enum {")
         for value in enum:
             output.append(f"    {required(value, 'name')} = {int(required(value, 'value'))},")
-        output.append(f"}} {name};")
+        output.append("};")
         output.append("")
     for struct in structs:
         name = required(struct, "name")

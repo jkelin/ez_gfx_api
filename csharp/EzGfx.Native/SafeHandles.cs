@@ -8,7 +8,7 @@ public sealed class EzGfxContextHandle : SafeHandleZeroOrMinusOneIsInvalid
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCContextDestroy((ulong)handle);
+        EzGfxNative.EzGfxContextDestroy((ulong)handle);
         return true;
     }
 }
@@ -25,7 +25,7 @@ public sealed class EzGfxSurfaceHandle : SafeHandleZeroOrMinusOneIsInvalid
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCSurfaceDestroy((ulong)handle, _context);
+        EzGfxNative.EzGfxSurfaceDestroy((ulong)handle, _context);
         return true;
     }
 }
@@ -42,7 +42,7 @@ public sealed class EzGfxShaderHandle : SafeHandleZeroOrMinusOneIsInvalid
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCShaderDestroy((ulong)handle, _context);
+        EzGfxNative.EzGfxShaderDestroy((ulong)handle, _context);
         return true;
     }
 }
@@ -59,7 +59,7 @@ public sealed class EzGfxIndirectHandle : SafeHandleZeroOrMinusOneIsInvalid
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCIndirectRelease((ulong)handle, _context);
+        EzGfxNative.EzGfxIndirectRelease((ulong)handle, _context);
         return true;
     }
 }
@@ -76,7 +76,7 @@ public sealed class EzGfxStructuredHandle : SafeHandleZeroOrMinusOneIsInvalid
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCStructuredRelease((ulong)handle, _context);
+        EzGfxNative.EzGfxStructuredRelease((ulong)handle, _context);
         return true;
     }
 }

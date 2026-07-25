@@ -139,7 +139,7 @@ render_add_vertex_pipeline_with_dynamic_state_without_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
 	bindings: []Ez_Gfx_Render_Binding,
-	dynamic_state: Ez_Gfx_Render_Dynamic_State,
+	dynamic_state: Ez_Gfx_Render_Dynamic_State_Vk,
 ) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
 	return render_add_vertex_pipeline_impl(
 		shader,
@@ -155,7 +155,7 @@ render_add_vertex_pipeline_with_dynamic_state_and_push_constants :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
 	bindings: []Ez_Gfx_Render_Binding,
-	dynamic_state: Ez_Gfx_Render_Dynamic_State,
+	dynamic_state: Ez_Gfx_Render_Dynamic_State_Vk,
 	push_constants: $T,
 ) -> Ez_Gfx_Vertex_Pipeline_Descriptor {
 	data := push_constants
@@ -173,7 +173,7 @@ render_add_vertex_pipeline_impl :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	indirect: Ez_Gfx_Indirect_Buffer_Handle,
 	bindings: []Ez_Gfx_Render_Binding,
-	dynamic_state: Ez_Gfx_Render_Dynamic_State,
+	dynamic_state: Ez_Gfx_Render_Dynamic_State_Vk,
 	push_constant_data: rawptr,
 	push_constant_size: u32,
 ) -> Ez_Gfx_Vertex_Pipeline_Descriptor {

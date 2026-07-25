@@ -29,6 +29,10 @@ expect_window_snapshot :: proc(
 	current_path := snapshot_current_path(name)
 	defer delete(current_path)
 	expected_path := snapshot_expected_path(name)
+	current_path_c, current_path_error := strings.clone_to_cstring(current_path, context.temp_allocator)
+	if !testing.expect(t, current_path_error == nil, "failed to prepare NUL-terminated snapshot path") {
+		return
+	}
 	defer delete(expected_path)
 
 	if !testing.expect(t, snapshot_ensure_dir(), "failed to create snapshot output directory") {
@@ -36,7 +40,7 @@ expect_window_snapshot :: proc(
 	}
 	if !testing.expectf(
 		t,
-		gfx.ez_gfx_screenshot_save(window.ctx, window.surface, current_path) == .Ok,
+		gfx.ez_gfx_screenshot_save(window.ctx, window.surface, current_path_c) == .Ok,
 		"failed to write current snapshot: %v",
 		current_path,
 	) {

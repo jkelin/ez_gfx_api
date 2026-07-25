@@ -848,15 +848,22 @@ vertex_finish_job :: proc(
 		}
 	}
 	if ctx.vertex_uploaded_callback != nil {
-		heap_name := string(job.heap_name[:job.heap_name_len])
-		ctx.vertex_uploaded_callback(
-			ctx,
-			job.kind,
-			heap_name,
-			job.allocation,
-			err,
-			ctx.vertex_uploaded_user_data,
-		)
+		heap_name_bytes: [EZ_GFX_VERTEX_HEAP_NAME_MAX + 1]byte
+		for i in 0 ..< job.heap_name_len {
+			heap_name_bytes[i] = job.heap_name[i]
+		}
+		heap_name_bytes[job.heap_name_len] = 0
+		context_handle, handle_ok := handle_pack_context(ctx.local_handle)
+		if handle_ok {
+			ctx.vertex_uploaded_callback(
+				context_handle,
+				job.kind,
+				cast(cstring)rawptr(&heap_name_bytes[0]),
+				job.allocation,
+				err,
+				ctx.vertex_uploaded_user_data,
+			)
+		}
 	}
 	vertex_upload_job_release_source(job)
 }

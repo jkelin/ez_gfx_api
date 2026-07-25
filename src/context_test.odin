@@ -103,32 +103,32 @@ public_context_binding_survives_api_boundaries :: proc(t: ^testing.T) {
 forged_c_context_handles_are_rejected_without_dereference :: proc(t: ^testing.T) {
 	testing.expect_value(
 		t,
-		ez_gfx_c_context_wait_idle(1),
-		EZ_GFX_C_RESULT_INVALID_CONTEXT,
+		ez_gfx_c_context_wait_idle(Ez_Gfx_Context_Handle(1)),
+		Ez_Gfx_Status.Invalid_Context,
 	)
-	ez_gfx_c_context_destroy(1)
+	ez_gfx_c_context_destroy(Ez_Gfx_Context_Handle(1))
 }
 
 @(test)
 c_context_final_argument_installs_odin_context :: proc(t: ^testing.T) {
-	desc := Ez_Gfx_C_Context_Desc{
-		enable_debug      = 0,
-		enable_validation = 0,
+	desc := Ez_Gfx_Context_Desc{
+		enable_debug      = false,
+		enable_validation = false,
 		surface_platform  = EZ_GFX_SURFACE_PLATFORM_WIN32,
 	}
 	previous_user_ptr := context.user_ptr
 	defer {
 		context.user_ptr = previous_user_ptr
 	}
-	context_handle: u64
+	context_handle: Ez_Gfx_Context_Handle
 	status := ez_gfx_c_context_create(&desc, &context_handle)
-	testing.expect_value(t, status, EZ_GFX_C_RESULT_OK)
-	if status != EZ_GFX_C_RESULT_OK do return
+	testing.expect_value(t, status, Ez_Gfx_Status.Ok)
+	if status != Ez_Gfx_Status.Ok do return
 	context.user_ptr = nil
 	testing.expect_value(
 		t,
 		ez_gfx_c_context_wait_idle(context_handle),
-		EZ_GFX_C_RESULT_OK,
+		Ez_Gfx_Status.Ok,
 	)
 	ez_gfx_c_context_destroy(context_handle)
 	testing.expect_value(t, ez_gfx_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
@@ -136,28 +136,28 @@ c_context_final_argument_installs_odin_context :: proc(t: ^testing.T) {
 
 @(test)
 stale_c_context_handle_never_aliases_a_new_context :: proc(t: ^testing.T) {
-	desc := Ez_Gfx_C_Context_Desc {
-		enable_debug      = 0,
-		enable_validation = 0,
+	desc := Ez_Gfx_Context_Desc {
+		enable_debug      = false,
+		enable_validation = false,
 		surface_platform  = EZ_GFX_SURFACE_PLATFORM_WIN32,
 	}
-	first_handle: u64
+	first_handle: Ez_Gfx_Context_Handle
 	first_status := ez_gfx_c_context_create(&desc, &first_handle)
-	testing.expect_value(t, first_status, EZ_GFX_C_RESULT_OK)
-	if first_status != EZ_GFX_C_RESULT_OK do return
+	testing.expect_value(t, first_status, Ez_Gfx_Status.Ok)
+	if first_status != Ez_Gfx_Status.Ok do return
 	ez_gfx_c_context_destroy(first_handle)
 
-	second_handle: u64
+	second_handle: Ez_Gfx_Context_Handle
 	second_status := ez_gfx_c_context_create(&desc, &second_handle)
-	testing.expect_value(t, second_status, EZ_GFX_C_RESULT_OK)
-	if second_status != EZ_GFX_C_RESULT_OK do return
+	testing.expect_value(t, second_status, Ez_Gfx_Status.Ok)
+	if second_status != Ez_Gfx_Status.Ok do return
 	defer ez_gfx_c_context_destroy(second_handle)
 
 	testing.expect(t, first_handle != second_handle, "opaque C context handles must not be recycled")
 	testing.expect_value(
 		t,
 		ez_gfx_c_context_wait_idle(first_handle),
-		EZ_GFX_C_RESULT_INVALID_CONTEXT,
+		Ez_Gfx_Status.Invalid_Context,
 	)
 }
 
@@ -168,35 +168,35 @@ c_context_create_failure_clears_odin_context :: proc(t: ^testing.T) {
 		context.user_ptr = previous_user_ptr
 	}
 	context.user_ptr = nil
-	desc := Ez_Gfx_C_Context_Desc{surface_platform = 99}
-	context_handle: u64
+	desc := Ez_Gfx_Context_Desc{surface_platform = Ez_Gfx_Surface_Platform(99)}
+	context_handle: Ez_Gfx_Context_Handle
 
 	testing.expect_value(
 		t,
 		ez_gfx_c_context_create(&desc, &context_handle),
-		EZ_GFX_C_RESULT_INVALID_ARGUMENT,
+		Ez_Gfx_Status.Invalid_Argument,
 	)
-	testing.expect_value(t, context_handle, u64(0))
+	testing.expect_value(t, context_handle, Ez_Gfx_Context_Handle(0))
 	testing.expect_value(t, ez_gfx_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
 }
 
 @(test)
 forged_c_resource_handles_are_rejected_with_live_context :: proc(t: ^testing.T) {
-	desc := Ez_Gfx_C_Context_Desc {
-		enable_debug      = 0,
-		enable_validation = 0,
+	desc := Ez_Gfx_Context_Desc {
+		enable_debug      = false,
+		enable_validation = false,
 		surface_platform  = EZ_GFX_SURFACE_PLATFORM_WIN32,
 	}
-	context_handle: u64
+	context_handle: Ez_Gfx_Context_Handle
 	status := ez_gfx_c_context_create(&desc, &context_handle)
-	testing.expect_value(t, status, EZ_GFX_C_RESULT_OK)
-	if status != EZ_GFX_C_RESULT_OK do return
+	testing.expect_value(t, status, Ez_Gfx_Status.Ok)
+	if status != Ez_Gfx_Status.Ok do return
 
 	width, height: u32
 	testing.expect_value(
 		t,
 		ez_gfx_c_surface_get_extent(1, &width, &height, context_handle),
-		EZ_GFX_C_RESULT_INVALID_CONTEXT,
+		Ez_Gfx_Status.Invalid_Context,
 	)
 	ez_gfx_c_surface_destroy(1, context_handle)
 	ez_gfx_c_shader_destroy(1, context_handle)
@@ -223,39 +223,39 @@ c_surface_rejects_live_surface_from_another_context :: proc(t: ^testing.T) {
 		if !testing.expect(t, host_window != nil, "GLFW must create the caller-owned test window") do return
 		defer glfw.DestroyWindow(host_window)
 
-		context_desc := Ez_Gfx_C_Context_Desc {
-			enable_debug      = 0,
-			enable_validation = 0,
+		context_desc := Ez_Gfx_Context_Desc {
+			enable_debug      = false,
+			enable_validation = false,
 			surface_platform  = EZ_GFX_SURFACE_PLATFORM_WIN32,
 		}
-		first_context, second_context: u64
+		first_context, second_context: Ez_Gfx_Context_Handle
 		first_status := ez_gfx_c_context_create(&context_desc, &first_context)
-		testing.expect_value(t, first_status, EZ_GFX_C_RESULT_OK)
-		if first_status != EZ_GFX_C_RESULT_OK do return
+		testing.expect_value(t, first_status, Ez_Gfx_Status.Ok)
+		if first_status != Ez_Gfx_Status.Ok do return
 		defer ez_gfx_c_context_destroy(first_context)
 		second_status := ez_gfx_c_context_create(&context_desc, &second_context)
-		testing.expect_value(t, second_status, EZ_GFX_C_RESULT_OK)
-		if second_status != EZ_GFX_C_RESULT_OK do return
+		testing.expect_value(t, second_status, Ez_Gfx_Status.Ok)
+		if second_status != Ez_Gfx_Status.Ok do return
 		defer ez_gfx_c_context_destroy(second_context)
 
-		surface_desc := Ez_Gfx_C_Surface_Desc {
+		surface_desc := Ez_Gfx_Surface_Desc {
 			window   = rawptr(glfw.GetWin32Window(host_window)),
 			display  = rawptr(win.GetModuleHandleW(nil)),
 			platform = EZ_GFX_SURFACE_PLATFORM_WIN32,
 			width    = 1,
 			height   = 1,
 		}
-		surface_handle: u64
+		surface_handle: Ez_Gfx_Surface_Handle
 		surface_status := ez_gfx_c_surface_create(&surface_desc, &surface_handle, first_context)
-		testing.expect_value(t, surface_status, EZ_GFX_C_RESULT_OK)
-		if surface_status != EZ_GFX_C_RESULT_OK do return
+		testing.expect_value(t, surface_status, Ez_Gfx_Status.Ok)
+		if surface_status != Ez_Gfx_Status.Ok do return
 		defer ez_gfx_c_surface_destroy(surface_handle, first_context)
 
 		width, height: u32
 		testing.expect_value(
 			t,
 			ez_gfx_c_surface_get_extent(surface_handle, &width, &height, second_context),
-			EZ_GFX_C_RESULT_INVALID_CONTEXT,
+			Ez_Gfx_Status.Invalid_Context,
 		)
 	} else {
 		testing.expect(t, true)
@@ -264,40 +264,40 @@ c_surface_rejects_live_surface_from_another_context :: proc(t: ^testing.T) {
 
 @(test)
 c_surface_rejects_extent_that_would_wrap_signed_odin_dimension :: proc(t: ^testing.T) {
-	context_desc := Ez_Gfx_C_Context_Desc {
-		enable_debug      = 0,
-		enable_validation = 0,
+	context_desc := Ez_Gfx_Context_Desc {
+		enable_debug      = false,
+		enable_validation = false,
 		surface_platform  = EZ_GFX_SURFACE_PLATFORM_WIN32,
 	}
-	context_handle: u64
+	context_handle: Ez_Gfx_Context_Handle
 	status := ez_gfx_c_context_create(&context_desc, &context_handle)
-	testing.expect_value(t, status, EZ_GFX_C_RESULT_OK)
-	if status != EZ_GFX_C_RESULT_OK do return
+	testing.expect_value(t, status, Ez_Gfx_Status.Ok)
+	if status != Ez_Gfx_Status.Ok do return
 	defer ez_gfx_c_context_destroy(context_handle)
 
-	surface_desc := Ez_Gfx_C_Surface_Desc {
+	surface_desc := Ez_Gfx_Surface_Desc {
 		platform = EZ_GFX_SURFACE_PLATFORM_WIN32,
 		width = u32(max(c.int)) + 1,
 		height = 1,
 	}
-	surface_handle: u64
+	surface_handle: Ez_Gfx_Surface_Handle
 	testing.expect_value(
 		t,
 		ez_gfx_c_surface_create(&surface_desc, &surface_handle, context_handle),
-		EZ_GFX_C_RESULT_INVALID_ARGUMENT,
+		Ez_Gfx_Status.Invalid_Argument,
 	)
-	testing.expect_value(t, surface_handle, u64(0))
+	testing.expect_value(t, surface_handle, Ez_Gfx_Surface_Handle(0))
 }
 
 @(test)
 public_unsigned_surface_extent_validates_before_mutating_window :: proc(t: ^testing.T) {
 	ctx: Ez_Gfx_Ctx
-	ctx.surface_platform = EZ_GFX_SURFACE_PLATFORM_WIN32
+	ctx.surface_platform = u32(EZ_GFX_SURFACE_PLATFORM_WIN32)
 	marker: u8
 	window := Ez_Gfx_Window {
 		native_window = rawptr(&marker),
 		native_display = rawptr(&marker),
-		surface_platform = EZ_GFX_SURFACE_PLATFORM_WIN32,
+		surface_platform = u32(EZ_GFX_SURFACE_PLATFORM_WIN32),
 		framebuffer_width = 7,
 		framebuffer_height = 9,
 	}
@@ -357,23 +357,24 @@ public_raw_index_upload_validates_before_context_lookup :: proc(t: ^testing.T) {
 }
 
 @(test)
-public_texture_bytes_validation_precedes_copy_and_context_lookup :: proc(t: ^testing.T) {
-	_, texture_id, status := ez_gfx_texture_load_bytes(nil, 1, nil)
+texture_load_bytes_rejects_invalid_input_before_copy_or_context_lookup :: proc(t: ^testing.T) {
+	texture_handle, status := ez_gfx_texture_load_bytes(0, nil, 1, nil)
 
-	testing.expect_value(t, texture_id, Ez_Gfx_Texture_ID(0))
+	testing.expect_value(t, texture_handle, Ez_Gfx_Texture_Handle(0))
 	testing.expect_value(t, status, Ez_Gfx_Texture_Error.Invalid_Arguments)
 }
 
 @(test)
-public_texture_bytes_invalid_c_descriptor_precedes_copy_and_context_lookup :: proc(t: ^testing.T) {
+texture_load_bytes_rejects_invalid_descriptor_before_copy_or_context_lookup :: proc(t: ^testing.T) {
 	pixels := [?]u8{255, 255, 255, 255}
-	desc := Ez_Gfx_C_Texture_Desc{destination_format = 1}
-	_, texture_id, status := ez_gfx_texture_load_bytes(
+	desc := Ez_Gfx_Load_Texture_Desc{destination_format = Ez_Gfx_Texture_Destination_Format(1)}
+	texture_handle, status := ez_gfx_texture_load_bytes(
+		0,
 		&pixels[0],
 		u64(len(pixels)),
 		&desc,
 	)
 
-	testing.expect_value(t, texture_id, Ez_Gfx_Texture_ID(0))
+	testing.expect_value(t, texture_handle, Ez_Gfx_Texture_Handle(0))
 	testing.expect_value(t, status, Ez_Gfx_Texture_Error.Invalid_Arguments)
 }

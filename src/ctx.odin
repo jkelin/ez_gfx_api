@@ -71,7 +71,7 @@ vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
 }
 
 // Creates the Vulkan instance; call before creating any window surface.
-ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {}) -> bool {
+ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Context_Options = {}) -> bool {
 	context.user_ptr = ctx
 	global_proc: rawptr
 	vulkan_global_proc_loader(&global_proc, "vkGetInstanceProcAddr")
@@ -80,7 +80,7 @@ ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {}) -> boo
 
 	ctx.enable_validation = desc.enable_validation
 	ctx.enable_debug = desc.enable_debug
-	ctx.surface_platform = desc.surface_platform
+	ctx.surface_platform = u32(desc.surface_platform)
 	ctx.validation_callback = desc.validation_callback
 	ctx.validation_user_data = desc.validation_user_data
 	ctx.texture_loaded_callback = desc.texture_loaded_callback
@@ -98,7 +98,7 @@ ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {}) -> boo
 		"VK_KHR_win32_surface",
 	}
 	instance_extensions := desc.instance_extensions
-	if len(instance_extensions) == 0 && desc.surface_platform == EZ_GFX_INTERNAL_SURFACE_PLATFORM_WIN32 {
+	if len(instance_extensions) == 0 && desc.surface_platform == Ez_Gfx_Surface_Platform.WIN32 {
 		instance_extensions = default_extensions[:]
 	}
 	if len(instance_extensions) == 0 {
@@ -991,16 +991,19 @@ vulkan_debug_callback :: proc "system" (
 	}
 
 	if ctx.validation_callback != nil && callback_data != nil {
-		ctx.validation_callback(
-			ctx,
-			{
-				severity = message_severity,
-				message_type = message_types,
-				message_id_name = callback_data.pMessageIdName,
-				message = callback_data.pMessage,
-			},
-			ctx.validation_user_data,
-		)
+		context_handle, handle_ok := handle_pack_context(ctx.local_handle)
+		if handle_ok {
+			ctx.validation_callback(
+				context_handle,
+				{
+					severity = message_severity,
+					message_type = message_types,
+					message_id_name = callback_data.pMessageIdName,
+					message = callback_data.pMessage,
+				},
+				ctx.validation_user_data,
+			)
+		}
 	}
 	return false
 }

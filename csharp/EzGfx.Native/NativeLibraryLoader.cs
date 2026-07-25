@@ -58,7 +58,7 @@ public static class EzGfxNativeLoader
     public static void VerifyAbi()
     {
         EnsureLoaded();
-        uint nativeVersion = EzGfxNative.EzGfxCAbiVersion();
+        uint nativeVersion = EzGfxNative.EzGfxAbiVersion();
         if (nativeVersion != EzGfxNative.AbiVersion)
         {
             throw new InvalidOperationException($"ez_gfx ABI mismatch: native={nativeVersion}, managed={EzGfxNative.AbiVersion}, path={ResolvedPath}");

@@ -218,12 +218,12 @@ draw_frame :: proc(app: ^App, window: ^shared.Example_Window) {
 	)
 	assert(pipeline_status == .Ok, "failed to add cube pipeline")
 
-	draw := vk.DrawIndexedIndirectCommand {
-		indexCount    = app.cube_index_len,
-		instanceCount = 1,
-		firstIndex    = app.cube_index,
-		vertexOffset  = i32(app.cube_vertex),
-		firstInstance = 0,
+	draw := gfx.Ez_Gfx_Draw_Indexed_Command {
+		index_count    = app.cube_index_len,
+		instance_count = 1,
+		first_index    = app.cube_index,
+		vertex_offset  = i32(app.cube_vertex),
+		first_instance = 0,
 	}
 	assert(gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, 0, draw) == .Ok, "failed to write cube draw")
 	assert(gfx.ez_gfx_indirect_set_draw_count(app.ctx, indirect, 1) == .Ok, "failed to set cube draw count")

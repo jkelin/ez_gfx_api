@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define EZ_GFX_ABI_VERSION 7u
+#define EZ_GFX_ABI_VERSION 8u
 
 #if defined(__clang__)
 #  if __has_attribute(access)
@@ -55,6 +55,10 @@ typedef uint64_t EzGfxStructuredBuffer;
  * EzGfxTexture: Opaque packed u64 texture handle; child bits index the context identity arena and resolve only as Texture.
  */
 typedef uint64_t EzGfxTexture;
+/**
+ * EzGfxRenderTarget: Opaque packed u64 render-target handle; child bits index the context identity arena and resolve only as RenderTarget.
+ */
+typedef uint64_t EzGfxRenderTarget;
 
 /**
  * EzGfxResult:
@@ -66,13 +70,14 @@ typedef uint64_t EzGfxTexture;
  *
  * Result returned by context, surface, shader, buffer, and render operations.
  */
-typedef enum EzGfxResult {
+typedef uint8_t EzGfxResult;
+enum {
     EzGfxResult_Ok = 0,
     EzGfxResult_InvalidArgument = 1,
     EzGfxResult_InvalidContext = 2,
     EzGfxResult_NativeFailure = 3,
     EzGfxResult_NotReady = 4,
-} EzGfxResult;
+};
 
 /**
  * EzGfxTextureError:
@@ -89,7 +94,8 @@ typedef enum EzGfxResult {
  *
  * Result returned by texture loading and unloading.
  */
-typedef enum EzGfxTextureError {
+typedef uint8_t EzGfxTextureError;
+enum {
     EzGfxTextureError_None = 0,
     EzGfxTextureError_InvalidContext = 1,
     EzGfxTextureError_InvalidArguments = 2,
@@ -100,7 +106,7 @@ typedef enum EzGfxTextureError {
     EzGfxTextureError_VulkanFailed = 7,
     EzGfxTextureError_WorkerUnavailable = 8,
     EzGfxTextureError_NotFound = 9,
-} EzGfxTextureError;
+};
 
 /**
  * EzGfxShaderKind:
@@ -109,20 +115,24 @@ typedef enum EzGfxTextureError {
  *
  * Shader stage family.
  */
-typedef enum EzGfxShaderKind {
+typedef uint8_t EzGfxShaderKind;
+enum {
     EzGfxShaderKind_Graphics = 0,
     EzGfxShaderKind_Compute = 1,
-} EzGfxShaderKind;
+};
 
 /**
  * EzGfxSurfacePlatform:
  * @EzGfxSurfacePlatform_Win32: Win32 HWND and HINSTANCE handles.
+ * @EzGfxSurfacePlatform_GLFW: GLFW native window handle.
  *
  * Native surface platform.
  */
-typedef enum EzGfxSurfacePlatform {
+typedef uint8_t EzGfxSurfacePlatform;
+enum {
     EzGfxSurfacePlatform_Win32 = 0,
-} EzGfxSurfacePlatform;
+    EzGfxSurfacePlatform_GLFW = 1,
+};
 
 /**
  * EzGfxSourceTextureFormat:
@@ -136,7 +146,8 @@ typedef enum EzGfxSurfacePlatform {
  *
  * Source image encoding.
  */
-typedef enum EzGfxSourceTextureFormat {
+typedef uint8_t EzGfxSourceTextureFormat;
+enum {
     EzGfxSourceTextureFormat_Rgb = 0,
     EzGfxSourceTextureFormat_Rgba = 1,
     EzGfxSourceTextureFormat_Bmp = 2,
@@ -144,7 +155,7 @@ typedef enum EzGfxSourceTextureFormat {
     EzGfxSourceTextureFormat_Png = 4,
     EzGfxSourceTextureFormat_Tga = 5,
     EzGfxSourceTextureFormat_Ktx2 = 6,
-} EzGfxSourceTextureFormat;
+};
 
 /**
  * EzGfxTextureFilter:
@@ -153,10 +164,11 @@ typedef enum EzGfxSourceTextureFormat {
  *
  * Texture sampling filter.
  */
-typedef enum EzGfxTextureFilter {
+typedef uint8_t EzGfxTextureFilter;
+enum {
     EzGfxTextureFilter_Nearest = 0,
     EzGfxTextureFilter_Linear = 1,
-} EzGfxTextureFilter;
+};
 
 /**
  * EzGfxTextureAddressMode:
@@ -165,10 +177,11 @@ typedef enum EzGfxTextureFilter {
  *
  * Texture addressing mode.
  */
-typedef enum EzGfxTextureAddressMode {
+typedef uint8_t EzGfxTextureAddressMode;
+enum {
     EzGfxTextureAddressMode_Repeat = 0,
     EzGfxTextureAddressMode_ClampToEdge = 1,
-} EzGfxTextureAddressMode;
+};
 
 /**
  * EzGfxTextureDestinationFormat:
@@ -176,9 +189,74 @@ typedef enum EzGfxTextureAddressMode {
  *
  * Destination texture format.
  */
-typedef enum EzGfxTextureDestinationFormat {
+typedef uint8_t EzGfxTextureDestinationFormat;
+enum {
     EzGfxTextureDestinationFormat_Rgba8Unorm = 0,
-} EzGfxTextureDestinationFormat;
+};
+
+/**
+ * EzGfxCullMode:
+ * @EzGfxCullMode_None: No face culling.
+ * @EzGfxCullMode_Front: Cull front-facing primitives.
+ * @EzGfxCullMode_Back: Cull back-facing primitives.
+ * @EzGfxCullMode_FrontAndBack: Cull both front- and back-facing primitives.
+ *
+ * Pipeline cull mode.
+ */
+typedef uint8_t EzGfxCullMode;
+enum {
+    EzGfxCullMode_None = 0,
+    EzGfxCullMode_Front = 1,
+    EzGfxCullMode_Back = 2,
+    EzGfxCullMode_FrontAndBack = 3,
+};
+
+/**
+ * EzGfxFrontFace:
+ * @EzGfxFrontFace_CounterClockwise: Counter-clockwise winding.
+ * @EzGfxFrontFace_Clockwise: Clockwise winding.
+ *
+ * Front-face winding order.
+ */
+typedef uint8_t EzGfxFrontFace;
+enum {
+    EzGfxFrontFace_CounterClockwise = 0,
+    EzGfxFrontFace_Clockwise = 1,
+};
+
+/**
+ * EzGfxPrimitiveType:
+ * @EzGfxPrimitiveType_TriangleList: Triangle list.
+ * @EzGfxPrimitiveType_PointList: Point list.
+ * @EzGfxPrimitiveType_LineList: Line list.
+ * @EzGfxPrimitiveType_LineStrip: Line strip.
+ * @EzGfxPrimitiveType_TriangleStrip: Triangle strip.
+ * @EzGfxPrimitiveType_TriangleFan: Triangle fan.
+ *
+ * Pipeline primitive topology.
+ */
+typedef uint8_t EzGfxPrimitiveType;
+enum {
+    EzGfxPrimitiveType_TriangleList = 0,
+    EzGfxPrimitiveType_PointList = 1,
+    EzGfxPrimitiveType_LineList = 2,
+    EzGfxPrimitiveType_LineStrip = 3,
+    EzGfxPrimitiveType_TriangleStrip = 4,
+    EzGfxPrimitiveType_TriangleFan = 5,
+};
+
+/**
+ * EzGfxBlendMode:
+ * @EzGfxBlendMode_None: Opaque blending.
+ * @EzGfxBlendMode_Alpha: Source-alpha blending.
+ *
+ * Pipeline blend mode.
+ */
+typedef uint8_t EzGfxBlendMode;
+enum {
+    EzGfxBlendMode_None = 0,
+    EzGfxBlendMode_Alpha = 1,
+};
 
 /**
  * EzGfxContextDesc:
@@ -189,27 +267,29 @@ typedef enum EzGfxTextureDestinationFormat {
  * Context creation options.
  */
 typedef struct EzGfxContextDesc {
-    int32_t enable_debug;
-    int32_t enable_validation;
-    uint32_t surface_platform;
+    uint8_t enable_debug;
+    uint8_t enable_validation;
+    EzGfxSurfacePlatform surface_platform;
 } EzGfxContextDesc;
 
 /**
  * EzGfxSurfaceDesc:
  * @window (not nullable): Native HWND.
- * @display (not nullable): Native HINSTANCE.
+ * @display (nullable): Native HINSTANCE; nullable for GLFW.
  * @platform: Value from EzGfxSurfacePlatform.
  * @width: Initial framebuffer width.
  * @height: Initial framebuffer height.
+ * @cache_presented_snapshots: Non-zero caches presented images.
  *
  * Caller-owned native window used to create a Vulkan surface.
  */
 typedef struct EzGfxSurfaceDesc {
     void * window;
     void * display;
-    uint32_t platform;
+    EzGfxSurfacePlatform platform;
     uint32_t width;
     uint32_t height;
+    uint8_t cache_presented_snapshots;
 } EzGfxSurfaceDesc;
 
 /**
@@ -227,7 +307,7 @@ typedef struct EzGfxShaderDesc {
     const char * vertex_entry;
     const char * fragment_entry;
     const char * compute_entry;
-    uint32_t kind;
+    EzGfxShaderKind kind;
 } EzGfxShaderDesc;
 
 /**
@@ -249,18 +329,18 @@ typedef struct EzGfxShaderDesc {
  * Texture decoding and sampling metadata.
  */
 typedef struct EzGfxTextureDesc {
-    uint32_t source_format;
-    uint32_t destination_format;
+    EzGfxSourceTextureFormat source_format;
+    EzGfxTextureDestinationFormat destination_format;
     uint32_t width;
     uint32_t height;
     uint32_t mip_count;
-    int32_t generate_mips;
-    uint32_t min_filter;
-    uint32_t mag_filter;
+    uint8_t generate_mips;
+    EzGfxTextureFilter min_filter;
+    EzGfxTextureFilter mag_filter;
     float max_anisotropy;
-    uint32_t address_mode_u;
-    uint32_t address_mode_v;
-    uint32_t address_mode_w;
+    EzGfxTextureAddressMode address_mode_u;
+    EzGfxTextureAddressMode address_mode_v;
+    EzGfxTextureAddressMode address_mode_w;
     const char * debug_label;
 } EzGfxTextureDesc;
 
@@ -269,6 +349,7 @@ typedef struct EzGfxTextureDesc {
  * @name (not nullable): UTF-8 shader binding name.
  * @structured: Optional structured buffer handle.
  * @indirect: Optional indirect buffer handle.
+ * @render_target: Optional render-target handle.
  *
  * Shader resource binding.
  */
@@ -276,22 +357,23 @@ typedef struct EzGfxBinding {
     const char * name;
     EzGfxStructuredBuffer structured;
     EzGfxIndirectBuffer indirect;
+    EzGfxRenderTarget render_target;
 } EzGfxBinding;
 
 /**
  * EzGfxDynamicState:
- * @cull_mode: 0 none, 1 front, 2 back, 3 both.
- * @front_face: 0 counter-clockwise, 1 clockwise.
- * @primitive_type: Primitive topology enum value.
- * @blend_mode: Blend mode enum value.
+ * @cull_mode: Cull mode override.
+ * @front_face: Front-face winding override.
+ * @primitive_type: Primitive topology override.
+ * @blend_mode: Blend mode override.
  *
  * Optional dynamic state overrides.
  */
 typedef struct EzGfxDynamicState {
-    uint32_t cull_mode;
-    uint32_t front_face;
-    uint32_t primitive_type;
-    uint32_t blend_mode;
+    EzGfxCullMode cull_mode;
+    EzGfxFrontFace front_face;
+    EzGfxPrimitiveType primitive_type;
+    EzGfxBlendMode blend_mode;
 } EzGfxDynamicState;
 
 /**
@@ -325,58 +407,58 @@ typedef struct EzGfxByteBuffer {
 } EzGfxByteBuffer;
 
 /**
- * ez_gfx_c_abi_version:
+ * ez_gfx_abi_version:
  *
  * Returns: (transfer none): ABI version; no context is required.
  */
-uint32_t ez_gfx_c_abi_version(void);
+uint32_t ez_gfx_abi_version(void);
 
 /**
- * ez_gfx_c_context_create:
+ * ez_gfx_context_create:
  * @desc (in) (not nullable): Context creation options.
  * @out_context (out caller-allocates): Receives the opaque context handle.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a creation error.
  */
-EzGfxResult ez_gfx_c_context_create(const EzGfxContextDesc * desc, EzGfxContext * out_context) EZ_GFX_ACCESS(write_only, 2);
+EzGfxResult ez_gfx_context_create(const EzGfxContextDesc * desc, EzGfxContext * out_context) EZ_GFX_ACCESS(write_only, 2);
 
 /**
- * ez_gfx_c_context_wait_idle:
+ * ez_gfx_context_wait_idle:
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or EzGfxResult_InvalidContext.
  */
-EzGfxResult ez_gfx_c_context_wait_idle(EzGfxContext context);
+EzGfxResult ez_gfx_context_wait_idle(EzGfxContext context);
 
 /**
- * ez_gfx_c_context_destroy:
+ * ez_gfx_context_destroy:
  * @context: Context to destroy; null is ignored.
  *
  * Returns: (transfer none): No return value; null handles are ignored.
  */
-void ez_gfx_c_context_destroy(EzGfxContext context);
+void ez_gfx_context_destroy(EzGfxContext context);
 
 /**
- * ez_gfx_c_surface_create:
+ * ez_gfx_surface_create:
  * @desc (in) (not nullable): Window and initial extent.
  * @out_surface (out caller-allocates): Receives the opaque surface handle.
  * @context (not nullable): Context that owns the surface.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a validation/native error.
  */
-EzGfxResult ez_gfx_c_surface_create(const EzGfxSurfaceDesc * desc, EzGfxSurface * out_surface, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
+EzGfxResult ez_gfx_surface_create(const EzGfxSurfaceDesc * desc, EzGfxSurface * out_surface, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
 
 /**
- * ez_gfx_c_context_init_device:
+ * ez_gfx_context_init_device:
  * @surface: Surface owned by context.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a native failure.
  */
-EzGfxResult ez_gfx_c_context_init_device(EzGfxSurface surface, EzGfxContext context);
+EzGfxResult ez_gfx_context_init_device(EzGfxSurface surface, EzGfxContext context);
 
 /**
- * ez_gfx_c_surface_resize:
+ * ez_gfx_surface_resize:
  * @surface: Surface to resize.
  * @width: New width; zero is valid only with zero height for minimized state.
  * @height: New height; zero is valid only with zero width for minimized state.
@@ -384,10 +466,10 @@ EzGfxResult ez_gfx_c_context_init_device(EzGfxSurface surface, EzGfxContext cont
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok, EzGfxResult_NotReady, or an error.
  */
-EzGfxResult ez_gfx_c_surface_resize(EzGfxSurface surface, uint32_t width, uint32_t height, EzGfxContext context);
+EzGfxResult ez_gfx_surface_resize(EzGfxSurface surface, uint32_t width, uint32_t height, EzGfxContext context);
 
 /**
- * ez_gfx_c_surface_get_extent:
+ * ez_gfx_surface_get_extent:
  * @surface: Surface to query.
  * @out_width (out caller-allocates): Receives width.
  * @out_height (out caller-allocates): Receives height.
@@ -395,58 +477,58 @@ EzGfxResult ez_gfx_c_surface_resize(EzGfxSurface surface, uint32_t width, uint32
  *
  * Returns: (transfer none): Returns EzGfxResult_NotReady while minimized.
  */
-EzGfxResult ez_gfx_c_surface_get_extent(EzGfxSurface surface, uint32_t * out_width, uint32_t * out_height, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2) EZ_GFX_ACCESS(write_only, 3);
+EzGfxResult ez_gfx_surface_get_extent(EzGfxSurface surface, uint32_t * out_width, uint32_t * out_height, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2) EZ_GFX_ACCESS(write_only, 3);
 
 /**
- * ez_gfx_c_surface_resize_pending:
+ * ez_gfx_surface_resize_pending:
  * @surface: Surface to query.
  * @out_pending (out caller-allocates): Receives 0 or 1.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or an error.
  */
-EzGfxResult ez_gfx_c_surface_resize_pending(EzGfxSurface surface, int32_t * out_pending, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
+EzGfxResult ez_gfx_surface_resize_pending(EzGfxSurface surface, int32_t * out_pending, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
 
 /**
- * ez_gfx_c_surface_set_snapshot_cache:
+ * ez_gfx_surface_set_snapshot_cache:
  * @surface: Surface to configure.
  * @enabled: Must be zero or one.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument.
  */
-EzGfxResult ez_gfx_c_surface_set_snapshot_cache(EzGfxSurface surface, int32_t enabled, EzGfxContext context);
+EzGfxResult ez_gfx_surface_set_snapshot_cache(EzGfxSurface surface, int32_t enabled, EzGfxContext context);
 
 /**
- * ez_gfx_c_surface_destroy:
+ * ez_gfx_surface_destroy:
  * @surface: Surface to destroy.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): No return value; null handles are ignored.
  */
-void ez_gfx_c_surface_destroy(EzGfxSurface surface, EzGfxContext context);
+void ez_gfx_surface_destroy(EzGfxSurface surface, EzGfxContext context);
 
 /**
- * ez_gfx_c_shader_compile:
+ * ez_gfx_shader_compile:
  * @desc (in) (not nullable): Shader description.
  * @out_shader (out caller-allocates): Receives the shader handle.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a compile error.
  */
-EzGfxResult ez_gfx_c_shader_compile(const EzGfxShaderDesc * desc, EzGfxShader * out_shader, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
+EzGfxResult ez_gfx_shader_compile(const EzGfxShaderDesc * desc, EzGfxShader * out_shader, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
 
 /**
- * ez_gfx_c_shader_destroy:
+ * ez_gfx_shader_destroy:
  * @shader: Shader to destroy.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): No return value; null handles are ignored.
  */
-void ez_gfx_c_shader_destroy(EzGfxShader shader, EzGfxContext context);
+void ez_gfx_shader_destroy(EzGfxShader shader, EzGfxContext context);
 
 /**
- * ez_gfx_c_vertex_heap_create:
+ * ez_gfx_vertex_heap_create:
  * @name (not nullable): UTF-8 heap name.
  * @capacity: Heap capacity in bytes.
  * @stride: Element stride in bytes.
@@ -454,20 +536,20 @@ void ez_gfx_c_shader_destroy(EzGfxShader shader, EzGfxContext context);
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or an error.
  */
-EzGfxResult ez_gfx_c_vertex_heap_create(const char * name, uint64_t capacity, uint64_t stride, EzGfxContext context);
+EzGfxResult ez_gfx_vertex_heap_create(const char * name, uint64_t capacity, uint64_t stride, EzGfxContext context);
 
 /**
- * ez_gfx_c_index_heap_create:
+ * ez_gfx_index_heap_create:
  * @capacity: Heap capacity in bytes.
  * @debug_name (not nullable): UTF-8 debug name.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or an error.
  */
-EzGfxResult ez_gfx_c_index_heap_create(uint64_t capacity, const char * debug_name, EzGfxContext context);
+EzGfxResult ez_gfx_index_heap_create(uint64_t capacity, const char * debug_name, EzGfxContext context);
 
 /**
- * ez_gfx_c_vertex_upload_indices:
+ * ez_gfx_vertex_upload_indices:
  * @data (in) (not nullable) (array length=count): Index data.
  * @count: Number of indices.
  * @out_start_index (out caller-allocates): Receives the allocated first index.
@@ -475,10 +557,10 @@ EzGfxResult ez_gfx_c_index_heap_create(uint64_t capacity, const char * debug_nam
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a queueing error.
  */
-EzGfxResult ez_gfx_c_vertex_upload_indices(const void * data, uint32_t count, uint32_t * out_start_index, EzGfxContext context) EZ_GFX_ACCESS(read_only, 1, 2) EZ_GFX_ACCESS(write_only, 3);
+EzGfxResult ez_gfx_vertex_upload_indices(const void * data, uint32_t count, uint32_t * out_start_index, EzGfxContext context) EZ_GFX_ACCESS(read_only, 1, 2) EZ_GFX_ACCESS(write_only, 3);
 
 /**
- * ez_gfx_c_vertex_upload:
+ * ez_gfx_vertex_upload:
  * @heap_name (not nullable): UTF-8 heap name.
  * @data (in) (not nullable) (bytes=element_size) (array length=element_count): Vertex data; its byte length must equal element_count multiplied by element_size.
  * @element_count: Number of vertices.
@@ -488,18 +570,18 @@ EzGfxResult ez_gfx_c_vertex_upload_indices(const void * data, uint32_t count, ui
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a queueing error.
  */
-EzGfxResult ez_gfx_c_vertex_upload(const char * heap_name, const void * data, uint32_t element_count, uint64_t element_size, uint32_t * out_start_index, EzGfxContext context) EZ_GFX_ACCESS(write_only, 5);
+EzGfxResult ez_gfx_vertex_upload(const char * heap_name, const void * data, uint32_t element_count, uint64_t element_size, uint32_t * out_start_index, EzGfxContext context) EZ_GFX_ACCESS(write_only, 5);
 
 /**
- * ez_gfx_c_enable_all_decoders:
+ * ez_gfx_enable_all_decoders:
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a registration error.
  */
-EzGfxResult ez_gfx_c_enable_all_decoders(EzGfxContext context);
+EzGfxResult ez_gfx_enable_all_decoders(EzGfxContext context);
 
 /**
- * ez_gfx_c_texture_load:
+ * ez_gfx_texture_load:
  * @data (in) (not nullable) (array length=data_size): Encoded image bytes.
  * @data_size: Number of bytes in data.
  * @desc (in) (not nullable): Texture description.
@@ -508,38 +590,38 @@ EzGfxResult ez_gfx_c_enable_all_decoders(EzGfxContext context);
  *
  * Returns: (transfer none): Returns EzGfxTextureError_None or a typed texture error.
  */
-EzGfxTextureError ez_gfx_c_texture_load(const void * data, uint64_t data_size, const EzGfxTextureDesc * desc, EzGfxTexture * out_texture, EzGfxContext context) EZ_GFX_ACCESS(read_only, 1, 2) EZ_GFX_ACCESS(write_only, 4);
+EzGfxTextureError ez_gfx_texture_load(const void * data, uint64_t data_size, const EzGfxTextureDesc * desc, EzGfxTexture * out_texture, EzGfxContext context) EZ_GFX_ACCESS(read_only, 1, 2) EZ_GFX_ACCESS(write_only, 4);
 
 /**
- * ez_gfx_c_texture_binding_index:
+ * ez_gfx_texture_binding_index:
  * @texture: Texture handle.
  * @out_binding_index (out caller-allocates): Receives the bindless descriptor index.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxTextureError_None or a typed texture error.
  */
-EzGfxTextureError ez_gfx_c_texture_binding_index(EzGfxTexture texture, uint32_t * out_binding_index, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
+EzGfxTextureError ez_gfx_texture_binding_index(EzGfxTexture texture, uint32_t * out_binding_index, EzGfxContext context) EZ_GFX_ACCESS(write_only, 2);
 
 /**
- * ez_gfx_c_texture_unload:
+ * ez_gfx_texture_unload:
  * @texture: Texture handle.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxTextureError_None or a typed texture error.
  */
-EzGfxTextureError ez_gfx_c_texture_unload(EzGfxTexture texture, EzGfxContext context);
+EzGfxTextureError ez_gfx_texture_unload(EzGfxTexture texture, EzGfxContext context);
 
 /**
- * ez_gfx_c_begin_render:
+ * ez_gfx_begin_render:
  * @surface: Surface to acquire.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_NotReady for a minimized or unavailable frame.
  */
-EzGfxResult ez_gfx_c_begin_render(EzGfxSurface surface, EzGfxContext context);
+EzGfxResult ez_gfx_begin_render(EzGfxSurface surface, EzGfxContext context);
 
 /**
- * ez_gfx_c_acquire_indirect:
+ * ez_gfx_acquire_indirect:
  * @capacity: Number of draw commands.
  * @debug_name (not nullable): UTF-8 debug name.
  * @out_indirect (out caller-allocates): Receives the buffer handle.
@@ -547,10 +629,10 @@ EzGfxResult ez_gfx_c_begin_render(EzGfxSurface surface, EzGfxContext context);
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or EzGfxResult_NotReady.
  */
-EzGfxResult ez_gfx_c_acquire_indirect(uint32_t capacity, const char * debug_name, EzGfxIndirectBuffer * out_indirect, EzGfxContext context) EZ_GFX_ACCESS(write_only, 3);
+EzGfxResult ez_gfx_acquire_indirect(uint32_t capacity, const char * debug_name, EzGfxIndirectBuffer * out_indirect, EzGfxContext context) EZ_GFX_ACCESS(write_only, 3);
 
 /**
- * ez_gfx_c_indirect_write_draw:
+ * ez_gfx_indirect_write_draw:
  * @indirect: Indirect buffer handle.
  * @index: Command index.
  * @command (in) (not nullable): Command data.
@@ -558,29 +640,29 @@ EzGfxResult ez_gfx_c_acquire_indirect(uint32_t capacity, const char * debug_name
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument.
  */
-EzGfxResult ez_gfx_c_indirect_write_draw(EzGfxIndirectBuffer indirect, uint32_t index, const EzGfxDrawIndexedCommand * command, EzGfxContext context);
+EzGfxResult ez_gfx_indirect_write_draw(EzGfxIndirectBuffer indirect, uint32_t index, const EzGfxDrawIndexedCommand * command, EzGfxContext context);
 
 /**
- * ez_gfx_c_indirect_set_draw_count:
+ * ez_gfx_indirect_set_draw_count:
  * @indirect: Indirect buffer handle.
  * @count: Number of commands.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument.
  */
-EzGfxResult ez_gfx_c_indirect_set_draw_count(EzGfxIndirectBuffer indirect, uint32_t count, EzGfxContext context);
+EzGfxResult ez_gfx_indirect_set_draw_count(EzGfxIndirectBuffer indirect, uint32_t count, EzGfxContext context);
 
 /**
- * ez_gfx_c_indirect_release:
+ * ez_gfx_indirect_release:
  * @indirect: Indirect buffer handle.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): No return value; null handles are ignored.
  */
-void ez_gfx_c_indirect_release(EzGfxIndirectBuffer indirect, EzGfxContext context);
+void ez_gfx_indirect_release(EzGfxIndirectBuffer indirect, EzGfxContext context);
 
 /**
- * ez_gfx_c_structured_acquire:
+ * ez_gfx_structured_acquire:
  * @element_size: Element size in bytes.
  * @element_count: Number of elements.
  * @debug_name (not nullable): UTF-8 debug name.
@@ -589,10 +671,10 @@ void ez_gfx_c_indirect_release(EzGfxIndirectBuffer indirect, EzGfxContext contex
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or EzGfxResult_NotReady.
  */
-EzGfxResult ez_gfx_c_structured_acquire(uint32_t element_size, uint32_t element_count, const char * debug_name, EzGfxStructuredBuffer * out_structured, EzGfxContext context) EZ_GFX_ACCESS(write_only, 4);
+EzGfxResult ez_gfx_structured_acquire(uint32_t element_size, uint32_t element_count, const char * debug_name, EzGfxStructuredBuffer * out_structured, EzGfxContext context) EZ_GFX_ACCESS(write_only, 4);
 
 /**
- * ez_gfx_c_structured_write:
+ * ez_gfx_structured_write:
  * @structured: Structured buffer handle.
  * @data (in) (not nullable) (array length=data_size): Bytes to copy.
  * @data_size: Number of bytes; zero is allowed.
@@ -600,19 +682,19 @@ EzGfxResult ez_gfx_c_structured_acquire(uint32_t element_size, uint32_t element_
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument.
  */
-EzGfxResult ez_gfx_c_structured_write(EzGfxStructuredBuffer structured, const void * data, uint64_t data_size, EzGfxContext context) EZ_GFX_ACCESS(read_only, 2, 3);
+EzGfxResult ez_gfx_structured_write(EzGfxStructuredBuffer structured, const void * data, uint64_t data_size, EzGfxContext context) EZ_GFX_ACCESS(read_only, 2, 3);
 
 /**
- * ez_gfx_c_structured_release:
+ * ez_gfx_structured_release:
  * @structured: Structured buffer handle.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): No return value; null handles are ignored.
  */
-void ez_gfx_c_structured_release(EzGfxStructuredBuffer structured, EzGfxContext context);
+void ez_gfx_structured_release(EzGfxStructuredBuffer structured, EzGfxContext context);
 
 /**
- * ez_gfx_c_render_add_vertex_pipeline:
+ * ez_gfx_render_add_vertex_pipeline:
  * @shader: Graphics shader handle.
  * @indirect: Indirect buffer handle.
  * @bindings (in) (nullable) (array length=binding_count): Shader resource bindings.
@@ -624,10 +706,10 @@ void ez_gfx_c_structured_release(EzGfxStructuredBuffer structured, EzGfxContext 
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a validation/native error.
  */
-EzGfxResult ez_gfx_c_render_add_vertex_pipeline(EzGfxShader shader, EzGfxIndirectBuffer indirect, const EzGfxBinding * bindings, uint32_t binding_count, const EzGfxDynamicState * dynamic_state, const void * push_constants, uint32_t push_constant_size, EzGfxContext context) EZ_GFX_ACCESS(read_only, 3, 4) EZ_GFX_ACCESS(read_only, 6, 7);
+EzGfxResult ez_gfx_render_add_vertex_pipeline(EzGfxShader shader, EzGfxIndirectBuffer indirect, const EzGfxBinding * bindings, uint32_t binding_count, const EzGfxDynamicState * dynamic_state, const void * push_constants, uint32_t push_constant_size, EzGfxContext context) EZ_GFX_ACCESS(read_only, 3, 4) EZ_GFX_ACCESS(read_only, 6, 7);
 
 /**
- * ez_gfx_c_render_add_compute_pipeline:
+ * ez_gfx_render_add_compute_pipeline:
  * @shader: Compute shader handle.
  * @dispatch_x: X workgroup count.
  * @dispatch_y: Y workgroup count.
@@ -640,34 +722,34 @@ EzGfxResult ez_gfx_c_render_add_vertex_pipeline(EzGfxShader shader, EzGfxIndirec
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a validation/native error.
  */
-EzGfxResult ez_gfx_c_render_add_compute_pipeline(EzGfxShader shader, uint32_t dispatch_x, uint32_t dispatch_y, uint32_t dispatch_z, const EzGfxBinding * bindings, uint32_t binding_count, const void * push_constants, uint32_t push_constant_size, EzGfxContext context) EZ_GFX_ACCESS(read_only, 5, 6) EZ_GFX_ACCESS(read_only, 7, 8);
+EzGfxResult ez_gfx_render_add_compute_pipeline(EzGfxShader shader, uint32_t dispatch_x, uint32_t dispatch_y, uint32_t dispatch_z, const EzGfxBinding * bindings, uint32_t binding_count, const void * push_constants, uint32_t push_constant_size, EzGfxContext context) EZ_GFX_ACCESS(read_only, 5, 6) EZ_GFX_ACCESS(read_only, 7, 8);
 
 /**
- * ez_gfx_c_finish_render:
+ * ez_gfx_finish_render:
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a render failure.
  */
-EzGfxResult ez_gfx_c_finish_render(EzGfxContext context);
+EzGfxResult ez_gfx_finish_render(EzGfxContext context);
 
 /**
- * ez_gfx_c_screenshot_save:
+ * ez_gfx_screenshot_save:
  * @surface: Surface to capture.
  * @path (not nullable): UTF-8, NUL-terminated output path.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok or a native failure.
  */
-EzGfxResult ez_gfx_c_screenshot_save(EzGfxSurface surface, const char * path, EzGfxContext context);
+EzGfxResult ez_gfx_screenshot_save(EzGfxSurface surface, const char * path, EzGfxContext context);
 
 /**
- * ez_gfx_c_imgui_render_demo:
+ * ez_gfx_imgui_render_demo:
  * @surface: Surface to render.
  * @context (not nullable): Owning context.
  *
  * Returns: (transfer none): Returns EzGfxResult_Ok, EzGfxResult_NotReady, or a native failure.
  */
-EzGfxResult ez_gfx_c_imgui_render_demo(EzGfxSurface surface, EzGfxContext context);
+EzGfxResult ez_gfx_imgui_render_demo(EzGfxSurface surface, EzGfxContext context);
 
 #ifdef __cplusplus
 }

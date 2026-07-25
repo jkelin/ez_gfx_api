@@ -191,7 +191,7 @@ example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 	if gfx.ez_gfx_indirect_set_draw_count(app.ctx, indirect, primitive_count) != .Ok { _ = gfx.ez_gfx_finish_render_context(app.ctx); return false }
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(math.to_radians_f32(60), shared.window_aspect(&app.window), EXAMPLE6_NEAR_PLANE, 100.0)
-	dynamic_state := gfx.Ez_Gfx_Render_Dynamic_State{front_face = .COUNTER_CLOCKWISE, cull_mode = {.BACK}}
+	dynamic_state := gfx.Ez_Gfx_Render_Dynamic_State{front_face = .COUNTER_CLOCKWISE, cull_mode = .BACK}
 	draw_push := Example6_Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)}
 	draw_bindings := [?]gfx.Ez_Gfx_Public_Render_Binding{{name = "primitives", structured = primitives}}
 	_, draw_status := gfx.ez_gfx_render_add_vertex_pipeline_handles(app.ctx, app.draw_shader, indirect, draw_bindings[:], dynamic_state, rawptr(&draw_push), u32(size_of(draw_push)))

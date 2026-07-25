@@ -366,7 +366,7 @@ render_target_graph_add_pipeline :: proc(
 		_ = gfx.ez_gfx_indirect_release(app.ctx, indirect)
 		return false
 	}
-	draw := vk.DrawIndexedIndirectCommand{indexCount = app.triangle_index_len, instanceCount = 1, firstIndex = app.triangle_index, vertexOffset = i32(app.triangle_vertex)}
+	draw := gfx.Ez_Gfx_Draw_Indexed_Command{index_count = app.triangle_index_len, instance_count = 1, first_index = app.triangle_index, vertex_offset = i32(app.triangle_vertex)}
 	if gfx.ez_gfx_indirect_write_draw(app.ctx, indirect, 0, draw) != .Ok {
 		_ = gfx.ez_gfx_indirect_release(app.ctx, indirect)
 		return false

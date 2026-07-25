@@ -386,7 +386,7 @@ draw_frame :: proc(app: ^App, window: ^shared.Example_Window) {
 	}
 	dynamic_state := gfx.Ez_Gfx_Render_Dynamic_State{
 		front_face = .COUNTER_CLOCKWISE,
-		cull_mode = {.BACK},
+		cull_mode = .BACK,
 	}
 	draw_push := Draw_Push_Constants {
 		mvp = shared.mat4_mul(projection, view),

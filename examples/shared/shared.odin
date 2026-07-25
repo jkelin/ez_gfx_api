@@ -74,12 +74,12 @@ example_window_create :: proc(
 	window.host_window = handle
 	desc: gfx.Ez_Gfx_Surface_Desc
 	when ODIN_OS == .Windows {
-		desc.native_window = rawptr(glfw.GetWin32Window(handle))
-		desc.native_display = rawptr(win.GetModuleHandleW(nil))
+		desc.window = rawptr(glfw.GetWin32Window(handle))
+		desc.display = rawptr(win.GetModuleHandleW(nil))
 		desc.platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32
 	} else {
-		desc.native_window = rawptr(handle)
-		desc.native_display = nil
+		desc.window = rawptr(handle)
+		desc.display = nil
 		desc.platform = gfx.EZ_GFX_SURFACE_PLATFORM_GLFW
 	}
 	width_px, height_px := glfw.GetFramebufferSize(handle)

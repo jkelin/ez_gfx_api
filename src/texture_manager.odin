@@ -267,13 +267,13 @@ texture_manager_load :: proc(
 	slot^ = {}
 	slot.id = texture_id
 	slot.state = .Queued
-	slot.format = desc.destination_format
+	slot.format = texture_destination_format_to_vk(desc.destination_format)
 	slot.width = desc.width
 	slot.height = desc.height
 	slot.mip_count = desc.mip_count
 	slot.layout = .UNDEFINED
 	slot.last_write_timeline = ctx_next_timeline_value(ctx)
-	texture_copy_debug_label(slot, desc.debug_label)
+	texture_copy_debug_label(slot, shader_cstring_to_string(desc.debug_label))
 	intrinsics.atomic_store_explicit(
 		&manager.latest_scheduled_texture_timeline,
 		slot.last_write_timeline,
@@ -607,7 +607,7 @@ texture_upload_decoded_job :: proc(
 
 	image, allocation, allocation_info, image_err := texture_create_image(
 		ctx,
-		job.load.desc.destination_format,
+		texture_destination_format_to_vk(job.load.desc.destination_format),
 		job.width,
 		job.height,
 		mip_count,
@@ -635,7 +635,7 @@ texture_upload_decoded_job :: proc(
 	view, sampler, resource_err := texture_create_view_and_sampler(
 		ctx,
 		image,
-		job.load.desc.destination_format,
+		texture_destination_format_to_vk(job.load.desc.destination_format),
 		mip_count,
 		job.load.desc,
 	)
@@ -1045,7 +1045,10 @@ texture_finish_job :: proc(
 		}
 	}
 	if call_callback && ctx.texture_loaded_callback != nil {
-		ctx.texture_loaded_callback(ctx, id, err, ctx.texture_loaded_user_data)
+		context_handle, handle_ok := handle_pack_context(ctx.local_handle)
+		if handle_ok {
+			ctx.texture_loaded_callback(context_handle, id, err, ctx.texture_loaded_user_data)
+		}
 	}
 }
 
@@ -1677,7 +1680,7 @@ texture_manager_collect_destroyed :: proc(manager: ^Ez_Gfx_Texture_Manager, ctx:
 
 texture_prepare_desc :: proc(desc: Ez_Gfx_Load_Texture_Desc) -> Ez_Gfx_Load_Texture_Desc {
 	desc := desc
-	if desc.destination_format == vk.Format(0) do desc.destination_format = .R8G8B8A8_UNORM
+	if desc.destination_format == {} do desc.destination_format = .R8G8B8A8_UNORM
 	if desc.mip_count == 0 do desc.mip_count = 1
 	if desc.generate_mips && desc.mip_count == 1 && desc.width > 0 && desc.height > 0 {
 		desc.mip_count = texture_full_mip_count(desc.width, desc.height)
@@ -1708,6 +1711,14 @@ texture_filter_to_vk :: proc(filter: Ez_Gfx_Texture_Filter) -> vk.Filter {
 texture_address_mode_to_vk :: proc(mode: Ez_Gfx_Texture_Address_Mode) -> vk.SamplerAddressMode {
 	if mode == .Clamp_To_Edge do return .CLAMP_TO_EDGE
 	return .REPEAT
+}
+
+texture_destination_format_to_vk :: proc(format: Ez_Gfx_Texture_Destination_Format) -> vk.Format {
+	switch format {
+	case .R8G8B8A8_UNORM:
+		return .R8G8B8A8_UNORM
+	}
+	panic("invalid texture destination format")
 }
 
 texture_copy_debug_label :: proc(record: ^Ez_Gfx_Texture_Record, label: string) {

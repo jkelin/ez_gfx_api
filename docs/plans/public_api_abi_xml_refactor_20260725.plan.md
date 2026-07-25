@@ -42,3 +42,39 @@ Texture descriptor indices are a separate runtime value from opaque texture hand
 38:- Treat every unexpected screenshot mismatch as blocking; do not modify tests or verification assets to hide it.
 39:- Report any changes outside this requested refactor. Expected non-code additions are this plan update; focused arena tests are part of the requested implementation.
 40:
+## Follow-up: public API and C ABI type consolidation
+
+Date: 2026-07-25
+
+### Affected files and symbols
+
+- `src/ez_gfx_api.odin`: public Odin facade, canonical public C-compatible layouts, and all exported `ez_gfx_*` C adapters.
+- `src/ez_gfx_api_c.odin`: package-private C adapter constants/status helpers only; it retains no exports or public layouts.
+- `src/imgui.odin`: private ImGui implementation behind the public facade wrapper and `ez_gfx_imgui_render_demo` export.
+- `src/defs.odin`: package-private implementation definitions; public ABI layouts remain centralized in `src/ez_gfx_api.odin`.
+- `bindings/bindings.xml`: canonical public enums, descriptors, handles, and `ez_gfx_*` function records consumed by both generators.
+- `tools/generate_bindings.py`: fixed-width C enum emission and XML validation for enum-valued fields/parameters.
+- `csharp/EzGfx.BindingGenerator/EzGfxHeaderGenerator.cs`: generated managed enum underlying widths and typed enum marshalling.
+- `.gitignore`: generated `include/*` output.
+- `src/ez_gfx_api.odin`: canonical public descriptors/enums/handles and exported wrappers, including the unified context handle and shared draw/binding inputs.
+
+### Decisions
+
+1. Shared public Odin descriptors use `cstring` for all public C-string fields and use typed C-compatible enums/handles instead of raw integer stand-ins. Internal owned text remains `string`.
+2. The public adapter declarations move to `src/ez_gfx_api.odin`; private implementation helpers remain in private implementation files and are called by thin exported wrappers.
+3. Context and resource handles remain distinct Odin types over the existing packed `u64` layout; C sees the generated fixed-width handle typedefs.
+4. XML enum underlying types become `uint8_t`; the C generator emits one-byte enum typedefs plus constants, and the C# generator emits byte-backed enums.
+5. XML function names follow the exported symbols after removing the `_c` link-name segment; no compatibility aliases remain.
+
+### Verification
+
+Regenerate and check bindings, build the native DLL, build managed projects, inspect the generated header for one-byte enums/typed descriptors/typed handles, run the native smoke path, and run the unchanged `just test` suite. Preserve the pre-existing untracked `vendor/glTF2/` directory and report it separately.
+
+### Completion record
+
+- Removed all `// Moved from src\...` comments and added the exact `include/*` generated-output ignore rule.
+- Consolidated public descriptor/input types across the Odin and C ABI surfaces. Public C-string fields use `cstring`; public enum-valued fields and parameters use explicit `enum u8` Odin types; context and resource parameters use distinct typed handles.
+- Updated the binding XML and generators so C enums are emitted as `uint8_t` aliases with stable constants and managed enums remain byte-backed. Regenerated outputs were validated without hand-editing generated files.
+- Moved the raw-byte texture copy and validation behind `ez_gfx_texture_load_bytes`, leaving the C export responsible only for output-pointer marshalling and delegation. The public ImGui facade/export now resolves to `ez_gfx_imgui_render_demo`.
+- Verification passed: `just check-bindings`, `just build-native-dll`, `just verify-native-exports` (34 exports), full Release `dotnet build`, managed ABI/resource smoke, all six native example builds, all six fixed-frame native screenshots, and `just test` (44 tests).
+- The pre-existing untracked `vendor/glTF2/` directory was preserved and was not part of this task.
