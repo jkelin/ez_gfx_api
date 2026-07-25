@@ -1,7 +1,6 @@
 #+private
 package ez_gfx
 
-import ga "./generational_arena"
 
 // Packed layout (context ownership + optional child identity):
 // bits 0-19:  context slot+1
@@ -44,7 +43,7 @@ Handle_Parts :: struct {
 	is_context:         bool,
 }
 
-handle_pack_context :: proc(local: ga.Handle) -> (Ez_Gfx_Context_Handle, bool) {
+handle_pack_context :: proc(local: Handle) -> (Ez_Gfx_Context_Handle, bool) {
 	if local.generation == 0 {
 		return 0, false
 	}
@@ -60,7 +59,7 @@ handle_pack_context :: proc(local: ga.Handle) -> (Ez_Gfx_Context_Handle, bool) {
 	return Ez_Gfx_Context_Handle(value), true
 }
 
-handle_pack_child :: proc(context_local: ga.Handle, child_local: ga.Handle) -> (u64, bool) {
+handle_pack_child :: proc(context_local: Handle, child_local: Handle) -> (u64, bool) {
 	context_handle, context_ok := handle_pack_context(context_local)
 	if !context_ok {
 		return 0, false
@@ -119,15 +118,15 @@ handle_unpack :: proc(value: u64) -> (parts: Handle_Parts, ok: bool) {
 	return parts, true
 }
 
-handle_context_local :: proc(parts: Handle_Parts) -> ga.Handle {
-	return ga.Handle {
+handle_context_local :: proc(parts: Handle_Parts) -> Handle {
+	return Handle {
 		slot = parts.context_slot,
 		generation = parts.context_generation,
 	}
 }
 
-handle_child_local :: proc(parts: Handle_Parts) -> ga.Handle {
-	return ga.Handle {
+handle_child_local :: proc(parts: Handle_Parts) -> Handle {
+	return Handle {
 		slot = parts.child_slot,
 		generation = parts.child_generation,
 	}

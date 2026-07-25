@@ -25,20 +25,20 @@ vertex_allocator_reuses_first_fitting_chunk_and_splits_remainder :: proc(t: ^tes
 	heap := vertex_allocator_test_heap(64, 4)
 	defer vertex_allocator_delete_test_heap(&heap)
 
-	first, first_status := ez_gfx_gpu_heap_allocate_range(&heap, 16)
-	second, second_status := ez_gfx_gpu_heap_allocate_range(&heap, 8)
+	first, first_status := api_gpu_heap_allocate_range(&heap, 16)
+	second, second_status := api_gpu_heap_allocate_range(&heap, 8)
 	testing.expect_value(t, first_status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, second_status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, first, vk.DeviceSize(0))
 	testing.expect_value(t, second, vk.DeviceSize(16))
 
-	freed_status := ez_gfx_gpu_heap_free_allocation(
+	freed_status := api_gpu_heap_free_allocation(
 		&heap,
 		Ez_Gfx_Vertex_Allocation{start_index = 0, count = 4},
 	)
 	testing.expect_value(t, freed_status, Ez_Gfx_Status.Ok)
 
-	reused, reused_status := ez_gfx_gpu_heap_allocate_range(&heap, 8)
+	reused, reused_status := api_gpu_heap_allocate_range(&heap, 8)
 	testing.expect_value(t, reused_status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, reused, vk.DeviceSize(0))
 	testing.expect_value(t, len(heap.free_chunks), 1)
@@ -52,9 +52,9 @@ vertex_allocator_merges_adjacent_free_chunks :: proc(t: ^testing.T) {
 	heap := vertex_allocator_test_heap(64, 4)
 	defer vertex_allocator_delete_test_heap(&heap)
 
-	_, a_status := ez_gfx_gpu_heap_allocate_range(&heap, 8)
-	_, b_status := ez_gfx_gpu_heap_allocate_range(&heap, 8)
-	_, c_status := ez_gfx_gpu_heap_allocate_range(&heap, 8)
+	_, a_status := api_gpu_heap_allocate_range(&heap, 8)
+	_, b_status := api_gpu_heap_allocate_range(&heap, 8)
+	_, c_status := api_gpu_heap_allocate_range(&heap, 8)
 	testing.expect_value(t, a_status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, b_status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, c_status, Ez_Gfx_Status.Ok)
@@ -67,7 +67,7 @@ vertex_allocator_merges_adjacent_free_chunks :: proc(t: ^testing.T) {
 	for allocation in allocations {
 		testing.expect_value(
 			t,
-			ez_gfx_gpu_heap_free_allocation(&heap, allocation),
+			api_gpu_heap_free_allocation(&heap, allocation),
 			Ez_Gfx_Status.Ok,
 		)
 	}
@@ -82,8 +82,8 @@ vertex_allocator_recovers_capacity_after_free :: proc(t: ^testing.T) {
 	heap := vertex_allocator_test_heap(16, 4)
 	defer vertex_allocator_delete_test_heap(&heap)
 
-	full_offset, full_status := ez_gfx_gpu_heap_allocate_range(&heap, 16)
-	overflow_offset, overflow_status := ez_gfx_gpu_heap_allocate_range(&heap, 4)
+	full_offset, full_status := api_gpu_heap_allocate_range(&heap, 16)
+	overflow_offset, overflow_status := api_gpu_heap_allocate_range(&heap, 4)
 	testing.expect_value(t, full_status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, full_offset, vk.DeviceSize(0))
 	testing.expect_value(t, overflow_status, Ez_Gfx_Status.Native_Failure)
@@ -91,13 +91,13 @@ vertex_allocator_recovers_capacity_after_free :: proc(t: ^testing.T) {
 
 	testing.expect_value(
 		t,
-		ez_gfx_gpu_heap_free_allocation(
+		api_gpu_heap_free_allocation(
 			&heap,
 			Ez_Gfx_Vertex_Allocation{start_index = 0, count = 4},
 		),
 		Ez_Gfx_Status.Ok,
 	)
-	reused, reused_status := ez_gfx_gpu_heap_allocate_range(&heap, 8)
+	reused, reused_status := api_gpu_heap_allocate_range(&heap, 8)
 	testing.expect_value(t, reused_status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, reused, vk.DeviceSize(0))
 	testing.expect_value(t, heap.high_water, vk.DeviceSize(16))
@@ -108,7 +108,7 @@ vertex_allocator_reserves_range_without_cpu_upload :: proc(t: ^testing.T) {
 	heap := vertex_allocator_test_heap(64, 4)
 	defer vertex_allocator_delete_test_heap(&heap)
 
-	allocation, offset, status := ez_gfx_gpu_heap_reserve_allocation(&heap, 12, 3)
+	allocation, offset, status := api_gpu_heap_reserve_allocation(&heap, 12, 3)
 
 	testing.expect_value(t, status, Ez_Gfx_Status.Ok)
 	testing.expect_value(t, offset, vk.DeviceSize(0))
@@ -116,7 +116,7 @@ vertex_allocator_reserves_range_without_cpu_upload :: proc(t: ^testing.T) {
 	testing.expect_value(t, allocation.count, u32(3))
 	testing.expect_value(t, heap.high_water, vk.DeviceSize(12))
 	testing.expect_value(t, heap.used_bytes, vk.DeviceSize(12))
-	_, _, inconsistent_status := ez_gfx_gpu_heap_reserve_allocation(&heap, 12, 1)
+	_, _, inconsistent_status := api_gpu_heap_reserve_allocation(&heap, 12, 1)
 	testing.expect_value(t, inconsistent_status, Ez_Gfx_Status.Invalid_Argument)
 	testing.expect_value(t, heap.high_water, vk.DeviceSize(12))
 }

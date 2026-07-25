@@ -45,7 +45,7 @@ apply_vendor_patches:
 [env("EZ_GFX_HIDDEN_WINDOW", "1")]
 [env("EZ_GFX_SCREENSHOT", "1")]
 test: copy_slang_dll
-  odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
+  odin test src -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1 && odin test tests -define:ODIN_TEST_TRACK_MEMORY=false -define:ODIN_TEST_THREADS=1
 
 [windows]
 premake dir args mode='':

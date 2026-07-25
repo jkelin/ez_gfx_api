@@ -12,8 +12,8 @@ import "vendor:glfw"
 timeline_values_are_monotonic :: proc(t: ^testing.T) {
 	ctx: Ez_Gfx_Ctx
 
-	first := ez_gfx_ctx_next_timeline_value(&ctx)
-	second := ez_gfx_ctx_next_timeline_value(&ctx)
+	first := api_ctx_next_timeline_value(&ctx)
+	second := api_ctx_next_timeline_value(&ctx)
 
 	testing.expect_value(t, first, u64(1))
 	testing.expect_value(t, second, u64(2))
@@ -23,7 +23,7 @@ timeline_values_are_monotonic :: proc(t: ^testing.T) {
 present_mode_selector_uses_requested_mode_when_supported :: proc(t: ^testing.T) {
 	modes := [?]vk.PresentModeKHR{.FIFO, .MAILBOX}
 
-	selected := ez_gfx_swapchain_choose_present_mode(modes[:], .MAILBOX)
+	selected := api_swapchain_choose_present_mode(modes[:], .MAILBOX)
 
 	testing.expect_value(t, selected, vk.PresentModeKHR(.MAILBOX))
 }
@@ -32,7 +32,7 @@ present_mode_selector_uses_requested_mode_when_supported :: proc(t: ^testing.T) 
 present_mode_selector_falls_back_to_fifo_when_unsupported :: proc(t: ^testing.T) {
 	modes := [?]vk.PresentModeKHR{.FIFO}
 
-	selected := ez_gfx_swapchain_choose_present_mode(modes[:], .IMMEDIATE)
+	selected := api_swapchain_choose_present_mode(modes[:], .IMMEDIATE)
 
 	testing.expect_value(t, selected, vk.PresentModeKHR(.FIFO))
 }
@@ -44,7 +44,7 @@ transfer_queue_selector_prefers_dedicated_transfer_family :: proc(t: ^testing.T)
 		{queueFlags = {.TRANSFER}, queueCount = 1},
 	}
 
-	selected := ez_gfx_ctx_choose_transfer_queue_family(queues[:], 0)
+	selected := api_ctx_choose_transfer_queue_family(queues[:], 0)
 
 	testing.expect_value(t, selected, u32(1))
 }
@@ -55,23 +55,23 @@ transfer_queue_selector_falls_back_to_graphics_family :: proc(t: ^testing.T) {
 		{queueFlags = {.GRAPHICS, .TRANSFER}, queueCount = 1},
 	}
 
-	selected := ez_gfx_ctx_choose_transfer_queue_family(queues[:], 0)
+	selected := api_ctx_choose_transfer_queue_family(queues[:], 0)
 
 	testing.expect_value(t, selected, u32(0))
 }
 
 @(test)
 texture_decode_worker_count_reserves_two_logical_cpus :: proc(t: ^testing.T) {
-	testing.expect_value(t, ez_gfx_texture_decode_worker_count_from_logical(0), u32(1))
-	testing.expect_value(t, ez_gfx_texture_decode_worker_count_from_logical(1), u32(1))
-	testing.expect_value(t, ez_gfx_texture_decode_worker_count_from_logical(2), u32(1))
-	testing.expect_value(t, ez_gfx_texture_decode_worker_count_from_logical(8), u32(6))
+	testing.expect_value(t, api_texture_decode_worker_count_from_logical(0), u32(1))
+	testing.expect_value(t, api_texture_decode_worker_count_from_logical(1), u32(1))
+	testing.expect_value(t, api_texture_decode_worker_count_from_logical(2), u32(1))
+	testing.expect_value(t, api_texture_decode_worker_count_from_logical(8), u32(6))
 }
 
 @(test)
 explicit_texture_decode_worker_count_is_preserved :: proc(t: ^testing.T) {
-	testing.expect_value(t, ez_gfx_ctx_resolve_texture_decode_worker_count(1), u32(1))
-	testing.expect_value(t, ez_gfx_ctx_resolve_texture_decode_worker_count(7), u32(7))
+	testing.expect_value(t, api_ctx_resolve_texture_decode_worker_count(1), u32(1))
+	testing.expect_value(t, api_ctx_resolve_texture_decode_worker_count(7), u32(7))
 }
 
 @(test)
@@ -87,16 +87,16 @@ public_context_binding_survives_api_boundaries :: proc(t: ^testing.T) {
 	second.swapchain_present_mode_count = 2
 
 	context.user_ptr = &first
-	testing.expect_value(t, ez_gfx_ctx_wait_idle(), Ez_Gfx_Status.Ok)
-	testing.expect_value(t, ez_gfx_ctx_get_info(&info), Ez_Gfx_Status.Ok)
+	testing.expect_value(t, api_ctx_wait_idle(), Ez_Gfx_Status.Ok)
+	testing.expect_value(t, api_ctx_get_info(&info), Ez_Gfx_Status.Ok)
 	testing.expect_value(t, info.swapchain_present_mode_count, u32(1))
 	context.user_ptr = &second
-	testing.expect_value(t, ez_gfx_ctx_get_info(&info), Ez_Gfx_Status.Ok)
+	testing.expect_value(t, api_ctx_get_info(&info), Ez_Gfx_Status.Ok)
 	testing.expect_value(t, info.swapchain_present_mode_count, u32(2))
 	context.user_ptr = nil
-	testing.expect_value(t, ez_gfx_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
+	testing.expect_value(t, api_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
 	context.user_ptr = &second
-	testing.expect_value(t, ez_gfx_ctx_destroy(), Ez_Gfx_Status.Ok)
+	testing.expect_value(t, api_ctx_destroy(), Ez_Gfx_Status.Ok)
 }
 
 @(test)
@@ -131,7 +131,7 @@ c_context_final_argument_installs_odin_context :: proc(t: ^testing.T) {
 		Ez_Gfx_Status.Ok,
 	)
 	ez_gfx_c_context_destroy(context_handle)
-	testing.expect_value(t, ez_gfx_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
+	testing.expect_value(t, api_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
 }
 
 @(test)
@@ -177,7 +177,7 @@ c_context_create_failure_clears_odin_context :: proc(t: ^testing.T) {
 		Ez_Gfx_Status.Invalid_Argument,
 	)
 	testing.expect_value(t, context_handle, Ez_Gfx_Context_Handle(0))
-	testing.expect_value(t, ez_gfx_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
+	testing.expect_value(t, api_ctx_wait_idle(), Ez_Gfx_Status.Invalid_Context)
 }
 
 @(test)
@@ -306,7 +306,7 @@ public_unsigned_surface_extent_validates_before_mutating_window :: proc(t: ^test
 		context.user_ptr = previous_user_ptr
 	}
 	context.user_ptr = &ctx
-	status := ez_gfx_window_create_surface_u32(&window, u32(max(c.int)) + 1, 1)
+	status := api_window_create_surface_u32(&window, u32(max(c.int)) + 1, 1)
 
 	testing.expect_value(t, status, Ez_Gfx_Status.Invalid_Argument)
 	testing.expect_value(t, window.framebuffer_width, c.int(7))
@@ -316,7 +316,7 @@ public_unsigned_surface_extent_validates_before_mutating_window :: proc(t: ^test
 @(test)
 public_texture_argument_validation_precedes_context_lookup :: proc(t: ^testing.T) {
 	pixels := [?]u8{255, 255, 255, 255}
-	texture_id, status := ez_gfx_load_texture(
+	texture_id, status := api_load_texture(
 		{{data = pixels[:]}},
 		{
 			source_format = Ez_Gfx_Source_Texture_Format(255),
@@ -338,7 +338,7 @@ vertex_upload_rejects_sizes_that_cannot_fit_internal_pointer_arithmetic :: proc(
 		manager.vertex_heaps[0].name[index] = byte(character)
 	}
 	byte: u8
-	_, status := ez_gfx_vertex_manager_upload_raw(
+	_, status := api_vertex_manager_upload_raw(
 		&manager,
 		"vertices",
 		&byte,
@@ -351,14 +351,14 @@ vertex_upload_rejects_sizes_that_cannot_fit_internal_pointer_arithmetic :: proc(
 @(test)
 public_raw_index_upload_validates_before_context_lookup :: proc(t: ^testing.T) {
 	index: u32
-	_, status := ez_gfx_vertex_manager_upload_indices_raw(nil, &index, 0)
+	_, status := api_vertex_manager_upload_indices_raw(nil, &index, 0)
 
 	testing.expect_value(t, status, Ez_Gfx_Status.Invalid_Argument)
 }
 
 @(test)
 texture_load_bytes_rejects_invalid_input_before_copy_or_context_lookup :: proc(t: ^testing.T) {
-	texture_handle, status := ez_gfx_texture_load_bytes(0, nil, 1, nil)
+	texture_handle, status := api_texture_load_bytes(0, nil, 1, nil)
 
 	testing.expect_value(t, texture_handle, Ez_Gfx_Texture_Handle(0))
 	testing.expect_value(t, status, Ez_Gfx_Texture_Error.Invalid_Arguments)
@@ -368,7 +368,7 @@ texture_load_bytes_rejects_invalid_input_before_copy_or_context_lookup :: proc(t
 texture_load_bytes_rejects_invalid_descriptor_before_copy_or_context_lookup :: proc(t: ^testing.T) {
 	pixels := [?]u8{255, 255, 255, 255}
 	desc := Ez_Gfx_Load_Texture_Desc{destination_format = Ez_Gfx_Texture_Destination_Format(1)}
-	texture_handle, status := ez_gfx_texture_load_bytes(
+	texture_handle, status := api_texture_load_bytes(
 		0,
 		&pixels[0],
 		u64(len(pixels)),

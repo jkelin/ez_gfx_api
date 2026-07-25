@@ -3,7 +3,6 @@ package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
 import vma "../vendor/odin-vma"
-import ga "./generational_arena"
 import "core:c"
 import "core:sync"
 import "core:thread"
@@ -41,7 +40,7 @@ Ez_Gfx_Handle_Resource_Kind :: enum u8 {
 @(private)
 Ez_Gfx_Handle_Identity :: struct {
 	kind:  Ez_Gfx_Handle_Resource_Kind,
-	local: ga.Handle,
+	local: Handle,
 }
 
 @(private)
@@ -93,14 +92,14 @@ sampler_anisotropy_enabled:            bool,
 	texture_decode_worker_count:          u32,
 	validation_counts:                    Ez_Gfx_Validation_Counts,
 	render:                              Ez_Gfx_Render,
-	local_handle:                         ga.Handle,
-	handle_identity_arena:                ga.Arena(Ez_Gfx_Handle_Identity),
-	surface_arena:                        ga.Arena(Ez_Gfx_Window),
-	shader_arena:                         ga.Arena(Ez_Gfx_Shader_Program),
-	indirect_arena:                       ga.Arena(Ez_Gfx_Indirect_Buffer_Handle),
-	structured_arena:                     ga.Arena(Ez_Gfx_Structured_Buffer_Handle),
-	render_target_arena:                  ga.Arena(Ez_Gfx_Render_Target_Id),
-	texture_arena:                        ga.Arena(Ez_Gfx_Texture_ID),
+	local_handle:                         Handle,
+	handle_identity_arena:                Arena(Ez_Gfx_Handle_Identity),
+	surface_arena:                        Arena(Ez_Gfx_Window),
+	shader_arena:                         Arena(Ez_Gfx_Shader_Program),
+	indirect_arena:                       Arena(Ez_Gfx_Indirect_Buffer_Handle),
+	structured_arena:                     Arena(Ez_Gfx_Structured_Buffer_Handle),
+	render_target_arena:                  Arena(Ez_Gfx_Render_Target_Id),
+	texture_arena:                        Arena(Ez_Gfx_Texture_ID),
 	c_texture_data:                       [dynamic][]u8,
 	imgui_context:                        rawptr,
 	imgui_shader:                         Ez_Gfx_Shader_Handle,

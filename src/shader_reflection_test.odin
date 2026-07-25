@@ -61,7 +61,7 @@ duplicate_target_declarations_are_rejected :: proc(t: ^testing.T) {
 	program: Ez_Gfx_Shader_Program
 	testing.expect_value(
 		t,
-		ez_gfx_copy_shader_target_name_cstring(
+		api_copy_shader_target_name_cstring(
 			program.target_declarations[0].name[:],
 			&program.target_declarations[0].name_len,
 			"depth",
@@ -70,7 +70,7 @@ duplicate_target_declarations_are_rejected :: proc(t: ^testing.T) {
 	)
 	testing.expect_value(
 		t,
-		ez_gfx_copy_shader_target_name_cstring(
+		api_copy_shader_target_name_cstring(
 			program.target_declarations[1].name[:],
 			&program.target_declarations[1].name_len,
 			"depth",
@@ -80,7 +80,7 @@ duplicate_target_declarations_are_rejected :: proc(t: ^testing.T) {
 	program.target_declaration_count = 2
 	testing.expect_value(
 		t,
-		ez_gfx_shader_validate_unique_target_declarations(&program),
+		api_shader_validate_unique_target_declarations(&program),
 		Ez_Gfx_Status.Native_Failure,
 	)
 }
@@ -125,7 +125,7 @@ compute_indirect_reflects_count_and_elements :: proc(t: ^testing.T) {
 	element_binding := &program.structured_buffer_bindings[1]
 	testing.expect(
 		t,
-		ez_gfx_shader_target_name_equals_cstring(
+		api_shader_target_name_equals_cstring(
 			count_binding.name[:],
 			count_binding.name_len,
 			"draws.count",
@@ -133,7 +133,7 @@ compute_indirect_reflects_count_and_elements :: proc(t: ^testing.T) {
 	)
 	testing.expect(
 		t,
-		ez_gfx_shader_target_name_equals_cstring(
+		api_shader_target_name_equals_cstring(
 			element_binding.name[:],
 			element_binding.name_len,
 			"draws.elements",
@@ -227,7 +227,7 @@ reflect_shader :: proc(
 ) {
 	_ = t
 	context.user_ptr = &shader_test_ctx
-	ok = ez_gfx_shader_reflect(
+	ok = api_shader_reflect(
 		{
 			path = path,
 			vertex_entry = EZ_GFX_DEFAULT_VERTEX_ENTRY,
@@ -247,7 +247,7 @@ reflect_compute_shader :: proc(
 ) {
 	_ = t
 	context.user_ptr = &shader_test_ctx
-	ok = ez_gfx_shader_reflect(
+	ok = api_shader_reflect(
 		{
 			path = path,
 			compute_entry = EZ_GFX_DEFAULT_COMPUTE_ENTRY,

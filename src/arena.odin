@@ -1,16 +1,11 @@
-package generational_arena
+#+private
+package ez_gfx
 
 import "base:runtime"
 
-// Generations start nonzero so the zero handle is never a live entry.
 INITIAL_GENERATION :: u32(1)
-
-// Free-list sentinel; slot indices never use this value as a live next link target
-// beyond the empty-list case.
 FREE_NIL :: max(u32)
 
-// Local handle: slot index plus generation. No owner identity here; the API layer
-// can wrap this later with context ownership.
 Handle :: struct {
 	slot:       u32,
 	generation: u32,
@@ -24,16 +19,6 @@ Error :: enum u8 {
 	Capacity_Exhausted,
 }
 
-@(private)
-Slot :: struct($T: typeid) {
-	generation: u32,
-	occupied:   bool,
-	next_free:  u32,
-	value:      ^T,
-}
-
-// Generic arena over T. Live values are individually allocated so growth of the
-// slot metadata array cannot invalidate returned ^T pointers.
 Arena :: struct($T: typeid) {
 	slots:      [dynamic]Slot(T),
 	free_head:  u32,
@@ -41,7 +26,15 @@ Arena :: struct($T: typeid) {
 	allocator:  runtime.Allocator,
 }
 
-init :: proc(
+Slot :: struct($T: typeid) {
+	generation: u32,
+	occupied:   bool,
+	next_free:  u32,
+	value:      ^T,
+}
+
+
+arena_init_impl :: proc(
 	arena: ^Arena($T),
 	allocator: runtime.Allocator = context.allocator,
 	capacity: int = 0,
@@ -58,11 +51,11 @@ init :: proc(
 	return .None
 }
 
-destroy :: proc(arena: ^Arena($T)) {
+arena_destroy_impl :: proc(arena: ^Arena($T)) {
 	if arena == nil {
 		return
 	}
-	clear(arena)
+	arena_clear_impl(arena)
 	delete(arena.slots)
 	arena^ = {}
 }
@@ -71,7 +64,7 @@ destroy :: proc(arena: ^Arena($T)) {
 // advance their generation; already-free slots keep the generation from remove.
 // The free-list is rebuilt in place so pre-clear handles stay invalid even when
 // those slots are reused by a later insert. Generation wrap is refused.
-clear :: proc(arena: ^Arena($T)) {
+arena_clear_impl :: proc(arena: ^Arena($T)) {
 	if arena == nil {
 		return
 	}
@@ -102,20 +95,20 @@ clear :: proc(arena: ^Arena($T)) {
 	}
 }
 
-count :: proc(arena: ^Arena($T)) -> int {
+arena_count_impl :: proc(arena: ^Arena($T)) -> int {
 	if arena == nil {
 		return 0
 	}
 	return arena.live_count
 }
 
-valid :: proc(arena: ^Arena($T), handle: Handle) -> bool {
-	_, err := get(arena, handle)
+arena_valid_impl :: proc(arena: ^Arena($T), handle: Handle) -> bool {
+	_, err := arena_get_impl(arena, handle)
 	return err == .None
 }
 
-get :: proc(arena: ^Arena($T), handle: Handle) -> (^T, Error) {
-	if arena == nil || !handle_fields_ok(handle) {
+arena_get_impl :: proc(arena: ^Arena($T), handle: Handle) -> (^T, Error) {
+	if arena == nil || !arena_handle_fields_ok_impl(handle) {
 		return nil, .Invalid_Handle
 	}
 	if int(handle.slot) >= len(arena.slots) {
@@ -129,7 +122,7 @@ get :: proc(arena: ^Arena($T), handle: Handle) -> (^T, Error) {
 	return slot.value, .None
 }
 
-insert :: proc(arena: ^Arena($T), value: T) -> (Handle, Error) {
+arena_insert_impl :: proc(arena: ^Arena($T), value: T) -> (Handle, Error) {
 	if arena == nil {
 		return {}, .Invalid_Handle
 	}
@@ -176,8 +169,8 @@ insert :: proc(arena: ^Arena($T), value: T) -> (Handle, Error) {
 	return Handle{slot = slot_index, generation = INITIAL_GENERATION}, .None
 }
 
-remove :: proc(arena: ^Arena($T), handle: Handle) -> Error {
-	if arena == nil || !handle_fields_ok(handle) {
+arena_remove_impl :: proc(arena: ^Arena($T), handle: Handle) -> Error {
+	if arena == nil || !arena_handle_fields_ok_impl(handle) {
 		return .Invalid_Handle
 	}
 	if int(handle.slot) >= len(arena.slots) {
@@ -204,8 +197,7 @@ remove :: proc(arena: ^Arena($T), handle: Handle) -> Error {
 	return .None
 }
 
-@(private)
-handle_fields_ok :: proc(handle: Handle) -> bool {
-	// Zero handle and any zero generation are never valid live references.
+arena_handle_fields_ok_impl :: proc(handle: Handle) -> bool {
+	// Zero handles and any zero generation are never valid live references.
 	return handle.generation != 0
 }

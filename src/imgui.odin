@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import "base:runtime"
@@ -195,8 +196,8 @@ imgui_render_demo :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle:
 	if draw_data == nil || !draw_data.valid do return .Native_Failure
 	if !c_imgui_upload_textures(context_handle, ctx, draw_data) do return .Native_Failure
 	if draw_data.cmd_lists_count <= 0 || draw_data.total_vtx_count <= 0 || draw_data.total_idx_count <= 0 {
-		if begin_status := ez_gfx_begin_render(surface); begin_status != .Ok do return begin_status
-		return ez_gfx_finish_render()
+		if begin_status := api_begin_render(surface); begin_status != .Ok do return begin_status
+		return api_finish_render()
 	}
 	total_vtx := int(draw_data.total_vtx_count)
 	total_idx := int(draw_data.total_idx_count)
@@ -245,23 +246,23 @@ imgui_render_demo :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle:
 		vtx_offset += len(vtx)
 		idx_offset += len(idx)
 	}
-	if begin_status := ez_gfx_begin_render(surface); begin_status != .Ok do return begin_status
-	vertex_buffer, vertex_status := ez_gfx_render_acquire_structured_buffer(Ez_Gfx_C_ImGui_Vertex, u32(total_vtx), "imgui vertices")
+	if begin_status := api_begin_render(surface); begin_status != .Ok do return begin_status
+	vertex_buffer, vertex_status := api_render_acquire_structured_buffer(Ez_Gfx_C_ImGui_Vertex, u32(total_vtx), "imgui vertices")
 	if vertex_status != .Ok { get_current_ctx().render = {}; return vertex_status }
-	index_buffer, index_status := ez_gfx_render_acquire_structured_buffer(u32, u32(total_idx), "imgui indices")
+	index_buffer, index_status := api_render_acquire_structured_buffer(u32, u32(total_idx), "imgui indices")
 	if index_status != .Ok { get_current_ctx().render = {}; return index_status }
-	command_buffer, command_status := ez_gfx_render_acquire_structured_buffer(Ez_Gfx_C_ImGui_Draw_Command, u32(total_cmds), "imgui draw commands")
+	command_buffer, command_status := api_render_acquire_structured_buffer(Ez_Gfx_C_ImGui_Draw_Command, u32(total_cmds), "imgui draw commands")
 	if command_status != .Ok { get_current_ctx().render = {}; return command_status }
 	mem.copy(vertex_buffer.elements, raw_data(vertices), len(vertices) * size_of(Ez_Gfx_C_ImGui_Vertex))
 	mem.copy(index_buffer.elements, raw_data(indices), len(indices) * size_of(u32))
 	mem.copy(command_buffer.elements, raw_data(commands), len(commands) * size_of(Ez_Gfx_C_ImGui_Draw_Command))
-	indirect, indirect_status := ez_gfx_render_acquire_indirect_buffer(vk.DrawIndexedIndirectCommand, u32(total_cmds), "imgui indirect draws")
+	indirect, indirect_status := api_render_acquire_indirect_buffer(vk.DrawIndexedIndirectCommand, u32(total_cmds), "imgui indirect draws")
 	if indirect_status != .Ok { get_current_ctx().render = {}; return indirect_status }
 	bindings := [3]Ez_Gfx_Render_Binding{{name = "imgui_vertices", structured = vertex_buffer.handle}, {name = "imgui_indices", structured = index_buffer.handle}, {name = "imgui_commands", structured = command_buffer.handle}}
 	push := Ez_Gfx_C_ImGui_Push_Constants{display_size = {draw_data.display_size.x * draw_data.framebuffer_scale.x, draw_data.display_size.y * draw_data.framebuffer_scale.y}}
 	shader, shader_status := resolve_shader(ctx, ctx.imgui_shader)
 	if shader_status != .Ok { get_current_ctx().render = {}; return shader_status }
-	_, pipeline_status := ez_gfx_render_add_vertex_pipeline_raw(shader, indirect, bindings[:], {blend_mode = .Alpha}, &push, u32(size_of(Ez_Gfx_C_ImGui_Push_Constants)))
+	_, pipeline_status := api_render_add_vertex_pipeline_raw(shader, indirect, bindings[:], {blend_mode = .Alpha}, &push, u32(size_of(Ez_Gfx_C_ImGui_Push_Constants)))
 	if pipeline_status != .Ok { get_current_ctx().render = {}; return pipeline_status }
 	active_command := 0
 	for cmd_list in cmd_lists {
@@ -271,10 +272,10 @@ imgui_render_demo :: proc(context_handle: Ez_Gfx_Context_Handle, surface_handle:
 			source := &cmds[source_index]
 			if source.user_callback != nil do continue
 			draw := vk.DrawIndexedIndirectCommand{indexCount = source.elem_count, instanceCount = 1, firstIndex = ctx.imgui_identity_index_start, vertexOffset = 0, firstInstance = u32(active_command)}
-			if draw_status := ez_gfx_indirect_buffer_write_draw(&indirect, u32(active_command), draw); draw_status != .Ok { get_current_ctx().render = {}; return draw_status }
+			if draw_status := api_indirect_buffer_write_draw(&indirect, u32(active_command), draw); draw_status != .Ok { get_current_ctx().render = {}; return draw_status }
 			active_command += 1
 		}
 	}
-	if count_status := ez_gfx_indirect_buffer_set_draw_count(&indirect, u32(active_command)); count_status != .Ok { get_current_ctx().render = {}; return count_status }
-	return ez_gfx_finish_render()
+	if count_status := api_indirect_buffer_set_draw_count(&indirect, u32(active_command)); count_status != .Ok { get_current_ctx().render = {}; return count_status }
+	return api_finish_render()
 }

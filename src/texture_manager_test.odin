@@ -52,15 +52,15 @@ texture_test_job_destroy :: proc(job: ^Ez_Gfx_Texture_Load_Job) {
 
 @(test)
 texture_unregistered_png_rejects_before_workers :: proc(t: ^testing.T) {
-	if !testing.expect(t, ez_gfx_register_image_decoder(.PNG, nil) == .Ok) {
+	if !testing.expect(t, api_register_image_decoder(.PNG, nil) == .Ok) {
 		return
 	}
-	defer ez_gfx_enable_png_decoder()
+	defer api_enable_png_decoder()
 	data := [?]u8{137}
 	region := Ez_Gfx_Texture_Memory_Region{data = data[:]}
 	manager: Ez_Gfx_Texture_Manager
 	ctx: Ez_Gfx_Ctx
-	_, err := ez_gfx_texture_manager_load(
+	_, err := api_texture_manager_load(
 		&manager,
 		&ctx,
 		[]Ez_Gfx_Texture_Memory_Region{region},
@@ -74,19 +74,19 @@ texture_unregistered_png_rejects_before_workers :: proc(t: ^testing.T) {
 
 @(test)
 texture_registers_custom_image_decoder :: proc(t: ^testing.T) {
-	if !testing.expect(t, ez_gfx_register_image_decoder(.BMP, texture_test_decoder) == .Ok) {
+	if !testing.expect(t, api_register_image_decoder(.BMP, texture_test_decoder) == .Ok) {
 		return
 	}
-	defer ez_gfx_enable_bmp_decoder()
-	testing.expect(t, ez_gfx_register_image_decoder(.RGB, texture_test_decoder) != .Ok)
-	testing.expect(t, ez_gfx_register_image_decoder(.BMP, nil) == .Ok)
-	testing.expect(t, ez_gfx_register_image_decoder(.BMP, texture_test_decoder) == .Ok)
+	defer api_enable_bmp_decoder()
+	testing.expect(t, api_register_image_decoder(.RGB, texture_test_decoder) != .Ok)
+	testing.expect(t, api_register_image_decoder(.BMP, nil) == .Ok)
+	testing.expect(t, api_register_image_decoder(.BMP, texture_test_decoder) == .Ok)
 
 	data := [?]u8{0}
 	job := texture_test_job(data[:], .BMP, 0, 0)
 	defer texture_test_job_destroy(&job)
-	upload := ez_gfx_texture_decode_upload_job(&job)
-	defer ez_gfx_texture_upload_job_destroy(&upload)
+	upload := api_texture_decode_upload_job(&job)
+	defer api_texture_upload_job_destroy(&upload)
 
 	if !testing.expect_value(t, upload.err, Ez_Gfx_Texture_Error.None) {
 		return
@@ -98,14 +98,14 @@ texture_registers_custom_image_decoder :: proc(t: ^testing.T) {
 
 @(test)
 texture_enable_all_decoders_enables_png :: proc(t: ^testing.T) {
-	if !testing.expect(t, ez_gfx_enable_all_decoders() == .Ok) {
+	if !testing.expect(t, api_enable_all_decoders() == .Ok) {
 		return
 	}
 
 	job := texture_test_job(TEXTURE_DECODER_TEST_PNG, .PNG, 0, 0)
 	defer texture_test_job_destroy(&job)
-	upload := ez_gfx_texture_decode_upload_job(&job)
-	defer ez_gfx_texture_upload_job_destroy(&upload)
+	upload := api_texture_decode_upload_job(&job)
+	defer api_texture_upload_job_destroy(&upload)
 
 	if !testing.expect_value(t, upload.err, Ez_Gfx_Texture_Error.None) {
 		return
@@ -117,9 +117,9 @@ texture_enable_all_decoders_enables_png :: proc(t: ^testing.T) {
 
 @(test)
 texture_full_mip_count_halves_to_one_pixel :: proc(t: ^testing.T) {
-	testing.expect_value(t, ez_gfx_texture_full_mip_count(1024, 1024), u32(11))
-	testing.expect_value(t, ez_gfx_texture_full_mip_count(7, 3), u32(3))
-	testing.expect_value(t, ez_gfx_texture_full_mip_count(1, 1), u32(1))
+	testing.expect_value(t, api_texture_full_mip_count(1024, 1024), u32(11))
+	testing.expect_value(t, api_texture_full_mip_count(7, 3), u32(3))
+	testing.expect_value(t, api_texture_full_mip_count(1, 1), u32(1))
 }
 
 @(test)
@@ -130,7 +130,7 @@ texture_decode_raw_rgb_expands_alpha :: proc(t: ^testing.T) {
 
 	pixels: []u8
 	width, height: u32
-	err := ez_gfx_texture_decode_job(&job, &pixels, &width, &height)
+	err := api_texture_decode_job(&job, &pixels, &width, &height)
 	defer delete(pixels)
 
 	testing.expect_value(t, err, Ez_Gfx_Texture_Error.None)
@@ -151,7 +151,7 @@ texture_decode_raw_rgba_preserves_alpha :: proc(t: ^testing.T) {
 
 	pixels: []u8
 	width, height: u32
-	err := ez_gfx_texture_decode_job(&job, &pixels, &width, &height)
+	err := api_texture_decode_job(&job, &pixels, &width, &height)
 	defer delete(pixels)
 
 	testing.expect_value(t, err, Ez_Gfx_Texture_Error.None)
@@ -171,7 +171,7 @@ texture_decode_raw_rejects_wrong_byte_count :: proc(t: ^testing.T) {
 
 	pixels: []u8
 	width, height: u32
-	err := ez_gfx_texture_decode_job(&job, &pixels, &width, &height)
+	err := api_texture_decode_job(&job, &pixels, &width, &height)
 
 	testing.expect_value(t, err, Ez_Gfx_Texture_Error.Invalid_Arguments)
 	testing.expect_value(t, len(pixels), 0)
@@ -184,14 +184,14 @@ texture_decode_upload_job_reuses_raw_rgba_region :: proc(t: ^testing.T) {
 	data := [?]u8{10, 20, 30, 40}
 	job := texture_test_job(data[:], .RGBA, 1, 1)
 
-	upload := ez_gfx_texture_decode_upload_job(&job)
-	defer ez_gfx_texture_upload_job_destroy(&upload)
+	upload := api_texture_decode_upload_job(&job)
+	defer api_texture_upload_job_destroy(&upload)
 
 	testing.expect_value(t, upload.err, Ez_Gfx_Texture_Error.None)
 	testing.expect_value(t, upload.source, Ez_Gfx_Texture_Decoded_Source.RGBA)
 	testing.expect(t, !upload.owns_pixels)
 	testing.expect(t, raw_data(upload.pixels) == raw_data(data[:]))
-	testing.expect_value(t, ez_gfx_texture_staging_size(&upload), vk.DeviceSize(4))
+	testing.expect_value(t, api_texture_staging_size(&upload), vk.DeviceSize(4))
 }
 
 @(test)
@@ -199,20 +199,20 @@ texture_decode_upload_job_keeps_raw_rgb_for_staging_expand :: proc(t: ^testing.T
 	data := [?]u8{10, 20, 30, 40, 50, 60}
 	job := texture_test_job(data[:], .RGB, 2, 1)
 
-	upload := ez_gfx_texture_decode_upload_job(&job)
-	defer ez_gfx_texture_upload_job_destroy(&upload)
+	upload := api_texture_decode_upload_job(&job)
+	defer api_texture_upload_job_destroy(&upload)
 
 	testing.expect_value(t, upload.err, Ez_Gfx_Texture_Error.None)
 	testing.expect_value(t, upload.source, Ez_Gfx_Texture_Decoded_Source.RGB)
 	testing.expect(t, !upload.owns_pixels)
 	testing.expect(t, raw_data(upload.pixels) == raw_data(data[:]))
-	testing.expect_value(t, ez_gfx_texture_staging_size(&upload), vk.DeviceSize(8))
+	testing.expect_value(t, api_texture_staging_size(&upload), vk.DeviceSize(8))
 }
 
 @(test)
 texture_manager_allocates_and_finds_id_slots :: proc(t: ^testing.T) {
 	manager: Ez_Gfx_Texture_Manager
-	slot, slot_index := ez_gfx_texture_manager_alloc_slot(&manager)
+	slot, slot_index := api_texture_manager_alloc_slot(&manager)
 	if !testing.expect(t, slot != nil) {
 		return
 	}
@@ -221,8 +221,8 @@ texture_manager_allocates_and_finds_id_slots :: proc(t: ^testing.T) {
 	slot.id = Ez_Gfx_Texture_ID(slot_index)
 	slot.state = .Queued
 
-	found := ez_gfx_texture_manager_find_locked(&manager, Ez_Gfx_Texture_ID(slot_index))
-	missing := ez_gfx_texture_manager_find_locked(&manager, Ez_Gfx_Texture_ID(7))
+	found := api_texture_manager_find_locked(&manager, Ez_Gfx_Texture_ID(slot_index))
+	missing := api_texture_manager_find_locked(&manager, Ez_Gfx_Texture_ID(7))
 	testing.expect(t, found == slot)
 	testing.expect(t, missing == nil)
 }
