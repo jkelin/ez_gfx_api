@@ -1,0 +1,322 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ez-gfx-bindings version="1" abi-version="5" library="ez_gfx_native">
+  <description>Public EzGfx C ABI. This file is manually maintained; generated headers and managed bindings are derived from it.</description>
+  <handles>
+    <handle name="EzGfxContext" doc="Opaque Vulkan context owned by the caller." />
+    <handle name="EzGfxSurface" doc="Opaque surface whose parent window remains caller-owned." />
+    <handle name="EzGfxShader" doc="Opaque compiled shader program." />
+    <handle name="EzGfxIndirectBuffer" doc="Opaque indirect draw buffer acquired during a render." />
+    <handle name="EzGfxStructuredBuffer" doc="Opaque structured buffer view acquired during a render." />
+  </handles>
+  <enums>
+    <enum name="EzGfxResult" underlying="int32_t" doc="Result returned by context, surface, shader, buffer, and render operations.">
+      <value name="EzGfxResult_Ok" value="0" doc="The operation completed successfully." />
+      <value name="EzGfxResult_InvalidArgument" value="1" doc="A public argument failed validation." />
+      <value name="EzGfxResult_InvalidContext" value="2" doc="The context is null, stale, or does not own the resource." />
+      <value name="EzGfxResult_NativeFailure" value="3" doc="The native graphics operation failed." />
+      <value name="EzGfxResult_NotReady" value="4" doc="The operation is temporarily unavailable, such as a minimized surface." />
+    </enum>
+    <enum name="EzGfxTextureError" underlying="int32_t" doc="Result returned by texture loading and unloading.">
+      <value name="EzGfxTextureError_None" value="0" doc="The operation completed successfully." />
+      <value name="EzGfxTextureError_InvalidContext" value="1" doc="The context is null, stale, or does not own the resource." />
+      <value name="EzGfxTextureError_InvalidArguments" value="2" doc="Texture data or description failed validation." />
+      <value name="EzGfxTextureError_UnsupportedFormat" value="3" doc="No registered decoder supports the source format." />
+      <value name="EzGfxTextureError_OutOfTextureHandles" value="4" doc="The texture handle table is full." />
+      <value name="EzGfxTextureError_OutOfMemory" value="5" doc="Texture allocation failed." />
+      <value name="EzGfxTextureError_DecodeFailed" value="6" doc="The image decoder rejected the data." />
+      <value name="EzGfxTextureError_VulkanFailed" value="7" doc="A Vulkan texture operation failed." />
+      <value name="EzGfxTextureError_WorkerUnavailable" value="8" doc="No texture upload worker is available." />
+      <value name="EzGfxTextureError_NotFound" value="9" doc="The texture handle is not loaded." />
+    </enum>
+    <enum name="EzGfxShaderKind" underlying="uint32_t" doc="Shader stage family.">
+      <value name="EzGfxShaderKind_Graphics" value="0" doc="Vertex and fragment shader pair." />
+      <value name="EzGfxShaderKind_Compute" value="1" doc="Compute shader." />
+    </enum>
+    <enum name="EzGfxSurfacePlatform" underlying="uint32_t" doc="Native surface platform.">
+      <value name="EzGfxSurfacePlatform_Win32" value="0" doc="Win32 HWND and HINSTANCE handles." />
+    </enum>
+    <enum name="EzGfxSourceTextureFormat" underlying="uint32_t" doc="Source image encoding.">
+      <value name="EzGfxSourceTextureFormat_Rgb" value="0" doc="Raw RGB pixels." />
+      <value name="EzGfxSourceTextureFormat_Rgba" value="1" doc="Raw RGBA pixels." />
+      <value name="EzGfxSourceTextureFormat_Bmp" value="2" doc="BMP image bytes." />
+      <value name="EzGfxSourceTextureFormat_Jpeg" value="3" doc="JPEG image bytes." />
+      <value name="EzGfxSourceTextureFormat_Png" value="4" doc="PNG image bytes." />
+      <value name="EzGfxSourceTextureFormat_Tga" value="5" doc="TGA image bytes." />
+      <value name="EzGfxSourceTextureFormat_Ktx2" value="6" doc="KTX2 image bytes." />
+    </enum>
+    <enum name="EzGfxTextureFilter" underlying="uint32_t" doc="Texture sampling filter.">
+      <value name="EzGfxTextureFilter_Nearest" value="0" doc="Nearest-neighbor filtering." />
+      <value name="EzGfxTextureFilter_Linear" value="1" doc="Linear filtering." />
+    </enum>
+    <enum name="EzGfxTextureAddressMode" underlying="uint32_t" doc="Texture addressing mode.">
+      <value name="EzGfxTextureAddressMode_Repeat" value="0" doc="Repeat coordinates." />
+      <value name="EzGfxTextureAddressMode_ClampToEdge" value="1" doc="Clamp coordinates to the edge." />
+    </enum>
+    <enum name="EzGfxTextureDestinationFormat" underlying="uint32_t" doc="Destination texture format.">
+      <value name="EzGfxTextureDestinationFormat_Rgba8Unorm" value="0" doc="8-bit normalized RGBA." />
+    </enum>
+  </enums>
+  <structs>
+    <struct name="EzGfxContextDesc" doc="Context creation options.">
+      <field name="enable_debug" type="int32_t" doc="Non-zero enables debug utilities." />
+      <field name="enable_validation" type="int32_t" doc="Non-zero enables validation layers." />
+      <field name="surface_platform" type="uint32_t" doc="Value from EzGfxSurfacePlatform." />
+    </struct>
+    <struct name="EzGfxSurfaceDesc" doc="Caller-owned native window used to create a Vulkan surface.">
+      <field name="window" type="void *" nullable="false" doc="Native HWND." />
+      <field name="display" type="void *" nullable="false" doc="Native HINSTANCE." />
+      <field name="platform" type="uint32_t" doc="Value from EzGfxSurfacePlatform." />
+      <field name="width" type="uint32_t" validation="greater-than-zero" doc="Initial framebuffer width." />
+      <field name="height" type="uint32_t" validation="greater-than-zero" doc="Initial framebuffer height." />
+    </struct>
+    <struct name="EzGfxShaderDesc" doc="Shader source and entry-point metadata.">
+      <field name="path" type="const char *" nullable="false" doc="UTF-8, NUL-terminated shader path." />
+      <field name="vertex_entry" type="const char *" nullable="true" doc="Optional UTF-8 vertex entry point." />
+      <field name="fragment_entry" type="const char *" nullable="true" doc="Optional UTF-8 fragment entry point." />
+      <field name="compute_entry" type="const char *" nullable="true" doc="Optional UTF-8 compute entry point." />
+      <field name="kind" type="uint32_t" doc="Value from EzGfxShaderKind." />
+    </struct>
+    <struct name="EzGfxTextureDesc" doc="Texture decoding and sampling metadata.">
+      <field name="source_format" type="uint32_t" doc="Value from EzGfxSourceTextureFormat." />
+      <field name="destination_format" type="uint32_t" doc="Value from EzGfxTextureDestinationFormat." />
+      <field name="width" type="uint32_t" validation="greater-than-zero" doc="Decoded width for raw pixels." />
+      <field name="height" type="uint32_t" validation="greater-than-zero" doc="Decoded height for raw pixels." />
+      <field name="mip_count" type="uint32_t" doc="Number of mip levels, or zero for decoder defaults." />
+      <field name="generate_mips" type="int32_t" doc="Non-zero requests mip generation." />
+      <field name="min_filter" type="uint32_t" doc="Value from EzGfxTextureFilter." />
+      <field name="mag_filter" type="uint32_t" doc="Value from EzGfxTextureFilter." />
+      <field name="max_anisotropy" type="float" doc="Requested anisotropy; zero uses the default." />
+      <field name="address_mode_u" type="uint32_t" doc="Value from EzGfxTextureAddressMode." />
+      <field name="address_mode_v" type="uint32_t" doc="Value from EzGfxTextureAddressMode." />
+      <field name="address_mode_w" type="uint32_t" doc="Value from EzGfxTextureAddressMode." />
+      <field name="debug_label" type="const char *" nullable="true" doc="Optional UTF-8 debug label." />
+    </struct>
+    <struct name="EzGfxBinding" doc="Shader resource binding.">
+      <field name="name" type="const char *" nullable="false" doc="UTF-8 shader binding name." />
+      <field name="structured" type="EzGfxStructuredBuffer" doc="Optional structured buffer handle." />
+      <field name="indirect" type="EzGfxIndirectBuffer" doc="Optional indirect buffer handle." />
+    </struct>
+    <struct name="EzGfxDynamicState" doc="Optional dynamic state overrides.">
+      <field name="cull_mode" type="uint32_t" doc="0 none, 1 front, 2 back, 3 both." />
+      <field name="front_face" type="uint32_t" doc="0 counter-clockwise, 1 clockwise." />
+      <field name="primitive_type" type="uint32_t" doc="Primitive topology enum value." />
+      <field name="blend_mode" type="uint32_t" doc="Blend mode enum value." />
+    </struct>
+    <struct name="EzGfxDrawIndexedCommand" doc="One indexed indirect draw command.">
+      <field name="index_count" type="uint32_t" doc="Number of indices." />
+      <field name="instance_count" type="uint32_t" doc="Number of instances." />
+      <field name="first_index" type="uint32_t" doc="First index." />
+      <field name="vertex_offset" type="int32_t" doc="Signed vertex offset." />
+      <field name="first_instance" type="uint32_t" doc="First instance." />
+    </struct>
+    <struct name="EzGfxByteBuffer" doc="Pointer-plus-length byte range for ABI consumers.">
+      <field name="length" type="size_t" doc="Number of bytes in data." />
+      <field name="data" type="const uint8_t *" counted-by="length" nullable="true" doc="Byte range; nullable only when length is zero." />
+    </struct>
+  </structs>
+  <functions>
+    <function name="ez_gfx_c_abi_version" return="uint32_t" doc="Returns the ABI version implemented by the native library.">
+      <returns doc="ABI version; no context is required." />
+    </function>
+    <function name="ez_gfx_c_context_create" return="EzGfxResult" managed="context-create" doc="Creates a Vulkan context and instance.">
+      <param name="desc" type="const EzGfxContextDesc *" nullable="false" direction="in" doc="Context creation options." />
+      <param name="out_context" type="EzGfxContext *" direction="out" doc="Receives the opaque context handle." />
+      <returns doc="Returns EzGfxResult_Ok or a creation error." />
+    </function>
+    <function name="ez_gfx_c_context_wait_idle" return="EzGfxResult" context="last" doc="Waits for all context GPU work to become idle.">
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or EzGfxResult_InvalidContext." />
+    </function>
+    <function name="ez_gfx_c_context_destroy" return="void" context="last" doc="Destroys a context and all native resources it owns.">
+      <param name="context" type="EzGfxContext" doc="Context to destroy; null is ignored." />
+      <returns doc="No return value; null handles are ignored." />
+    </function>
+    <function name="ez_gfx_c_surface_create" return="EzGfxResult" context="last" managed="surface-create" doc="Creates a Vulkan surface for a caller-owned native window.">
+      <param name="desc" type="const EzGfxSurfaceDesc *" nullable="false" direction="in" doc="Window and initial extent." />
+      <param name="out_surface" type="EzGfxSurface *" direction="out" doc="Receives the opaque surface handle." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Context that owns the surface." />
+      <returns doc="Returns EzGfxResult_Ok or a validation/native error." />
+    </function>
+    <function name="ez_gfx_c_context_init_device" return="EzGfxResult" context="last" doc="Initializes the context device using a created surface.">
+      <param name="surface" type="EzGfxSurface" doc="Surface owned by context." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a native failure." />
+    </function>
+    <function name="ez_gfx_c_surface_resize" return="EzGfxResult" context="last" doc="Updates a surface extent and recreates its swapchain when needed.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to resize." />
+      <param name="width" type="uint32_t" doc="New width; zero is valid only with zero height for minimized state." />
+      <param name="height" type="uint32_t" doc="New height; zero is valid only with zero width for minimized state." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok, EzGfxResult_NotReady, or an error." />
+    </function>
+    <function name="ez_gfx_c_surface_get_extent" return="EzGfxResult" context="last" doc="Reads the current framebuffer extent.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to query." />
+      <param name="out_width" type="uint32_t *" direction="out" doc="Receives width." />
+      <param name="out_height" type="uint32_t *" direction="out" doc="Receives height." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_NotReady while minimized." />
+    </function>
+    <function name="ez_gfx_c_surface_resize_pending" return="EzGfxResult" context="last" doc="Reports whether a parent-observed resize is pending.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to query." />
+      <param name="out_pending" type="int32_t *" direction="out" doc="Receives 0 or 1." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or an error." />
+    </function>
+    <function name="ez_gfx_c_surface_set_snapshot_cache" return="EzGfxResult" context="last" doc="Enables or disables presented-image snapshot caching.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to configure." />
+      <param name="enabled" type="int32_t" validation="zero-or-one" doc="Must be zero or one." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument." />
+    </function>
+    <function name="ez_gfx_c_surface_destroy" return="void" context="last" doc="Destroys a surface while leaving its parent window untouched.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to destroy." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="No return value; null handles are ignored." />
+    </function>
+    <function name="ez_gfx_c_shader_compile" return="EzGfxResult" context="last" managed="shader-compile" doc="Compiles a Slang shader program.">
+      <param name="desc" type="const EzGfxShaderDesc *" nullable="false" direction="in" doc="Shader description." />
+      <param name="out_shader" type="EzGfxShader *" direction="out" doc="Receives the shader handle." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a compile error." />
+    </function>
+    <function name="ez_gfx_c_shader_destroy" return="void" context="last" doc="Destroys a compiled shader.">
+      <param name="shader" type="EzGfxShader" doc="Shader to destroy." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="No return value; null handles are ignored." />
+    </function>
+    <function name="ez_gfx_c_vertex_heap_create" return="EzGfxResult" context="last" managed="utf8-string" doc="Creates a vertex heap in the context vertex manager.">
+      <param name="name" type="const char *" nullable="false" doc="UTF-8 heap name." />
+      <param name="capacity" type="uint64_t" validation="greater-than-zero" doc="Heap capacity in bytes." />
+      <param name="stride" type="uint64_t" validation="greater-than-zero" doc="Element stride in bytes." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or an error." />
+    </function>
+    <function name="ez_gfx_c_index_heap_create" return="EzGfxResult" context="last" managed="utf8-string" doc="Creates the vertex manager's index heap.">
+      <param name="capacity" type="uint64_t" validation="greater-than-zero" doc="Heap capacity in bytes." />
+      <param name="debug_name" type="const char *" nullable="false" doc="UTF-8 debug name." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or an error." />
+    </function>
+    <function name="ez_gfx_c_vertex_upload_indices" return="EzGfxResult" context="last" managed="vertex-upload-indices" doc="Queues an index upload.">
+      <param name="data" type="const void *" nullable="false" direction="in" array-length="count" doc="Index data." />
+      <param name="count" type="uint32_t" validation="greater-than-zero" doc="Number of indices." />
+      <param name="out_start_index" type="uint32_t *" direction="out" doc="Receives the allocated first index." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a queueing error." />
+    </function>
+    <function name="ez_gfx_c_vertex_upload" return="EzGfxResult" context="last" managed="vertex-upload" doc="Queues a vertex upload into a named heap.">
+      <param name="heap_name" type="const char *" nullable="false" doc="UTF-8 heap name." />
+      <param name="data" type="const void *" nullable="false" direction="in" array-length="element_count" array-byte-size="element_size" doc="Vertex data; its byte length must equal element_count multiplied by element_size." />
+      <param name="element_count" type="uint32_t" validation="greater-than-zero" doc="Number of vertices." />
+      <param name="element_size" type="uint64_t" validation="greater-than-zero" doc="Vertex element size in bytes." />
+      <param name="out_start_index" type="uint32_t *" direction="out" doc="Receives the allocated first vertex." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a queueing error." />
+    </function>
+    <function name="ez_gfx_c_enable_all_decoders" return="EzGfxResult" context="last" doc="Registers every built-in image decoder.">
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a registration error." />
+    </function>
+    <function name="ez_gfx_c_texture_load" return="EzGfxTextureError" context="last" managed="texture-load" doc="Queues an image decode and texture upload.">
+      <param name="data" type="const void *" nullable="false" direction="in" array-length="data_size" doc="Encoded image bytes." />
+      <param name="data_size" type="uint64_t" validation="greater-than-zero" doc="Number of bytes in data." />
+      <param name="desc" type="const EzGfxTextureDesc *" nullable="false" direction="in" doc="Texture description." />
+      <param name="out_texture_id" type="uint32_t *" direction="out" doc="Receives the texture identifier." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxTextureError_None or a typed texture error." />
+    </function>
+    <function name="ez_gfx_c_texture_unload" return="EzGfxTextureError" context="last" doc="Queues a texture for destruction.">
+      <param name="texture_id" type="uint32_t" doc="Texture identifier." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxTextureError_None or a typed texture error." />
+    </function>
+    <function name="ez_gfx_c_begin_render" return="EzGfxResult" context="last" doc="Begins a render frame for a surface.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to acquire." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_NotReady for a minimized or unavailable frame." />
+    </function>
+    <function name="ez_gfx_c_acquire_indirect" return="EzGfxResult" context="last" managed="utf8-string" doc="Acquires an indirect draw buffer for the active render.">
+      <param name="capacity" type="uint32_t" validation="greater-than-zero" doc="Number of draw commands." />
+      <param name="debug_name" type="const char *" nullable="false" doc="UTF-8 debug name." />
+      <param name="out_indirect" type="EzGfxIndirectBuffer *" direction="out" doc="Receives the buffer handle." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or EzGfxResult_NotReady." />
+    </function>
+    <function name="ez_gfx_c_indirect_write_draw" return="EzGfxResult" context="last" managed="draw-command" doc="Writes one indexed indirect draw command.">
+      <param name="indirect" type="EzGfxIndirectBuffer" doc="Indirect buffer handle." />
+      <param name="index" type="uint32_t" doc="Command index." />
+      <param name="command" type="const EzGfxDrawIndexedCommand *" nullable="false" direction="in" doc="Command data." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument." />
+    </function>
+    <function name="ez_gfx_c_indirect_set_draw_count" return="EzGfxResult" context="last" doc="Sets the number of indirect commands to execute.">
+      <param name="indirect" type="EzGfxIndirectBuffer" doc="Indirect buffer handle." />
+      <param name="count" type="uint32_t" doc="Number of commands." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument." />
+    </function>
+    <function name="ez_gfx_c_indirect_release" return="void" context="last" doc="Releases an indirect buffer wrapper.">
+      <param name="indirect" type="EzGfxIndirectBuffer" doc="Indirect buffer handle." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="No return value; null handles are ignored." />
+    </function>
+    <function name="ez_gfx_c_structured_acquire" return="EzGfxResult" context="last" managed="utf8-string" doc="Acquires a mapped structured buffer for the active render.">
+      <param name="element_size" type="uint32_t" validation="greater-than-zero" doc="Element size in bytes." />
+      <param name="element_count" type="uint32_t" validation="greater-than-zero" doc="Number of elements." />
+      <param name="debug_name" type="const char *" nullable="false" doc="UTF-8 debug name." />
+      <param name="out_structured" type="EzGfxStructuredBuffer *" direction="out" doc="Receives the buffer handle." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or EzGfxResult_NotReady." />
+    </function>
+    <function name="ez_gfx_c_structured_write" return="EzGfxResult" context="last" managed="structured-write" doc="Copies bytes into a mapped structured buffer.">
+      <param name="structured" type="EzGfxStructuredBuffer" doc="Structured buffer handle." />
+      <param name="data" type="const void *" nullable="false" direction="in" array-length="data_size" doc="Bytes to copy." />
+      <param name="data_size" type="uint64_t" validation="non-negative" doc="Number of bytes; zero is allowed." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or EzGfxResult_InvalidArgument." />
+    </function>
+    <function name="ez_gfx_c_structured_release" return="void" context="last" doc="Releases a structured buffer wrapper.">
+      <param name="structured" type="EzGfxStructuredBuffer" doc="Structured buffer handle." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="No return value; null handles are ignored." />
+    </function>
+    <function name="ez_gfx_c_render_add_vertex_pipeline" return="EzGfxResult" context="last" managed="vertex-pipeline" doc="Adds a vertex pipeline to the active render graph.">
+      <param name="shader" type="EzGfxShader" doc="Graphics shader handle." />
+      <param name="indirect" type="EzGfxIndirectBuffer" doc="Indirect buffer handle." />
+      <param name="bindings" type="const EzGfxBinding *" nullable="true" direction="in" array-length="binding_count" doc="Shader resource bindings." />
+      <param name="binding_count" type="uint32_t" validation="at-most-16" doc="Number of bindings; no more than 16." />
+      <param name="dynamic_state" type="const EzGfxDynamicState *" nullable="true" direction="in" doc="Optional pipeline state override." />
+      <param name="push_constants" type="const void *" nullable="true" direction="in" array-length="push_constant_size" doc="Push-constant bytes." />
+      <param name="push_constant_size" type="uint32_t" validation="at-most-128" doc="Number of push-constant bytes; no more than 128." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a validation/native error." />
+    </function>
+    <function name="ez_gfx_c_render_add_compute_pipeline" return="EzGfxResult" context="last" managed="compute-pipeline" doc="Adds a compute pipeline to the active render graph.">
+      <param name="shader" type="EzGfxShader" doc="Compute shader handle." />
+      <param name="dispatch_x" type="uint32_t" validation="greater-than-zero" doc="X workgroup count." />
+      <param name="dispatch_y" type="uint32_t" validation="greater-than-zero" doc="Y workgroup count." />
+      <param name="dispatch_z" type="uint32_t" validation="greater-than-zero" doc="Z workgroup count." />
+      <param name="bindings" type="const EzGfxBinding *" nullable="true" direction="in" array-length="binding_count" doc="Shader resource bindings." />
+      <param name="binding_count" type="uint32_t" validation="at-most-16" doc="Number of bindings; no more than 16." />
+      <param name="push_constants" type="const void *" nullable="true" direction="in" array-length="push_constant_size" doc="Push-constant bytes." />
+      <param name="push_constant_size" type="uint32_t" validation="at-most-128" doc="Number of push-constant bytes; no more than 128." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a validation/native error." />
+    </function>
+    <function name="ez_gfx_c_finish_render" return="EzGfxResult" context="last" doc="Validates, submits, and presents the active render graph.">
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a render failure." />
+    </function>
+    <function name="ez_gfx_c_screenshot_save" return="EzGfxResult" context="last" managed="utf8-string" doc="Saves the last presented surface image to a UTF-8 path.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to capture." />
+      <param name="path" type="const char *" nullable="false" doc="UTF-8, NUL-terminated output path." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok or a native failure." />
+    </function>
+    <function name="ez_gfx_c_imgui_render_demo" return="EzGfxResult" context="last" doc="Renders the Dear ImGui demo window into the active surface.">
+      <param name="surface" type="EzGfxSurface" doc="Surface to render." />
+      <param name="context" type="EzGfxContext" nullable="false" doc="Owning context." />
+      <returns doc="Returns EzGfxResult_Ok, EzGfxResult_NotReady, or a native failure." />
+    </function>
+  </functions>
+</ez-gfx-bindings>

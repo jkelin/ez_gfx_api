@@ -1,3 +1,4 @@
+#+private
 package tests
 
 import shared "../examples/shared"
@@ -47,6 +48,7 @@ Example3_Test_App :: struct {
 @(test)
 example3_compute_structured_buffer_renders_without_validation_errors :: proc(t: ^testing.T) {
 	app: Example3_Test_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(
 		t,
 		example3_test_init_app(&app),
@@ -84,7 +86,7 @@ example3_compute_structured_buffer_renders_without_validation_errors :: proc(t: 
 example3_test_init_app :: proc(app: ^Example3_Test_App) -> bool {
 	if !shared.example_glfw_init() do return false
 
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	app.camera = shared.orbit_camera_default()
 	app.camera.yaw = math.to_radians_f32(-30)
 	app.camera.pitch = math.to_radians_f32(52)
@@ -95,73 +97,75 @@ example3_test_init_app :: proc(app: ^Example3_Test_App) -> bool {
 		HEIGHT) {
 		return false
 	}
-	if !gfx.ez_gfx_ctx_create_instance(
-		&app.ctx,
+	if gfx.ez_gfx_ctx_create_instance(&app.ctx,
 		{
 			enable_validation = true,
 			validation_callback = validation_callback,
 			validation_user_data = &app.validation_log,
 			enable_debug = true,
-		},
-	) {
+		},) != .Ok {
 		return false
 	}
-	if !gfx.ez_gfx_window_create_surface(&app.window) do return false
-	if !gfx.ez_gfx_ctx_init_device(app.window.surface) do return false
-	if !gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) do return false
+	if gfx.ez_gfx_window_create_surface(&app.window) != .Ok do return false
+	if gfx.ez_gfx_ctx_init_device(app.window.surface) != .Ok do return false
+	if gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) != .Ok do return false
 	return example3_test_init_resources(app)
 }
 
 example3_test_init_resources :: proc(app: ^Example3_Test_App) -> bool {
-	if !gfx.ez_gfx_shader_compile(
-		{
+	if gfx.ez_gfx_shader_compile({
 			path = EXAMPLE3_COMPUTE_SHADER_PATH,
 			compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
 			kind = .Compute,
 		},
-		&app.compute_shader,
-	) {
+		&app.compute_shader,) != .Ok {
 		return false
 	}
 	app.compute_shader_loaded = true
 
-	if !gfx.ez_gfx_shader_compile(
-		{
+	if gfx.ez_gfx_shader_compile({
 			path = EXAMPLE3_DRAW_SHADER_PATH,
 			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
 			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 		},
-		&app.draw_shader,
-	) {
+		&app.draw_shader,) != .Ok {
 		return false
 	}
 	app.draw_shader_loaded = true
 
 	vertex_heap_names := [?]string{EXAMPLE3_POSITION_HEAP, EXAMPLE3_NORMAL_HEAP}
-	gfx.ez_gfx_vertex_manager_create(
+	if gfx.ez_gfx_vertex_manager_create(
 		&app.ctx.vertex_manager,
 		vertex_heap_names[:],
 		vk.DeviceSize(size_of(CUBE_TEST_POSITIONS[0])),
-	)
+	) != .Ok {
+		return false
+	}
 
-	app.cube_index = gfx.ez_gfx_vertex_manager_upload_indices(
+	index_start, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
 		CUBE_TEST_INDICES[:],
 	)
+	if index_status != .Ok do return false
+	app.cube_index = index_start
 	app.cube_index_len = u32(len(CUBE_TEST_INDICES))
-	app.cube_vertex = gfx.ez_gfx_vertex_manager_upload_vertices(
+	vertex_start, vertex_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		EXAMPLE3_POSITION_HEAP,
 		CUBE_TEST_POSITIONS[:],
 	)
+	if vertex_status != .Ok do return false
+	app.cube_vertex = vertex_start
 
 	normals := example3_test_cube_normals()
 	defer delete(normals)
-	app.cube_normal_vertex = gfx.ez_gfx_vertex_manager_upload_vertices(
+	normal_start, normal_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		EXAMPLE3_NORMAL_HEAP,
 		normals[:],
 	)
+	if normal_status != .Ok do return false
+	app.cube_normal_vertex = normal_start
 
 	identity := shared.mat4_identity()
 	app.primitive_record = Example3_Primitive_Record {
@@ -188,24 +192,24 @@ example3_test_cube_normals :: proc() -> [dynamic][4]f32 {
 }
 
 example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
-	if !gfx.ez_gfx_begin_render(&app.window) do return false
+	if gfx.ez_gfx_begin_render(&app.window) != .Ok do return false
 
-	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		1,
 		"example 3 test draw commands",
 	)
-	if !indirect.ok {
+	if indirect_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
 
-	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
+	primitives, primitives_status := gfx.ez_gfx_render_acquire_structured_buffer(
 		Example3_Primitive_Record,
 		1,
 		"primitives",
 	)
-	if !primitives.handle.ok {
+	if primitives_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
@@ -215,7 +219,7 @@ example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
 		{name = "primitives", structured = primitives.handle},
 		{name = "draw_commands", indirect = indirect},
 	}
-	compute := gfx.ez_gfx_render_add_compute_pipeline(
+	_, compute_status := gfx.ez_gfx_render_add_compute_pipeline(
 		&app.compute_shader,
 		1,
 		1,
@@ -223,11 +227,11 @@ example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
 		compute_bindings[:],
 		Example3_Compute_Push_Constants{primitive_count = 1},
 	)
-	if !compute.ok {
+	if compute_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
+	if gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
@@ -242,23 +246,23 @@ example3_test_draw_frame :: proc(app: ^Example3_Test_App) -> bool {
 	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
 		{name = "primitives", structured = primitives.handle},
 	}
-	draw := gfx.ez_gfx_render_add_vertex_pipeline(
+	_, draw_status := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
 		{},
 		Example3_Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
-	if !draw.ok {
+	if draw_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
 
-	return gfx.ez_gfx_finish_render()
+	return gfx.ez_gfx_finish_render() == .Ok
 }
 
 example3_test_cleanup :: proc(app: ^Example3_Test_App) {
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	if app.compute_shader_loaded {
 		gfx.ez_gfx_shader_destroy(&app.compute_shader)
 		app.compute_shader_loaded = false

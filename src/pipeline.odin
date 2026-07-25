@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import "core:fmt"
@@ -10,42 +11,14 @@ EZ_GFX_MAX_PIPELINE_DESCRIPTOR_BINDINGS ::
 	EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS +
 	EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS
 
-Ez_Gfx_Pipeline_Record :: struct {
-	kind:                  Ez_Gfx_Shader_Kind,
-	shader_identity:       u64,
-	shader:                ^Ez_Gfx_Shader_Program,
-	blend_mode:            Ez_Gfx_Blend_Mode,
-	color_formats:         [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.Format,
-	color_format_count:    int,
-	depth_format:          vk.Format,
-	has_depth:             bool,
-	pipeline_layout:       vk.PipelineLayout,
-	pipeline:              vk.Pipeline,
-	descriptor_set_layout: vk.DescriptorSetLayout,
-	descriptor_pool:       vk.DescriptorPool,
-	descriptor_sets:       [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS]vk.DescriptorSet,
-	descriptor_versions:   [EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS]u64,
-	last_used:             u64,
-}
-Ez_Gfx_Primitive_Type :: enum u8 {
-	Triangle_List,
-	Point_List,
-	Line_List,
-	Line_Strip,
-	Triangle_Strip,
-	Triangle_Fan,
-}
+
+
 
 // Zero-value state disables culling, uses counter-clockwise front faces,
 // triangle-list topology, and preserves shader-provided blend metadata.
-Ez_Gfx_Render_Dynamic_State :: struct {
-	cull_mode:      vk.CullModeFlags,
-	front_face:     vk.FrontFace,
-	primitive_type: Ez_Gfx_Primitive_Type,
-	blend_mode:     Ez_Gfx_Blend_Mode,
-}
 
-ez_gfx_render_dynamic_state_to_vk_topology :: proc(
+
+render_dynamic_state_to_vk_topology :: proc(
 	primitive_type: Ez_Gfx_Primitive_Type,
 ) -> vk.PrimitiveTopology {
 	switch primitive_type {
@@ -65,24 +38,11 @@ ez_gfx_render_dynamic_state_to_vk_topology :: proc(
 	panic("invalid Ez_Gfx_Primitive_Type")
 }
 
-Ez_Gfx_Pipeline_Manager :: struct {
-	records: [EZ_GFX_MAX_PIPELINES]Ez_Gfx_Pipeline_Record,
-	count:   int,
-	clock:   u64,
-}
 
-Ez_Gfx_Compute_Pipeline_Descriptor :: struct {
-	pipeline:           ^Ez_Gfx_Pipeline_Record,
-	descriptor_set_index: int,
-	dispatch_x:         u32,
-	dispatch_y:         u32,
-	dispatch_z:         u32,
-	push_constant_size: u32,
-	push_constant_data: [EZ_GFX_MAX_PUSH_CONSTANT_BYTES]byte,
-	ok:                 bool,
-}
 
-ez_gfx_pipeline_collect_color_formats :: proc(
+
+
+pipeline_collect_color_formats :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 	swapchain_format: vk.Format,
 ) -> (
@@ -99,10 +59,10 @@ ez_gfx_pipeline_collect_color_formats :: proc(
 		}
 
 		index := int(usage.color_attachment_index)
-		if ez_gfx_shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {
+		if shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {
 			formats[index] = swapchain_format
 		} else {
-			declaration := ez_gfx_shader_find_target_declaration(
+			declaration := shader_find_target_declaration(
 				shader,
 				usage.name[:],
 				usage.name_len,
@@ -122,7 +82,7 @@ ez_gfx_pipeline_collect_color_formats :: proc(
 	return formats, count, true
 }
 
-ez_gfx_pipeline_collect_depth_format :: proc(
+pipeline_collect_depth_format :: proc(
 	shader: ^Ez_Gfx_Shader_Program,
 ) -> (
 	format: vk.Format,
@@ -133,7 +93,7 @@ ez_gfx_pipeline_collect_depth_format :: proc(
 		usage := &shader.target_usages[i]
 		if usage.core do continue
 		if usage.access == .Read do continue
-		declaration := ez_gfx_shader_find_target_declaration(shader, usage.name[:], usage.name_len)
+		declaration := shader_find_target_declaration(shader, usage.name[:], usage.name_len)
 		if declaration == nil || declaration.kind != .Depth {
 			fmt.eprintln("DepthTarget is missing a depth target declaration")
 			return format, false, false
@@ -148,7 +108,7 @@ ez_gfx_pipeline_collect_depth_format :: proc(
 	return format, has_depth, true
 }
 
-ez_gfx_pipeline_color_formats_equal :: proc(
+pipeline_color_formats_equal :: proc(
 	record: ^Ez_Gfx_Pipeline_Record,
 	formats: [EZ_GFX_MAX_SHADER_TARGET_USAGES]vk.Format,
 	count: int,
@@ -160,7 +120,7 @@ ez_gfx_pipeline_color_formats_equal :: proc(
 	return true
 }
 
-ez_gfx_pipeline_depth_format_equal :: proc(
+pipeline_depth_format_equal :: proc(
 	record: ^Ez_Gfx_Pipeline_Record,
 	format: vk.Format,
 	has_depth: bool,
@@ -168,7 +128,7 @@ ez_gfx_pipeline_depth_format_equal :: proc(
 	return record.has_depth == has_depth && record.depth_format == format
 }
 
-ez_gfx_pipeline_manager_get :: proc(
+pipeline_manager_get :: proc(
 	manager: ^Ez_Gfx_Pipeline_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
 	swapchain_format: vk.Format,
@@ -177,15 +137,15 @@ ez_gfx_pipeline_manager_get :: proc(
 	record: ^Ez_Gfx_Pipeline_Record,
 	ok: bool,
 ) {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return nil, false
 	manager.clock += 1
-	color_formats, color_format_count, formats_ok := ez_gfx_pipeline_collect_color_formats(
+	color_formats, color_format_count, formats_ok := pipeline_collect_color_formats(
 		shader,
 		swapchain_format,
 	)
 	if !formats_ok do return nil, false
-	depth_format, has_depth, depth_ok := ez_gfx_pipeline_collect_depth_format(shader)
+	depth_format, has_depth, depth_ok := pipeline_collect_depth_format(shader)
 	if !depth_ok do return nil, false
 
 	for i in 0 ..< manager.count {
@@ -193,8 +153,8 @@ ez_gfx_pipeline_manager_get :: proc(
 		if candidate.kind == .Graphics &&
 		   candidate.shader_identity == shader.identity &&
 		   candidate.blend_mode == blend_mode &&
-		   ez_gfx_pipeline_color_formats_equal(candidate, color_formats, color_format_count) &&
-		   ez_gfx_pipeline_depth_format_equal(candidate, depth_format, has_depth) {
+		   pipeline_color_formats_equal(candidate, color_formats, color_format_count) &&
+		   pipeline_depth_format_equal(candidate, depth_format, has_depth) {
 			candidate.last_used = manager.clock
 			return candidate, true
 		}
@@ -212,7 +172,7 @@ ez_gfx_pipeline_manager_get :: proc(
 			}
 		}
 		slot = &manager.records[oldest]
-		ez_gfx_pipeline_record_destroy(ctx, slot)
+		pipeline_record_destroy(ctx, slot)
 	}
 
 	slot.kind = .Graphics
@@ -224,21 +184,21 @@ ez_gfx_pipeline_manager_get :: proc(
 	slot.depth_format = depth_format
 	slot.has_depth = has_depth
 	slot.last_used = manager.clock
-	if !ez_gfx_pipeline_record_create(ctx, slot, shader) {
-		ez_gfx_pipeline_record_destroy(ctx, slot)
+	if !pipeline_record_create(ctx, slot, shader) {
+		pipeline_record_destroy(ctx, slot)
 		return nil, false
 	}
 	return slot, true
 }
 
-ez_gfx_compute_pipeline_manager_get :: proc(
+compute_pipeline_manager_get :: proc(
 	manager: ^Ez_Gfx_Pipeline_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
 ) -> (
 	record: ^Ez_Gfx_Pipeline_Record,
 	ok: bool,
 ) {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return nil, false
 	if shader.desc.kind != .Compute {
 		fmt.eprintln("compute pipeline requires a compute shader")
@@ -265,26 +225,26 @@ ez_gfx_compute_pipeline_manager_get :: proc(
 			}
 		}
 		slot = &manager.records[oldest]
-		ez_gfx_pipeline_record_destroy(ctx, slot)
+		pipeline_record_destroy(ctx, slot)
 	}
 
 	slot.kind = .Compute
 	slot.shader_identity = shader.identity
 	slot.shader = shader
 	slot.last_used = manager.clock
-	if !ez_gfx_compute_pipeline_record_create(ctx, slot, shader) {
-		ez_gfx_pipeline_record_destroy(ctx, slot)
+	if !compute_pipeline_record_create(ctx, slot, shader) {
+		pipeline_record_destroy(ctx, slot)
 		return nil, false
 	}
 	return slot, true
 }
 
-ez_gfx_pipeline_record_create :: proc(
+pipeline_record_create :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
 ) -> bool {
-	if !ez_gfx_pipeline_create_descriptors(ctx, record, shader) do return false
+	if !pipeline_create_descriptors(ctx, record, shader) do return false
 
 	set_layouts := [?]vk.DescriptorSetLayout {
 		record.descriptor_set_layout,
@@ -319,10 +279,10 @@ ez_gfx_pipeline_record_create :: proc(
 		fmt.eprintln("failed to create pipeline layout")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.PIPELINE_LAYOUT,
-		ez_gfx_debug_handle(record.pipeline_layout),
+		debug_handle(record.pipeline_layout),
 		"ez_gfx pipeline layout",
 	)
 
@@ -437,22 +397,22 @@ ez_gfx_pipeline_record_create :: proc(
 		fmt.eprintln("failed to create graphics pipeline")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.PIPELINE,
-		ez_gfx_debug_handle(record.pipeline),
+		debug_handle(record.pipeline),
 		"ez_gfx graphics pipeline",
 	)
 
 	return true
 }
 
-ez_gfx_compute_pipeline_record_create :: proc(
+compute_pipeline_record_create :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
 ) -> bool {
-	if !ez_gfx_pipeline_create_descriptors(ctx, record, shader) do return false
+	if !pipeline_create_descriptors(ctx, record, shader) do return false
 
 	set_layout_count: u32
 	set_layouts := [?]vk.DescriptorSetLayout{record.descriptor_set_layout}
@@ -501,16 +461,16 @@ ez_gfx_compute_pipeline_record_create :: proc(
 		fmt.eprintln("failed to create compute pipeline")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.PIPELINE,
-		ez_gfx_debug_handle(record.pipeline),
+		debug_handle(record.pipeline),
 		"ez_gfx compute pipeline",
 	)
 	return true
 }
 
-ez_gfx_pipeline_create_descriptors :: proc(
+pipeline_create_descriptors :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
@@ -563,7 +523,7 @@ ez_gfx_pipeline_create_descriptors :: proc(
 
 		layout_bindings[binding_index] = vk.DescriptorSetLayoutBinding {
 			binding         = target_info.binding,
-			descriptorType  = ez_gfx_pipeline_target_descriptor_type(target_info),
+			descriptorType  = pipeline_target_descriptor_type(target_info),
 			descriptorCount = 1,
 			stageFlags      = {.VERTEX, .FRAGMENT},
 		}
@@ -585,10 +545,10 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		fmt.eprintln("failed to create descriptor set layout")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.DESCRIPTOR_SET_LAYOUT,
-		ez_gfx_debug_handle(record.descriptor_set_layout),
+		debug_handle(record.descriptor_set_layout),
 		"ez_gfx descriptor set layout",
 	)
 	if binding_count == 0 {
@@ -627,10 +587,10 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		fmt.eprintln("failed to create descriptor pool")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.DESCRIPTOR_POOL,
-		ez_gfx_debug_handle(record.descriptor_pool),
+		debug_handle(record.descriptor_pool),
 		"ez_gfx descriptor pool",
 	)
 
@@ -649,10 +609,10 @@ ez_gfx_pipeline_create_descriptors :: proc(
 		return false
 	}
 	for i in 0 ..< EZ_GFX_MAX_PIPELINE_DESCRIPTOR_SETS {
-		ez_gfx_debug_set_object_name(
+		debug_set_object_name(
 			ctx,
 			.DESCRIPTOR_SET,
-			ez_gfx_debug_handle(record.descriptor_sets[i]),
+			debug_handle(record.descriptor_sets[i]),
 			"ez_gfx descriptor set",
 		)
 	}
@@ -660,14 +620,14 @@ ez_gfx_pipeline_create_descriptors :: proc(
 	return true
 }
 
-ez_gfx_pipeline_update_descriptors :: proc(
+pipeline_update_descriptors :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	record: ^Ez_Gfx_Pipeline_Record,
 	shader: ^Ez_Gfx_Shader_Program,
 	descriptor_set_index: int,
 	node: ^Ez_Gfx_Render_Graph_Node,
 ) -> bool {
-	version := ez_gfx_pipeline_descriptor_version(ctx, shader, node)
+	version := pipeline_descriptor_version(ctx, shader, node)
 	if record.descriptor_sets[descriptor_set_index] == vk.DescriptorSet(0) {
 		record.descriptor_versions[descriptor_set_index] = version
 		return true
@@ -680,7 +640,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 
 	for i in 0 ..< shader.vertex_heap_binding_count {
 		binding_info := &shader.vertex_heap_bindings[i]
-		heap := ez_gfx_vertex_manager_find_heap_by_stored_name(
+		heap := vertex_manager_find_heap_by_stored_name(
 			&ctx.vertex_manager,
 			binding_info.name[:],
 			binding_info.name_len,
@@ -709,7 +669,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	structured_info_base := shader.vertex_heap_binding_count
 	for i in 0 ..< shader.structured_buffer_binding_count {
 		binding_info := &shader.structured_buffer_bindings[i]
-		node_binding := ez_gfx_render_graph_find_buffer_binding(
+		node_binding := render_graph_find_buffer_binding(
 			node,
 			binding_info.name[:],
 			binding_info.name_len,
@@ -738,7 +698,7 @@ ez_gfx_pipeline_update_descriptors :: proc(
 
 	for i in 0 ..< shader.target_declaration_count {
 		target_info := &shader.target_declarations[i]
-		target := ez_gfx_render_graph_find_node_target(
+		target := render_graph_find_node_target(
 			node,
 			target_info.name[:],
 			target_info.name_len,
@@ -750,14 +710,14 @@ ez_gfx_pipeline_update_descriptors :: proc(
 		image_infos[i] = vk.DescriptorImageInfo {
 			sampler     = target.sampler,
 			imageView   = target.image_view,
-			imageLayout = ez_gfx_pipeline_target_descriptor_layout(target_info),
+			imageLayout = pipeline_target_descriptor_layout(target_info),
 		}
 		writes[write_count] = vk.WriteDescriptorSet {
 			sType           = .WRITE_DESCRIPTOR_SET,
 			dstSet          = record.descriptor_sets[descriptor_set_index],
 			dstBinding      = target_info.binding,
 			descriptorCount = 1,
-			descriptorType  = ez_gfx_pipeline_target_descriptor_type(target_info),
+			descriptorType  = pipeline_target_descriptor_type(target_info),
 			pImageInfo      = &image_infos[i],
 		}
 		write_count += 1
@@ -770,21 +730,21 @@ ez_gfx_pipeline_update_descriptors :: proc(
 	return true
 }
 
-ez_gfx_pipeline_target_descriptor_type :: proc(
+pipeline_target_descriptor_type :: proc(
 	target_info: ^Ez_Gfx_Shader_Target_Declaration,
 ) -> vk.DescriptorType {
 	if target_info.storage do return .STORAGE_IMAGE
 	return .COMBINED_IMAGE_SAMPLER
 }
 
-ez_gfx_pipeline_target_descriptor_layout :: proc(
+pipeline_target_descriptor_layout :: proc(
 	target_info: ^Ez_Gfx_Shader_Target_Declaration,
 ) -> vk.ImageLayout {
 	if target_info.storage do return .GENERAL
-	return ez_gfx_render_target_descriptor_layout(target_info.kind)
+	return render_target_descriptor_layout(target_info.kind)
 }
 
-ez_gfx_pipeline_descriptor_version :: proc(
+pipeline_descriptor_version :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	shader: ^Ez_Gfx_Shader_Program,
 	node: ^Ez_Gfx_Render_Graph_Node,
@@ -794,35 +754,35 @@ ez_gfx_pipeline_descriptor_version :: proc(
 		version = version * 16777619 + ctx.structured_buffer_manager.version
 		for i in 0 ..< shader.structured_buffer_binding_count {
 			binding_info := &shader.structured_buffer_bindings[i]
-			node_binding := ez_gfx_render_graph_find_buffer_binding(
+			node_binding := render_graph_find_buffer_binding(
 				node,
 				binding_info.name[:],
 				binding_info.name_len,
 			)
-			version = ez_gfx_pipeline_hash_bytes(version, binding_info.name[:], binding_info.name_len)
-			version = ez_gfx_pipeline_hash_u64(version, u64(binding_info.binding))
-			version = ez_gfx_pipeline_hash_u64(version, u64(binding_info.access))
+			version = pipeline_hash_bytes(version, binding_info.name[:], binding_info.name_len)
+			version = pipeline_hash_u64(version, u64(binding_info.binding))
+			version = pipeline_hash_u64(version, u64(binding_info.access))
 			if node_binding != nil && node_binding.buffer != nil {
-				version = ez_gfx_pipeline_hash_u64(version, u64(uintptr(node_binding.buffer.handle)))
-				version = ez_gfx_pipeline_hash_u64(version, u64(node_binding.offset))
-				version = ez_gfx_pipeline_hash_u64(version, u64(node_binding.size))
+				version = pipeline_hash_u64(version, u64(uintptr(node_binding.buffer.handle)))
+				version = pipeline_hash_u64(version, u64(node_binding.offset))
+				version = pipeline_hash_u64(version, u64(node_binding.size))
 			}
 		}
 	}
 	if shader.target_declaration_count > 0 {
 		for i in 0 ..< shader.target_declaration_count {
 			declaration := &shader.target_declarations[i]
-			target := ez_gfx_render_graph_find_node_target(node, declaration.name[:], declaration.name_len)
+			target := render_graph_find_node_target(node, declaration.name[:], declaration.name_len)
 			if target == nil do continue
-			version = ez_gfx_pipeline_hash_bytes(version, declaration.name[:], declaration.name_len)
-			version = ez_gfx_pipeline_hash_u64(version, u64(uintptr(target.image_view)))
-			version = ez_gfx_pipeline_hash_u64(version, u64(target.generation))
+			version = pipeline_hash_bytes(version, declaration.name[:], declaration.name_len)
+			version = pipeline_hash_u64(version, u64(uintptr(target.image_view)))
+			version = pipeline_hash_u64(version, u64(target.generation))
 		}
 	}
 	return version
 }
 
-ez_gfx_pipeline_hash_u64 :: proc(hash: u64, value: u64) -> u64 {
+pipeline_hash_u64 :: proc(hash: u64, value: u64) -> u64 {
 	result := hash
 	for shift: uint = 0; shift < 64; shift += 8 {
 		result = (result ~ ((value >> shift) & 0xff)) * 1099511628211
@@ -830,7 +790,7 @@ ez_gfx_pipeline_hash_u64 :: proc(hash: u64, value: u64) -> u64 {
 	return result
 }
 
-ez_gfx_pipeline_hash_bytes :: proc(hash: u64, bytes: []byte, byte_count: int) -> u64 {
+pipeline_hash_bytes :: proc(hash: u64, bytes: []byte, byte_count: int) -> u64 {
 	result := hash
 	for i in 0 ..< byte_count {
 		result = (result ~ u64(bytes[i])) * 1099511628211
@@ -838,7 +798,7 @@ ez_gfx_pipeline_hash_bytes :: proc(hash: u64, bytes: []byte, byte_count: int) ->
 	return result
 }
 
-ez_gfx_pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipeline_Record) {
+pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipeline_Record) {
 	if ctx.device == nil do return
 	if record.pipeline != vk.Pipeline(0) {
 		vk.DestroyPipeline(ctx.device, record.pipeline, nil)
@@ -868,11 +828,11 @@ ez_gfx_pipeline_record_destroy :: proc(ctx: ^Ez_Gfx_Ctx, record: ^Ez_Gfx_Pipelin
 	record.last_used = 0
 }
 
-ez_gfx_pipeline_manager_destroy :: proc(manager: ^Ez_Gfx_Pipeline_Manager) {
-	ctx := ez_gfx_get_current_ctx()
+pipeline_manager_destroy :: proc(manager: ^Ez_Gfx_Pipeline_Manager) {
+	ctx := get_current_ctx()
 	if ctx == nil do return
 	for i in 0 ..< manager.count {
-		ez_gfx_pipeline_record_destroy(ctx, &manager.records[i])
+		pipeline_record_destroy(ctx, &manager.records[i])
 	}
 	manager.count = 0
 	manager.clock = 0

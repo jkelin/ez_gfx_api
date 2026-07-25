@@ -1,3 +1,4 @@
+#+private
 package tests
 
 import gfx "../src"
@@ -29,7 +30,7 @@ texture_test_decoder :: proc(
 
 @(test)
 texture_unregistered_png_rejects_before_workers :: proc(t: ^testing.T) {
-	if !testing.expect(t, gfx.ez_gfx_register_image_decoder(.PNG, nil)) {
+	if !testing.expect(t, gfx.ez_gfx_register_image_decoder(.PNG, nil) == .Ok) {
 		return
 	}
 	defer gfx.ez_gfx_enable_png_decoder()
@@ -51,13 +52,13 @@ texture_unregistered_png_rejects_before_workers :: proc(t: ^testing.T) {
 
 @(test)
 texture_registers_custom_image_decoder :: proc(t: ^testing.T) {
-	if !testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder)) {
+	if !testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder) == .Ok) {
 		return
 	}
 	defer gfx.ez_gfx_enable_bmp_decoder()
-	testing.expect(t, !gfx.ez_gfx_register_image_decoder(.RGB, texture_test_decoder))
-	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, nil))
-	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder))
+	testing.expect(t, gfx.ez_gfx_register_image_decoder(.RGB, texture_test_decoder) != .Ok)
+	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, nil) == .Ok)
+	testing.expect(t, gfx.ez_gfx_register_image_decoder(.BMP, texture_test_decoder) == .Ok)
 
 	data := [?]u8{0}
 	job := texture_test_job(data[:], .BMP, 0, 0)
@@ -75,7 +76,7 @@ texture_registers_custom_image_decoder :: proc(t: ^testing.T) {
 
 @(test)
 texture_enable_all_decoders_enables_png :: proc(t: ^testing.T) {
-	if !testing.expect(t, gfx.ez_gfx_enable_all_decoders()) {
+	if !testing.expect(t, gfx.ez_gfx_enable_all_decoders() == .Ok) {
 		return
 	}
 

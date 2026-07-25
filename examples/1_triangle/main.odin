@@ -1,3 +1,4 @@
+#+private
 package main
 
 import gfx "../../src"
@@ -30,18 +31,20 @@ App :: struct {
 }
 
 main :: proc() {
-	app: App
-	defer cleanup(&app)
-	init_app(&app)
-	run(&app)
+	app := new(App)
+	context.user_ptr = &app.ctx
+	defer free(app)
+	defer cleanup(app)
+	init_app(app)
+	run(app)
 }
 
 init_app :: proc(app: ^App) {
 	fmt.println("checkpoint: glfw init")
 	assert(shared.example_glfw_init())
 
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	assert(gfx.ez_gfx_enable_all_decoders(), "failed to enable image decoders")
+	context.user_ptr = &app.ctx
+	assert(gfx.ez_gfx_enable_all_decoders() == .Ok, "failed to enable image decoders")
 	app.window_count = 1
 	main_window := &app.windows[0]
 
@@ -53,29 +56,25 @@ init_app :: proc(app: ^App) {
 	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {
 		enable_debug = true,
 		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
-	}))
+	}) == .Ok)
 	fmt.println("checkpoint: surface create")
-	assert(gfx.ez_gfx_window_create_surface(main_window))
+	assert(gfx.ez_gfx_window_create_surface(main_window) == .Ok)
 	fmt.println("checkpoint: device init")
-	assert(gfx.ez_gfx_ctx_init_device(main_window.surface))
+	assert(gfx.ez_gfx_ctx_init_device(main_window.surface) == .Ok)
 	fmt.println("checkpoint: swapchain recreate")
-	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height))
+	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height) == .Ok)
 	fmt.println("checkpoint: triangle data init")
 	triangle_init(app)
 	fmt.println("checkpoint: init done")
 }
 
 triangle_init :: proc(app: ^App) {
-	assert(
-		gfx.ez_gfx_shader_compile(
-			{
+	assert(gfx.ez_gfx_shader_compile({
 				path = TRIANGLE_SHADER_PATH,
 				vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
 				fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 			},
-			&app.shader,
-		),
-	)
+			&app.shader,) == .Ok)
 	app.shader_loaded = true
 
 	gfx.ez_gfx_vertex_manager_add_heap(
@@ -85,16 +84,20 @@ triangle_init :: proc(app: ^App) {
 		vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
 	)
 
-	app.triangle_index = gfx.ez_gfx_vertex_manager_upload_indices(
+	index_start, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_INDICES[:],
 	)
+	assert(index_status == .Ok, "failed to upload triangle indices")
+	app.triangle_index = index_start
 	app.triangle_index_len = u32(len(TRIANGLE_INDICES))
-	app.triangle_vertex = gfx.ez_gfx_vertex_manager_upload_vertices(
+	vertex_start, vertex_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_POSITION_HEAP,
 		TRIANGLE_POSITIONS[:],
 	)
+	assert(vertex_status == .Ok, "failed to upload triangle vertices")
+	app.triangle_vertex = vertex_start
 }
 
 run :: proc(app: ^App) {
@@ -117,29 +120,26 @@ run :: proc(app: ^App) {
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		assert(
-			gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH),
-			"failed to save screenshot",
-		)
+		assert(gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
 	}
 }
 
 draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
-	if !gfx.ez_gfx_begin_render(window) do return
+	if gfx.ez_gfx_begin_render(window) != .Ok do return
 
-	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		1,
 		"triangle draw commands",
 	)
-	assert(indirect.ok, "failed to acquire triangle indirect buffer")
+	assert(indirect_status == .Ok, "failed to acquire triangle indirect buffer")
 
-	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
 		indirect,
 		nil,
 	)
-	assert(pipeline.ok, "failed to add triangle pipeline")
+	assert(pipeline_status == .Ok, "failed to add triangle pipeline")
 
 	draw := vk.DrawIndexedIndirectCommand {
 		indexCount    = app.triangle_index_len,
@@ -148,20 +148,14 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		vertexOffset  = i32(app.triangle_vertex),
 		firstInstance = 0,
 	}
-	assert(
-		gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw),
-		"failed to write triangle draw",
-	)
-	assert(
-		gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1),
-		"failed to set triangle draw count",
-	)
+	assert(gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) == .Ok, "failed to write triangle draw")
+	assert(gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) == .Ok, "failed to set triangle draw count")
 
-	assert(gfx.ez_gfx_finish_render(), "failed to finish triangle render")
+	assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish triangle render")
 }
 
 cleanup :: proc(app: ^App) {
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	if app.shader_loaded {
 		gfx.ez_gfx_shader_destroy(&app.shader)
 		app.shader_loaded = false

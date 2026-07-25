@@ -57,25 +57,26 @@ public sealed class EasyGraphics : IDisposable
             NativeErrors.ThrowIfFailed(
                 "Surface creation",
                 EzGfxNative.EzGfxCSurfaceCreate(
-                    ContextValue,
                     nativeWindow.Handle,
                     nativeWindow.Instance,
                     EzGfxSurfacePlatform.Win32,
                     width,
                     height,
-                    out ulong rawSurface));
-            window = new GraphicsWindow(this, nativeWindow, new EzGfxSurfaceHandle(rawSurface), width, height);
+                    out ulong rawSurface,
+                    ContextValue));
+            window = new GraphicsWindow(this, nativeWindow, new EzGfxSurfaceHandle(rawSurface, ContextValue), width, height);
             NativeErrors.ThrowIfFailed(
                 "Surface snapshot cache configuration",
                 EzGfxNative.EzGfxCSurfaceSetSnapshotCache(
                     window.NativeValue,
-                    cachePresentedSnapshots ? 1 : 0));
+                    cachePresentedSnapshots ? 1 : 0,
+                    ContextValue));
             NativeErrors.ThrowIfFailed(
                 "Device initialization",
-                EzGfxNative.EzGfxCContextInitDevice(ContextValue, window.NativeValue));
+                EzGfxNative.EzGfxCContextInitDevice(window.NativeValue, ContextValue));
             NativeErrors.ThrowIfFailed(
                 "Swapchain creation",
-                EzGfxNative.EzGfxCSurfaceResize(window.NativeValue, width, height));
+                EzGfxNative.EzGfxCSurfaceResize(window.NativeValue, width, height, ContextValue));
             _window = window;
             _resources.Add(window);
             return window;
@@ -105,14 +106,14 @@ public sealed class EasyGraphics : IDisposable
         NativeErrors.ThrowIfFailed(
             "Shader compilation",
             EzGfxNative.EzGfxCShaderCompile(
-                ContextValue,
                 description.Path,
                 description.Kind,
                 description.VertexEntry,
                 description.FragmentEntry,
                 description.ComputeEntry,
-                out ulong rawShader));
-        ShaderProgram shader = new(this, new EzGfxShaderHandle(rawShader));
+                out ulong rawShader,
+                ContextValue));
+        ShaderProgram shader = new(this, new EzGfxShaderHandle(rawShader, ContextValue));
         _resources.Add(shader);
         return shader;
     }
@@ -149,7 +150,7 @@ public sealed class EasyGraphics : IDisposable
         }
         NativeErrors.ThrowIfFailed(
             "Index heap creation",
-            EzGfxNative.EzGfxCIndexHeapCreate(ContextValue, capacity, debugName));
+            EzGfxNative.EzGfxCIndexHeapCreate(capacity, debugName, ContextValue));
     }
 
     public uint UploadIndices(VertexManager manager, ReadOnlySpan<uint> indices)
@@ -161,7 +162,7 @@ public sealed class EasyGraphics : IDisposable
         }
         NativeErrors.ThrowIfFailed(
             "Index upload",
-            EzGfxNative.EzGfxCVertexUploadIndices(ContextValue, indices, out uint startIndex));
+            EzGfxNative.EzGfxCVertexUploadIndices(indices, out uint startIndex, ContextValue));
         return startIndex;
     }
 
@@ -176,12 +177,12 @@ public sealed class EasyGraphics : IDisposable
         NativeErrors.ThrowIfFailed(
             "Vertex upload",
             EzGfxNative.EzGfxCVertexUpload(
-                ContextValue,
                 heapName,
                 data,
                 checked((uint)elementCount),
                 checked((ulong)elementSize),
-                out uint startIndex));
+                out uint startIndex,
+                ContextValue));
         return startIndex;
     }
 
@@ -190,7 +191,6 @@ public sealed class EasyGraphics : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(description);
         EzGfxTextureError result = EzGfxNative.EzGfxCTextureLoad(
-            ContextValue,
             data,
             (uint)description.SourceFormat,
             (uint)description.DestinationFormat,
@@ -205,7 +205,8 @@ public sealed class EasyGraphics : IDisposable
             description.AddressModeV,
             description.AddressModeW,
             description.DebugLabel,
-            out uint textureId);
+            out uint textureId,
+            ContextValue);
         NativeErrors.ThrowIfTextureFailed("Texture load", result);
         TextureResource texture = new(this, textureId);
         _resources.Add(texture);
@@ -219,7 +220,7 @@ public sealed class EasyGraphics : IDisposable
         {
             return false;
         }
-        EzGfxResult result = EzGfxNative.EzGfxCBeginRender(window.NativeValue);
+        EzGfxResult result = EzGfxNative.EzGfxCBeginRender(window.NativeValue, ContextValue);
         if (result == EzGfxResult.NotReady)
         {
             return false;
@@ -234,7 +235,7 @@ public sealed class EasyGraphics : IDisposable
         ValidateOwner(window);
         NativeErrors.ThrowIfFailed(
             "Dear ImGui demo render",
-            EzGfxNative.EzGfxCImguiRenderDemo(window.NativeValue));
+            EzGfxNative.EzGfxCImguiRenderDemo(window.NativeValue, ContextValue));
     }
 
     public IndirectBuffer AcquireIndirect(uint capacity, string debugName = "indirect buffer")
@@ -246,8 +247,8 @@ public sealed class EasyGraphics : IDisposable
         }
         NativeErrors.ThrowIfFailed(
             "Indirect buffer acquisition",
-            EzGfxNative.EzGfxCAcquireIndirect(ContextValue, capacity, debugName, out ulong rawHandle));
-        IndirectBuffer buffer = new(this, new EzGfxIndirectHandle(rawHandle));
+            EzGfxNative.EzGfxCAcquireIndirect(capacity, debugName, out ulong rawHandle, ContextValue));
+        IndirectBuffer buffer = new(this, new EzGfxIndirectHandle(rawHandle, ContextValue));
         _resources.Add(buffer);
         return buffer;
     }
@@ -261,8 +262,8 @@ public sealed class EasyGraphics : IDisposable
         }
         NativeErrors.ThrowIfFailed(
             "Structured buffer acquisition",
-            EzGfxNative.EzGfxCStructuredAcquire(ContextValue, elementSize, elementCount, debugName, out ulong rawHandle));
-        StructuredBuffer buffer = new(this, new EzGfxStructuredHandle(rawHandle));
+            EzGfxNative.EzGfxCStructuredAcquire(elementSize, elementCount, debugName, out ulong rawHandle, ContextValue));
+        StructuredBuffer buffer = new(this, new EzGfxStructuredHandle(rawHandle, ContextValue));
         _resources.Add(buffer);
         return buffer;
     }
@@ -287,7 +288,8 @@ public sealed class EasyGraphics : IDisposable
                 state.FrontFace,
                 state.PrimitiveType,
                 state.BlendMode,
-                pushConstants));
+                pushConstants,
+                ContextValue));
     }
 
     public void AddComputePipeline(
@@ -311,7 +313,8 @@ public sealed class EasyGraphics : IDisposable
                 dispatchY,
                 dispatchZ,
                 bindings,
-                pushConstants));
+                pushConstants,
+                ContextValue));
     }
 
     public void FinishFrame()
@@ -325,7 +328,7 @@ public sealed class EasyGraphics : IDisposable
         ValidateOwner(window);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        NativeErrors.ThrowIfFailed("Screenshot save", EzGfxNative.EzGfxCScreenshotSave(window.NativeValue, path));
+        NativeErrors.ThrowIfFailed("Screenshot save", EzGfxNative.EzGfxCScreenshotSave(window.NativeValue, path, ContextValue));
     }
 
     public void WaitIdle()
@@ -339,7 +342,7 @@ public sealed class EasyGraphics : IDisposable
     internal void ResizeSurface(GraphicsWindow window, uint width, uint height)
     {
         ValidateOwner(window);
-        NativeErrors.ThrowIfFailed("Surface resize", EzGfxNative.EzGfxCSurfaceResize(window.NativeValue, width, height));
+        NativeErrors.ThrowIfFailed("Surface resize", EzGfxNative.EzGfxCSurfaceResize(window.NativeValue, width, height, ContextValue));
     }
 
     internal bool SurfaceResizePending(GraphicsWindow window)
@@ -347,7 +350,7 @@ public sealed class EasyGraphics : IDisposable
         ValidateOwner(window);
         NativeErrors.ThrowIfFailed(
             "Surface resize status query",
-            EzGfxNative.EzGfxCSurfaceResizePending(window.NativeValue, out int pending));
+            EzGfxNative.EzGfxCSurfaceResizePending(window.NativeValue, out int pending, ContextValue));
         return pending != 0;
     }
 
@@ -357,7 +360,7 @@ public sealed class EasyGraphics : IDisposable
         {
             return;
         }
-        NativeErrors.ThrowIfTextureFailed("Texture unload", EzGfxNative.EzGfxCTextureUnload(ContextValue, textureId));
+        NativeErrors.ThrowIfTextureFailed("Texture unload", EzGfxNative.EzGfxCTextureUnload(textureId, ContextValue));
     }
 
     private void ValidateOwner(GraphicsResource resource)

@@ -1,3 +1,4 @@
+#+private
 package tests
 
 import gfx "../src"
@@ -58,24 +59,30 @@ missing_declaration_fails_reflection :: proc(t: ^testing.T) {
 @(test)
 duplicate_target_declarations_are_rejected :: proc(t: ^testing.T) {
 	program: gfx.Ez_Gfx_Shader_Program
-	testing.expect(
+	testing.expect_value(
 		t,
 		gfx.ez_gfx_copy_shader_target_name_cstring(
 			program.target_declarations[0].name[:],
 			&program.target_declarations[0].name_len,
 			"depth",
 		),
+		gfx.Ez_Gfx_Status.Ok,
 	)
-	testing.expect(
+	testing.expect_value(
 		t,
 		gfx.ez_gfx_copy_shader_target_name_cstring(
 			program.target_declarations[1].name[:],
 			&program.target_declarations[1].name_len,
 			"depth",
 		),
+		gfx.Ez_Gfx_Status.Ok,
 	)
 	program.target_declaration_count = 2
-	testing.expect(t, !gfx.ez_gfx_shader_validate_unique_target_declarations(&program))
+	testing.expect_value(
+		t,
+		gfx.ez_gfx_shader_validate_unique_target_declarations(&program),
+		gfx.Ez_Gfx_Status.Native_Failure,
+	)
 }
 
 @(test)
@@ -219,7 +226,7 @@ reflect_shader :: proc(
 	ok: bool,
 ) {
 	_ = t
-	gfx.ez_gfx_set_current_ctx(&shader_test_ctx)
+	context.user_ptr = &shader_test_ctx
 	ok = gfx.ez_gfx_shader_reflect(
 		{
 			path = path,
@@ -227,7 +234,7 @@ reflect_shader :: proc(
 			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 		},
 		&program,
-	)
+	) == .Ok
 	return
 }
 
@@ -239,7 +246,7 @@ reflect_compute_shader :: proc(
 	ok: bool,
 ) {
 	_ = t
-	gfx.ez_gfx_set_current_ctx(&shader_test_ctx)
+	context.user_ptr = &shader_test_ctx
 	ok = gfx.ez_gfx_shader_reflect(
 		{
 			path = path,
@@ -247,6 +254,6 @@ reflect_compute_shader :: proc(
 			kind = .Compute,
 		},
 		&program,
-	)
+	) == .Ok
 	return
 }

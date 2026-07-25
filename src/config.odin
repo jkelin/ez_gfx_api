@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import "core:os"
@@ -9,7 +10,7 @@ EZ_GFX_HIDDEN_WINDOW_ENV :: "EZ_GFX_HIDDEN_WINDOW"
 EZ_GFX_SCREENSHOT_ENV :: "EZ_GFX_SCREENSHOT"
 
 // Maximum run duration in seconds; unset means run until the window is closed.
-ez_gfx_config_run_seconds :: proc() -> f64 {
+config_run_seconds :: proc() -> f64 {
 	buf: [64]u8
 	if value, err := os.lookup_env(buf[:], EZ_GFX_MAX_SECONDS_ENV); err == nil {
 		if seconds, parse_ok := strconv.parse_f64(value); parse_ok && seconds > 0 {
@@ -21,7 +22,7 @@ ez_gfx_config_run_seconds :: proc() -> f64 {
 }
 
 // Maximum number of frames; unset means run until the window is closed or the time limit is reached.
-ez_gfx_config_max_frames :: proc() -> int {
+config_max_frames :: proc() -> int {
 	buf: [64]u8
 	if value, err := os.lookup_env(buf[:], EZ_GFX_MAX_FRAMES_ENV); err == nil {
 		if frames, parse_ok := strconv.parse_int(value); parse_ok && frames > 0 {
@@ -32,7 +33,7 @@ ez_gfx_config_max_frames :: proc() -> int {
 }
 
 // Forces the window to stay hidden for deterministic snapshot-based captures.
-ez_gfx_config_hidden_window :: proc() -> bool {
+config_hidden_window :: proc() -> bool {
 	buf: [64]u8
 	if value, err := os.lookup_env(buf[:], EZ_GFX_HIDDEN_WINDOW_ENV); err == nil {
 		switch value {
@@ -44,7 +45,7 @@ ez_gfx_config_hidden_window :: proc() -> bool {
 }
 
 // Whether to save a screenshot after the run loop finishes.
-ez_gfx_config_screenshot_enabled :: proc() -> bool {
+config_screenshot_enabled :: proc() -> bool {
 	buf: [64]u8
 	if value, err := os.lookup_env(buf[:], EZ_GFX_SCREENSHOT_ENV); err == nil {
 		switch value {

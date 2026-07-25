@@ -1,3 +1,4 @@
+#+private
 package tests
 
 import shared "../examples/shared"
@@ -62,6 +63,7 @@ render_dynamic_state_zero_defaults :: proc(t: ^testing.T) {
 @(test)
 triangle_renders_without_validation_errors :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "triangle test failed during init") {
 		triangle_cleanup(&app)
 		return
@@ -85,6 +87,7 @@ triangle_renders_without_validation_errors :: proc(t: ^testing.T) {
 @(test)
 present_modes_can_be_queried_and_changed :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "present mode test failed during init") {
 		triangle_cleanup(&app)
 		return
@@ -94,7 +97,7 @@ present_modes_can_be_queried_and_changed :: proc(t: ^testing.T) {
 	info: gfx.Ez_Gfx_Ctx_Info
 	if !testing.expect(
 		t,
-		gfx.ez_gfx_ctx_get_info(&info),
+		gfx.ez_gfx_ctx_get_info(&info) == .Ok,
 		"present mode test failed to query context info",
 	) {
 		return
@@ -115,10 +118,10 @@ present_modes_can_be_queried_and_changed :: proc(t: ^testing.T) {
 	requested := info.swapchain_present_modes[info.swapchain_present_mode_count - 1]
 	testing.expect(
 		t,
-		gfx.ez_gfx_ctx_set_swapchain_present_mode(requested),
+		gfx.ez_gfx_ctx_set_swapchain_present_mode(requested) == .Ok,
 		"present mode test failed to accept a supported mode",
 	)
-	if !testing.expect(t, gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height)) {
+	if !testing.expect(t, gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) == .Ok) {
 		return
 	}
 
@@ -132,6 +135,7 @@ present_modes_can_be_queried_and_changed :: proc(t: ^testing.T) {
 @(test)
 resize_after_screenshot_recreates_without_validation_errors :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "resize test failed during init") {
 		triangle_cleanup(&app)
 		return
@@ -145,7 +149,7 @@ resize_after_screenshot_recreates_without_validation_errors :: proc(t: ^testing.
 	pixels: []u8
 	if !testing.expect(
 		t,
-		gfx.ez_gfx_screenshot_read_swapchain_bgra(&app.window.swapchain, &pixels),
+		gfx.ez_gfx_screenshot_read_swapchain_bgra(&app.window.swapchain, &pixels) == .Ok,
 		"resize test failed to read a swapchain screenshot",
 	) {
 		return
@@ -165,35 +169,33 @@ resize_after_screenshot_recreates_without_validation_errors :: proc(t: ^testing.
 @(test)
 structured_buffer_acquires_per_frame_and_reuses_pool :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "structured buffer test failed during init") {
 		triangle_cleanup(&app)
 		return
 	}
 	defer triangle_cleanup(&app)
 
-	testing.expect(
-		t,
-		!gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "test_buffer").handle.ok,
-		"structured buffer acquire should require an active render",
-	)
+	_, inactive_status := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "test_buffer")
+	testing.expect_value(t, inactive_status, gfx.Ez_Gfx_Status.Not_Ready)
 
 	for frame in 0 ..< 2 {
 		if !testing.expect(
 			t,
-			gfx.ez_gfx_begin_render(&app.window),
+			gfx.ez_gfx_begin_render(&app.window) == .Ok,
 			"structured buffer test failed to begin render",
 		) {
 			return
 		}
-		handle := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "test_buffer")
-		if !testing.expect(t, handle.handle.ok, "structured buffer acquire failed") {
+		handle, handle_status := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "test_buffer")
+		if !testing.expect(t, handle_status == .Ok, "structured buffer acquire failed") {
 			_ = gfx.ez_gfx_finish_render()
 			return
 		}
 		handle.elements[0] = u32(frame)
 		testing.expect(
 			t,
-			gfx.ez_gfx_finish_render(),
+			gfx.ez_gfx_finish_render() == .Ok,
 			"structured buffer test failed to finish render",
 		)
 		gfx.ez_gfx_ctx_wait_idle()
@@ -207,6 +209,7 @@ structured_buffer_acquires_per_frame_and_reuses_pool :: proc(t: ^testing.T) {
 @(test)
 structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(
 		t,
 		triangle_init_app(&app),
@@ -222,19 +225,19 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 
 	if !testing.expect(
 		t,
-		gfx.ez_gfx_begin_render(&app.window),
+		gfx.ez_gfx_begin_render(&app.window) == .Ok,
 		"structured buffer trim test failed to begin large-buffer render",
 	) {
 		return
 	}
-	large_handle := gfx.ez_gfx_render_acquire_structured_buffer(u8, large_element_count, "large_buffer")
-	if !testing.expect(t, large_handle.handle.ok, "structured buffer trim test failed to acquire large buffer") {
+	large_handle, large_status := gfx.ez_gfx_render_acquire_structured_buffer(u8, large_element_count, "large_buffer")
+	if !testing.expect(t, large_status == .Ok, "structured buffer trim test failed to acquire large buffer") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
 	if !testing.expect(
 		t,
-		gfx.ez_gfx_finish_render(),
+		gfx.ez_gfx_finish_render() == .Ok,
 		"structured buffer trim test failed to finish large-buffer render",
 	) {
 		return
@@ -245,15 +248,15 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 	for frame in 0 ..< 2 {
 		if !testing.expect(
 			t,
-			gfx.ez_gfx_begin_render(&app.window),
+			gfx.ez_gfx_begin_render(&app.window) == .Ok,
 			"structured buffer trim test failed to begin small-buffer render",
 		) {
 			return
 		}
-		small_handle := gfx.ez_gfx_render_acquire_structured_buffer(u32, small_element_count, "small_buffer")
+		small_handle, small_status := gfx.ez_gfx_render_acquire_structured_buffer(u32, small_element_count, "small_buffer")
 		if !testing.expect(
 			t,
-			small_handle.handle.ok,
+			small_status == .Ok,
 			"structured buffer trim test failed to acquire small buffer",
 		) {
 			_ = gfx.ez_gfx_finish_render()
@@ -262,7 +265,7 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 		small_handle.elements[0] = u32(frame)
 		if !testing.expect(
 			t,
-			gfx.ez_gfx_finish_render(),
+			gfx.ez_gfx_finish_render() == .Ok,
 			"structured buffer trim test failed to finish small-buffer render",
 		) {
 			return
@@ -281,6 +284,7 @@ structured_buffer_pool_trims_oversized_idle_buffers :: proc(t: ^testing.T) {
 @(test)
 explicit_structured_buffer_reuses_one_handle_across_pipelines :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "structured reuse test failed during init") {
 		triangle_cleanup(&app)
 		return
@@ -294,11 +298,11 @@ explicit_structured_buffer_reuses_one_handle_across_pipelines :: proc(t: ^testin
 	if !testing.expect(t, compute_ok, "failed to compile compute structured shader") do return
 	defer gfx.ez_gfx_shader_destroy(&compute_shader)
 
-	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "structured reuse test failed to begin render") {
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "structured reuse test failed to begin render") {
 		return
 	}
-	colors := gfx.ez_gfx_render_acquire_structured_buffer([4]f32, u32(len(TRIANGLE_COLORS)), "triangle colors")
-	if !testing.expect(t, colors.handle.ok, "failed to acquire structured colors") {
+	colors, colors_status := gfx.ez_gfx_render_acquire_structured_buffer([4]f32, u32(len(TRIANGLE_COLORS)), "triangle colors")
+	if !testing.expect(t, colors_status == .Ok, "failed to acquire structured colors") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
@@ -313,19 +317,19 @@ explicit_structured_buffer_reuses_one_handle_across_pipelines :: proc(t: ^testin
 	}
 
 	compute_bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "instances", structured = colors.handle}}
-	compute := gfx.ez_gfx_render_add_compute_pipeline(&compute_shader, 1, 1, 1, compute_bindings[:])
-	if !testing.expect(t, compute.ok, "compute pipeline should accept reused structured handle") {
+	_, compute_status := gfx.ez_gfx_render_add_compute_pipeline(&compute_shader, 1, 1, 1, compute_bindings[:])
+	if !testing.expect(t, compute_status == .Ok, "compute pipeline should accept reused structured handle") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
 	graphics_bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "colors", structured = colors.handle}}
-	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&graphics_shader, indirect, graphics_bindings[:])
-	if !testing.expect(t, pipeline.ok, "graphics pipeline should accept reused structured handle") {
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(&graphics_shader, indirect, graphics_bindings[:])
+	if !testing.expect(t, pipeline_status == .Ok, "graphics pipeline should accept reused structured handle") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
 
-	testing.expect(t, gfx.ez_gfx_finish_render(), "structured reuse render should submit")
+	testing.expect(t, gfx.ez_gfx_finish_render() == .Ok, "structured reuse render should submit")
 	gfx.ez_gfx_ctx_wait_idle()
 	testing.expect_value(t, app.ctx.structured_buffer_manager.count, 1)
 	testing.expect_value(t, app.validation_log.errors, u32(0))
@@ -335,6 +339,7 @@ explicit_structured_buffer_reuses_one_handle_across_pipelines :: proc(t: ^testin
 @(test)
 explicit_structured_binding_is_required_per_pipeline :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "missing binding test failed during init") {
 		triangle_cleanup(&app)
 		return
@@ -345,7 +350,7 @@ explicit_structured_binding_is_required_per_pipeline :: proc(t: ^testing.T) {
 	if !testing.expect(t, shader_ok, "failed to compile graphics structured shader") do return
 	defer gfx.ez_gfx_shader_destroy(&shader)
 
-	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "missing binding test failed to begin render") {
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "missing binding test failed to begin render") {
 		return
 	}
 	indirect := triangle_acquire_and_fill_indirect(&app)
@@ -353,14 +358,15 @@ explicit_structured_binding_is_required_per_pipeline :: proc(t: ^testing.T) {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
-	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, nil)
-	testing.expect(t, !pipeline.ok, "pipeline unexpectedly inferred a missing structured binding")
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, nil)
+	testing.expect_value(t, pipeline_status, gfx.Ez_Gfx_Status.Native_Failure)
 	_ = gfx.ez_gfx_finish_render()
 }
 
 @(test)
 stale_structured_handle_fails_submit_validation :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "stale handle test failed during init") {
 		triangle_cleanup(&app)
 		return
@@ -371,35 +377,103 @@ stale_structured_handle_fails_submit_validation :: proc(t: ^testing.T) {
 	if !testing.expect(t, shader_ok, "failed to compile graphics structured shader") do return
 	defer gfx.ez_gfx_shader_destroy(&shader)
 
-	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "stale handle setup failed to begin render") {
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "stale handle setup failed to begin render") {
 		return
 	}
-	stale := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "stale colors")
-	if !testing.expect(t, stale.handle.ok, "failed to acquire stale structured handle") {
+	stale, stale_status := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "stale colors")
+	if !testing.expect(t, stale_status == .Ok, "failed to acquire stale structured handle") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
-	if !testing.expect(t, gfx.ez_gfx_finish_render(), "stale handle setup failed to finish") {
+	if !testing.expect(t, gfx.ez_gfx_finish_render() == .Ok, "stale handle setup failed to finish") {
 		return
 	}
 	gfx.ez_gfx_ctx_wait_idle()
 
-	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "stale handle test failed to begin render") {
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "stale handle test failed to begin render") {
 		return
 	}
 	indirect := triangle_acquire_and_fill_indirect(&app)
 	bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "colors", structured = stale.handle}}
-	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, bindings[:])
-	if !testing.expect(t, pipeline.ok, "stale handle should be caught at submit validation") {
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, bindings[:])
+	if !testing.expect(t, pipeline_status == .Ok, "stale handle should be caught at submit validation") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
-	testing.expect(t, !gfx.ez_gfx_finish_render(), "stale structured handle unexpectedly submitted")
+	testing.expect(t, gfx.ez_gfx_finish_render() != .Ok, "stale structured handle unexpectedly submitted")
+}
+
+@(test)
+stale_indirect_handle_cannot_mutate_new_render_frame :: proc(t: ^testing.T) {
+	app: Triangle_App
+	context.user_ptr = &app.ctx
+	if !testing.expect(t, triangle_init_app(&app), "stale indirect test failed during init") {
+		triangle_cleanup(&app)
+		return
+	}
+	defer triangle_cleanup(&app)
+
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "stale indirect setup failed to begin render") {
+		return
+	}
+	indirect := triangle_acquire_and_fill_indirect(&app)
+	if !testing.expect(t, indirect.ok, "failed to acquire initial indirect buffer") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	structured, structured_status := gfx.ez_gfx_render_acquire_structured_buffer(u32, 1, "stale structured")
+	if !testing.expect(t, structured_status == .Ok, "failed to acquire initial structured buffer") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	structured.elements[0] = 1
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(&app.shader, indirect, nil)
+	if !testing.expect(t, pipeline_status == .Ok, "failed to add initial indirect pipeline") {
+		_ = gfx.ez_gfx_finish_render()
+		return
+	}
+	if !testing.expect(t, gfx.ez_gfx_finish_render() == .Ok, "stale indirect setup failed to finish") {
+		return
+	}
+	gfx.ez_gfx_ctx_wait_idle()
+
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "stale indirect test failed to begin next frame") {
+		return
+	}
+	defer gfx.ez_gfx_finish_render()
+	draw := vk.DrawIndexedIndirectCommand{
+		indexCount = app.triangle_index_len,
+		instanceCount = 1,
+		firstIndex = app.triangle_index,
+		vertexOffset = i32(app.triangle_vertex),
+		firstInstance = 0,
+	}
+	testing.expect_value(
+		t,
+		gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw),
+		gfx.Ez_Gfx_Status.Invalid_Argument,
+	)
+	testing.expect_value(
+		t,
+		gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1),
+		gfx.Ez_Gfx_Status.Invalid_Argument,
+	)
+	stale_value := u32(1)
+	testing.expect_value(
+		t,
+		gfx.ez_gfx_structured_buffer_write(
+			&structured.handle,
+			rawptr(&stale_value),
+			u64(size_of(u32)),
+		),
+		gfx.Ez_Gfx_Status.Invalid_Argument,
+	)
 }
 
 @(test)
 structured_size_mismatch_fails_submit_validation :: proc(t: ^testing.T) {
 	app: Triangle_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(t, triangle_init_app(&app), "size mismatch test failed during init") {
 		triangle_cleanup(&app)
 		return
@@ -410,23 +484,23 @@ structured_size_mismatch_fails_submit_validation :: proc(t: ^testing.T) {
 	if !testing.expect(t, shader_ok, "failed to compile graphics structured shader") do return
 	defer gfx.ez_gfx_shader_destroy(&shader)
 
-	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window), "size mismatch test failed to begin render") {
+	if !testing.expect(t, gfx.ez_gfx_begin_render(&app.window) == .Ok, "size mismatch test failed to begin render") {
 		return
 	}
-	colors := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "size mismatch colors")
-	if !testing.expect(t, colors.handle.ok, "failed to acquire structured colors") {
+	colors, colors_status := gfx.ez_gfx_render_acquire_structured_buffer(u32, 16, "size mismatch colors")
+	if !testing.expect(t, colors_status == .Ok, "failed to acquire structured colors") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
 	indirect := triangle_acquire_and_fill_indirect(&app)
 	bindings := [?]gfx.Ez_Gfx_Render_Binding{{name = "colors", structured = colors.handle}}
-	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, bindings[:])
-	if !testing.expect(t, pipeline.ok, "size mismatch pipeline failed before validation") {
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(&shader, indirect, bindings[:])
+	if !testing.expect(t, pipeline_status == .Ok, "size mismatch pipeline failed before validation") {
 		_ = gfx.ez_gfx_finish_render()
 		return
 	}
 	colors.handle.buffer.size = 32
-	testing.expect(t, !gfx.ez_gfx_finish_render(), "structured size mismatch unexpectedly submitted")
+	testing.expect(t, gfx.ez_gfx_finish_render() != .Ok, "structured size mismatch unexpectedly submitted")
 	colors.handle.buffer.size = colors.handle.size
 }
 
@@ -441,7 +515,7 @@ triangle_compile_graphics_structured_shader :: proc() -> (
 			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 		},
 		&shader,
-	)
+	) == .Ok
 	return shader, ok
 }
 
@@ -456,19 +530,22 @@ triangle_compile_compute_structured_shader :: proc() -> (
 			kind = .Compute,
 		},
 		&shader,
-	)
+	) == .Ok
 	return shader, ok
 }
 
 triangle_acquire_and_fill_indirect :: proc(
 	app: ^Triangle_App,
 ) -> gfx.Ez_Gfx_Indirect_Buffer_Handle {
-	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+	indirect, status := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		1,
 		"triangle test draw commands",
 	)
-	if !indirect.ok do return indirect
+	if status != .Ok {
+		indirect.ok = false
+		return indirect
+	}
 	draw := vk.DrawIndexedIndirectCommand {
 		indexCount    = app.triangle_index_len,
 		instanceCount = 1,
@@ -476,11 +553,11 @@ triangle_acquire_and_fill_indirect :: proc(
 		vertexOffset  = i32(app.triangle_vertex),
 		firstInstance = 0,
 	}
-	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
+	if gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) != .Ok {
 		indirect.ok = false
 		return indirect
 	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
+	if gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) != .Ok {
 		indirect.ok = false
 	}
 	return indirect
@@ -526,15 +603,14 @@ vertex_upload_callback :: proc(
 triangle_init_app :: proc(app: ^Triangle_App) -> bool {
 	if !shared.example_glfw_init() do return false
 
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	if !shared.example_window_create(&app.window,
 		"ez_gfx_api triangle",
 		WIDTH,
 		HEIGHT) {
 		return false
 	}
-	if !gfx.ez_gfx_ctx_create_instance(
-		&app.ctx,
+	if gfx.ez_gfx_ctx_create_instance(&app.ctx,
 		{
 			enable_validation = true,
 			validation_callback = validation_callback,
@@ -542,46 +618,49 @@ triangle_init_app :: proc(app: ^Triangle_App) -> bool {
 			vertex_uploaded_callback = vertex_upload_callback,
 			vertex_uploaded_user_data = app,
 			enable_debug = true,
-		},
-	) {
+		},) != .Ok {
 		return false
 	}
-	if !gfx.ez_gfx_window_create_surface(&app.window) do return false
-	if !gfx.ez_gfx_ctx_init_device(app.window.surface) do return false
-	if !gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) do return false
+	if gfx.ez_gfx_window_create_surface(&app.window) != .Ok do return false
+	if gfx.ez_gfx_ctx_init_device(app.window.surface) != .Ok do return false
+	if gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) != .Ok do return false
 	return triangle_init_resources(app)
 }
 
 triangle_init_resources :: proc(app: ^Triangle_App) -> bool {
-	if !gfx.ez_gfx_shader_compile(
-		{
+	if gfx.ez_gfx_shader_compile({
 			path = TRIANGLE_SHADER_PATH,
 			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
 			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 		},
-		&app.shader,
-	) {
+		&app.shader,) != .Ok {
 		return false
 	}
 	app.shader_loaded = true
 
 	vertex_heap_names := [?]string{TRIANGLE_POSITION_HEAP}
-	gfx.ez_gfx_vertex_manager_create(
+	if gfx.ez_gfx_vertex_manager_create(
 		&app.ctx.vertex_manager,
 		vertex_heap_names[:],
 		vk.DeviceSize(size_of(TRIANGLE_POSITIONS[0])),
-	)
+	) != .Ok {
+		return false
+	}
 
-	app.triangle_index = gfx.ez_gfx_vertex_manager_upload_indices(
+	index_start, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_INDICES[:],
 	)
+	if index_status != .Ok do return false
+	app.triangle_index = index_start
 	app.triangle_index_len = u32(len(TRIANGLE_INDICES))
-	app.triangle_vertex = gfx.ez_gfx_vertex_manager_upload_vertices(
+	vertex_start, vertex_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 		&app.ctx.vertex_manager,
 		TRIANGLE_POSITION_HEAP,
 		TRIANGLE_POSITIONS[:],
 	)
+	if vertex_status != .Ok do return false
+	app.triangle_vertex = vertex_start
 	return true
 }
 
@@ -601,24 +680,24 @@ triangle_run_frames :: proc(app: ^Triangle_App) -> bool {
 }
 
 triangle_draw_frame :: proc(app: ^Triangle_App) -> bool {
-	if !gfx.ez_gfx_begin_render(&app.window) do return false
+	if gfx.ez_gfx_begin_render(&app.window) != .Ok do return false
 
-	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		1,
 		"triangle draw commands",
 	)
-	if !indirect.ok {
+	if indirect_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
 
-	pipeline := gfx.ez_gfx_render_add_vertex_pipeline(
+	_, pipeline_status := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.shader,
 		indirect,
 		nil,
 	)
-	if !pipeline.ok {
+	if pipeline_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
@@ -630,20 +709,20 @@ triangle_draw_frame :: proc(app: ^Triangle_App) -> bool {
 		vertexOffset  = i32(app.triangle_vertex),
 		firstInstance = 0,
 	}
-	if !gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) {
+	if gfx.ez_gfx_indirect_buffer_write_draw(&indirect, 0, draw) != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) {
+	if gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, 1) != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
 
-	return gfx.ez_gfx_finish_render()
+	return gfx.ez_gfx_finish_render() == .Ok
 }
 
 triangle_cleanup :: proc(app: ^Triangle_App) {
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	if app.shader_loaded {
 		gfx.ez_gfx_shader_destroy(&app.shader)
 		app.shader_loaded = false

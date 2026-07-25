@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import "core:fmt"
@@ -7,93 +8,32 @@ EZ_GFX_MAX_STRUCTURED_BUFFERS :: 64
 EZ_GFX_MAX_RENDER_STRUCTURED_BINDINGS :: 32
 EZ_GFX_STRUCTURED_BUFFER_NAME_MAX :: EZ_GFX_SHADER_TARGET_NAME_MAX
 
-Ez_Gfx_Buffer_Access :: enum u8 {
-	Read,
-	Write,
-	Read_Write,
-}
 
-Ez_Gfx_Structured_Buffer :: struct {
-	buffer:              Ez_Gfx_Buffer,
-	cpu_ptr:             rawptr,
-	capacity:            vk.DeviceSize,
-	size:                vk.DeviceSize,
-	in_use:              bool,
-	last_write_timeline: u64,
-	last_used_timeline:  u64,
-	debug_name:          cstring,
-}
 
-Ez_Gfx_Structured_Buffer_Manager :: struct {
-	buffers:           [EZ_GFX_MAX_STRUCTURED_BUFFERS]Ez_Gfx_Structured_Buffer,
-	count:             int,
-	version:           u64,
-	peak_acquire_size: vk.DeviceSize,
-}
 
-Ez_Gfx_Structured_Buffer_Handle :: struct {
-	buffer:   ^Ez_Gfx_Structured_Buffer,
-	cpu_ptr:  rawptr,
-	size:     vk.DeviceSize,
-	frame_id: u64,
-	ok:       bool,
-}
 
-Ez_Gfx_Structured_Buffer_View :: struct($T: typeid) {
-	handle:   Ez_Gfx_Structured_Buffer_Handle,
-	elements: [^]T,
-}
 
-Ez_Gfx_Render_Target_Id :: struct {
-	index:      int,
-	generation: u64,
-	ok:         bool,
-}
 
-Ez_Gfx_Render_Binding :: struct {
-	name:          cstring,
-	structured:    Ez_Gfx_Structured_Buffer_Handle,
-	indirect:      Ez_Gfx_Indirect_Buffer_Handle,
-	render_target: Ez_Gfx_Render_Target_Id,
-}
 
-Ez_Gfx_Node_Buffer_Binding_Kind :: enum u8 {
-	Structured,
-	Indirect_Count,
-	Indirect_Elements,
-}
 
-Ez_Gfx_Node_Buffer_Binding :: struct {
-	name:              [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
-	name_len:          int,
-	kind:              Ez_Gfx_Node_Buffer_Binding_Kind,
-	buffer:            ^Ez_Gfx_Buffer,
-	offset:            vk.DeviceSize,
-	size:              vk.DeviceSize,
-	frame_id:          u64,
-	structured_buffer: ^Ez_Gfx_Structured_Buffer,
-	indirect_buffer:   ^Ez_Gfx_Multi_Draw_Indirect_Buffer,
-	indirect_stride:   vk.DeviceSize,
-	indirect_capacity: u32,
-}
 
-ez_gfx_render_acquire_structured_buffer :: proc(
+
+
+
+
+
+
+
+
+render_acquire_structured_buffer :: proc(
 	$T: typeid,
 	element_count: u32,
 	debug_name: cstring,
 ) -> Ez_Gfx_Structured_Buffer_View(T) {
-	render := &ez_gfx_current_render
-	if !render.active || !render.ready {
-		fmt.eprintln("ez_gfx_render_acquire_structured_buffer called without an active render")
-		return {}
-	}
-	if element_count == 0 {
-		fmt.eprintln("structured buffer element count must be greater than zero")
-		return {}
-	}
+	render := &get_current_ctx().render
 
 	byte_size := vk.DeviceSize(element_count) * vk.DeviceSize(size_of(T))
-	storage, acquire_ok := ez_gfx_structured_buffer_manager_acquire(
+	storage, acquire_ok := structured_buffer_manager_acquire(
 		&render.ctx.structured_buffer_manager,
 		byte_size,
 		debug_name,
@@ -113,7 +53,7 @@ ez_gfx_render_acquire_structured_buffer :: proc(
 	}
 }
 
-ez_gfx_structured_buffer_manager_acquire :: proc(
+structured_buffer_manager_acquire :: proc(
 	manager: ^Ez_Gfx_Structured_Buffer_Manager,
 	size: vk.DeviceSize,
 	debug_name: cstring = nil,
@@ -121,16 +61,12 @@ ez_gfx_structured_buffer_manager_acquire :: proc(
 	buffer: ^Ez_Gfx_Structured_Buffer,
 	ok: bool,
 ) {
-	if size == 0 {
-		fmt.eprintln("structured buffer size must be greater than zero")
-		return nil, false
-	}
 
 	if size > manager.peak_acquire_size {
 		manager.peak_acquire_size = size
 	}
 
-	completed_timeline := ez_gfx_structured_buffer_completed_timeline()
+	completed_timeline := structured_buffer_completed_timeline()
 	best_index := -1
 	for i in 0 ..< manager.count {
 		candidate := &manager.buffers[i]
@@ -158,7 +94,7 @@ ez_gfx_structured_buffer_manager_acquire :: proc(
 
 	slot := &manager.buffers[manager.count]
 	manager.count += 1
-	created, mapped, create_ok := ez_gfx_buffer_create_mapped(
+	created, mapped, create_ok := buffer_create_mapped(
 		size,
 		{.STORAGE_BUFFER, .TRANSFER_SRC, .TRANSFER_DST},
 		debug_name,
@@ -181,13 +117,13 @@ ez_gfx_structured_buffer_manager_acquire :: proc(
 	return slot, true
 }
 
-ez_gfx_indirect_structured_name :: proc(
+indirect_structured_name :: proc(
 	shader_name: cstring,
 	suffix: string,
 	name: ^[EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
 	name_len: ^int,
 ) -> bool {
-	base_len := ez_gfx_cstring_len(shader_name)
+	base_len := cstring_len(shader_name)
 	name_len^ = base_len + len(suffix)
 	if name_len^ >= EZ_GFX_STRUCTURED_BUFFER_NAME_MAX {
 		fmt.eprintln("indirect structured buffer shader name is too long")
@@ -204,20 +140,20 @@ ez_gfx_indirect_structured_name :: proc(
 	return true
 }
 
-ez_gfx_structured_buffer_manager_release_completed :: proc(
+structured_buffer_manager_release_completed :: proc(
 	manager: ^Ez_Gfx_Structured_Buffer_Manager,
 ) {
-	completed_timeline := ez_gfx_structured_buffer_completed_timeline()
+	completed_timeline := structured_buffer_completed_timeline()
 	for i in 0 ..< manager.count {
 		if manager.buffers[i].last_used_timeline <= completed_timeline {
 			manager.buffers[i].in_use = false
 		}
 	}
-	ez_gfx_structured_buffer_manager_trim_idle(manager, completed_timeline)
+	structured_buffer_manager_trim_idle(manager, completed_timeline)
 	manager.peak_acquire_size = 0
 }
 
-ez_gfx_structured_buffer_manager_trim_idle :: proc(
+structured_buffer_manager_trim_idle :: proc(
 	manager: ^Ez_Gfx_Structured_Buffer_Manager,
 	completed_timeline: u64,
 ) {
@@ -231,16 +167,16 @@ ez_gfx_structured_buffer_manager_trim_idle :: proc(
 			i += 1
 			continue
 		}
-		ez_gfx_structured_buffer_manager_remove_at(manager, i)
+		structured_buffer_manager_remove_at(manager, i)
 	}
 }
 
-ez_gfx_structured_buffer_manager_remove_at :: proc(
+structured_buffer_manager_remove_at :: proc(
 	manager: ^Ez_Gfx_Structured_Buffer_Manager,
 	index: int,
 ) {
 	if index < 0 || index >= manager.count do return
-	ez_gfx_structured_buffer_destroy(&manager.buffers[index])
+	structured_buffer_destroy(&manager.buffers[index])
 	manager.count -= 1
 	if index < manager.count {
 		manager.buffers[index] = manager.buffers[manager.count]
@@ -249,16 +185,16 @@ ez_gfx_structured_buffer_manager_remove_at :: proc(
 	manager.version += 1
 }
 
-ez_gfx_structured_buffer_manager_destroy :: proc(manager: ^Ez_Gfx_Structured_Buffer_Manager) {
+structured_buffer_manager_destroy :: proc(manager: ^Ez_Gfx_Structured_Buffer_Manager) {
 	for i in 0 ..< manager.count {
-		ez_gfx_structured_buffer_destroy(&manager.buffers[i])
+		structured_buffer_destroy(&manager.buffers[i])
 	}
 	manager.count = 0
 	manager.version = 0
 	manager.peak_acquire_size = 0
 }
 
-ez_gfx_structured_buffer_mark_submitted :: proc(
+structured_buffer_mark_submitted :: proc(
 	buffer: ^Ez_Gfx_Structured_Buffer,
 	timeline_value: u64,
 ) {
@@ -267,8 +203,8 @@ ez_gfx_structured_buffer_mark_submitted :: proc(
 	buffer.in_use = false
 }
 
-ez_gfx_structured_buffer_destroy :: proc(buffer: ^Ez_Gfx_Structured_Buffer) {
-	ez_gfx_buffer_destroy(&buffer.buffer)
+structured_buffer_destroy :: proc(buffer: ^Ez_Gfx_Structured_Buffer) {
+	buffer_destroy(&buffer.buffer)
 	buffer.cpu_ptr = nil
 	buffer.capacity = 0
 	buffer.size = 0
@@ -278,8 +214,8 @@ ez_gfx_structured_buffer_destroy :: proc(buffer: ^Ez_Gfx_Structured_Buffer) {
 	buffer.debug_name = nil
 }
 
-ez_gfx_structured_buffer_completed_timeline :: proc() -> u64 {
-	ctx := ez_gfx_current_ctx
+structured_buffer_completed_timeline :: proc() -> u64 {
+	ctx := get_current_ctx()
 	if ctx == nil || ctx.timeline_semaphore == vk.Semaphore(0) do return 0
 	value: u64
 	if vk.GetSemaphoreCounterValue(ctx.device, ctx.timeline_semaphore, &value) != .SUCCESS {
@@ -288,7 +224,7 @@ ez_gfx_structured_buffer_completed_timeline :: proc() -> u64 {
 	return value
 }
 
-ez_gfx_cstring_len :: proc(value: cstring) -> int {
+cstring_len :: proc(value: cstring) -> int {
 	if value == nil do return 0
 	bytes := cast([^]byte)value
 	count := 0

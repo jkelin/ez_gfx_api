@@ -1,3 +1,4 @@
+#+private
 package main
 
 import gfx "../../src"
@@ -66,18 +67,20 @@ App :: struct {
 }
 
 main :: proc() {
-	app: App
-	defer cleanup(&app)
-	init_app(&app)
-	run(&app)
+	app := new(App)
+	context.user_ptr = &app.ctx
+	defer free(app)
+	defer cleanup(app)
+	init_app(app)
+	run(app)
 }
 
 init_app :: proc(app: ^App) {
 	fmt.println("checkpoint: glfw init")
 	assert(shared.example_glfw_init())
 
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
-	assert(gfx.ez_gfx_enable_all_decoders(), "failed to enable image decoders")
+	context.user_ptr = &app.ctx
+	assert(gfx.ez_gfx_enable_all_decoders() == .Ok, "failed to enable image decoders")
 	app.window_count = 1
 	app.camera = shared.orbit_camera_default()
 	main_window := &app.windows[0]
@@ -91,41 +94,33 @@ init_app :: proc(app: ^App) {
 	assert(gfx.ez_gfx_ctx_create_instance(&app.ctx, {
 		enable_debug = true,
 		surface_platform = gfx.EZ_GFX_SURFACE_PLATFORM_WIN32,
-	}))
+	}) == .Ok)
 	fmt.println("checkpoint: surface create")
-	assert(gfx.ez_gfx_window_create_surface(main_window))
+	assert(gfx.ez_gfx_window_create_surface(main_window) == .Ok)
 	fmt.println("checkpoint: device init")
-	assert(gfx.ez_gfx_ctx_init_device(main_window.surface))
+	assert(gfx.ez_gfx_ctx_init_device(main_window.surface) == .Ok)
 	fmt.println("checkpoint: swapchain recreate")
-	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height))
+	assert(gfx.ez_gfx_window_recreate_swapchain(main_window, main_window.framebuffer_width, main_window.framebuffer_height) == .Ok)
 	fmt.println("checkpoint: example data init")
 	example_init(app)
 	fmt.println("checkpoint: init done")
 }
 
 example_init :: proc(app: ^App) {
-	assert(
-		gfx.ez_gfx_shader_compile(
-			{
+	assert(gfx.ez_gfx_shader_compile({
 				path = COMPUTE_SHADER_PATH,
 				compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
 				kind = .Compute,
 			},
-			&app.compute_shader,
-		),
-	)
+			&app.compute_shader,) == .Ok)
 	app.compute_shader_loaded = true
 
-	assert(
-		gfx.ez_gfx_shader_compile(
-			{
+	assert(gfx.ez_gfx_shader_compile({
 				path = DRAW_SHADER_PATH,
 				vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
 				fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 			},
-			&app.draw_shader,
-		),
-	)
+			&app.draw_shader,) == .Ok)
 	app.draw_shader_loaded = true
 
 	mesh, mesh_ok := shared.gltf_load_meshes(GLTF_PATH)
@@ -263,32 +258,36 @@ upload_sponza_primitives :: proc(
 	mesh: ^shared.Loaded_Mesh,
 ) {
 	for &cpu, prim_index in mesh.cpu_primitives {
-		position_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+		position_start, position_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			POSITION_HEAP,
 			cpu.positions[:],
 		)
+		assert(position_status == .Ok, "failed to upload positions")
 
 		global_indices := make([]u32, len(cpu.indices))
 		for index, i in cpu.indices {
 			global_indices[i] = index + position_start
 		}
-		first_index := gfx.ez_gfx_vertex_manager_upload_indices(
+		first_index, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
 			manager,
 			global_indices,
 		)
+		assert(index_status == .Ok, "failed to upload indices")
 		delete(global_indices)
 
-		normal_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+		normal_start, normal_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			NORMAL_HEAP,
 			cpu.normals[:],
 		)
-		uv_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+		assert(normal_status == .Ok, "failed to upload normals")
+		uv_start, uv_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			UV_HEAP,
 			cpu.uvs[:],
 		)
+		assert(uv_status == .Ok, "failed to upload UVs")
 
 		descriptor := &mesh.descriptors[prim_index]
 		descriptor.first_index = first_index
@@ -332,15 +331,12 @@ run :: proc(app: ^App) {
 	glfw.PollEvents()
 
 	if screenshot_enabled {
-		assert(
-			gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH),
-			"failed to save screenshot",
-		)
+		assert(gfx.ez_gfx_screenshot_save_window(main_window, gfx.SCREENSHOT_PATH) == .Ok, "failed to save screenshot")
 	}
 }
 
 draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
-	if !gfx.ez_gfx_begin_render(window) do return
+	if gfx.ez_gfx_begin_render(window) != .Ok do return
 
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(
@@ -350,19 +346,19 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		100.0,
 	)
 	primitive_count := u32(len(app.primitive_records))
-	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		primitive_count,
 		"example 6 draw commands",
 	)
-	assert(indirect.ok, "failed to acquire Sponza indirect buffer")
+	assert(indirect_status == .Ok, "failed to acquire Sponza indirect buffer")
 
-	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
+	primitives, primitives_status := gfx.ez_gfx_render_acquire_structured_buffer(
 		Primitive_Record,
 		primitive_count,
 		"example 6 primitives",
 	)
-	assert(primitives.handle.ok, "failed to acquire Sponza primitive buffer")
+	assert(primitives_status == .Ok, "failed to acquire Sponza primitive buffer")
 	for record, i in app.primitive_records {
 		primitives.elements[i] = record
 	}
@@ -371,7 +367,7 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		{name = "primitives", structured = primitives.handle},
 		{name = "draw_commands", indirect = indirect},
 	}
-	compute := gfx.ez_gfx_render_add_compute_pipeline(
+	_, compute_status := gfx.ez_gfx_render_add_compute_pipeline(
 		&app.compute_shader,
 		primitive_count,
 		1,
@@ -379,11 +375,8 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		compute_bindings[:],
 		Compute_Push_Constants{primitive_count = primitive_count},
 	)
-	assert(compute.ok, "failed to add Sponza compute pipeline")
-	assert(
-		gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, primitive_count),
-		"failed to set Sponza indirect draw count",
-	)
+	assert(compute_status == .Ok, "failed to add Sponza compute pipeline")
+	assert(gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, primitive_count) == .Ok, "failed to set Sponza indirect draw count")
 
 	draw_bindings := [?]gfx.Ez_Gfx_Render_Binding {
 		{name = "primitives", structured = primitives.handle},
@@ -392,20 +385,20 @@ draw_frame :: proc(app: ^App, window: ^gfx.Ez_Gfx_Window) {
 		front_face = .COUNTER_CLOCKWISE,
 		cull_mode = {.BACK},
 	}
-	draw := gfx.ez_gfx_render_add_vertex_pipeline(
+	_, draw_status := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
 		dynamic_state,
 		Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
-	assert(draw.ok, "failed to add Sponza draw pipeline")
+	assert(draw_status == .Ok, "failed to add Sponza draw pipeline")
 
-	assert(gfx.ez_gfx_finish_render(), "failed to finish Sponza render")
+	assert(gfx.ez_gfx_finish_render() == .Ok, "failed to finish Sponza render")
 }
 
 cleanup :: proc(app: ^App) {
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	gfx.ez_gfx_ctx_wait_idle()
 	for texture_id in app.texture_ids {
 		_ = gfx.ez_gfx_unload_texture(texture_id)

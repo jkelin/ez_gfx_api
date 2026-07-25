@@ -1,3 +1,4 @@
+#+private
 package tests
 
 import shared "../examples/shared"
@@ -60,6 +61,7 @@ Example6_Test_App :: struct {
 @(test)
 example6_sponza_ktx2_renders_without_validation_errors :: proc(t: ^testing.T) {
 	app: Example6_Test_App
+	context.user_ptr = &app.ctx
 	if !testing.expect(
 		t,
 		example6_test_init_app(&app),
@@ -97,7 +99,7 @@ example6_sponza_ktx2_renders_without_validation_errors :: proc(t: ^testing.T) {
 example6_test_init_app :: proc(app: ^Example6_Test_App) -> bool {
 	if !shared.example_glfw_init() do return false
 
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	app.camera = shared.orbit_camera_default()
 	app.camera_start = shared.Orbit_Camera_Start {
 		yaw      = math.to_radians_f32(90.0),
@@ -112,45 +114,39 @@ example6_test_init_app :: proc(app: ^Example6_Test_App) -> bool {
 		HEIGHT) {
 		return false
 	}
-	if !gfx.ez_gfx_ctx_create_instance(
-		&app.ctx,
+	if gfx.ez_gfx_ctx_create_instance(&app.ctx,
 		{
 			enable_validation = true,
 			validation_callback = validation_callback,
 			validation_user_data = &app.validation_log,
 			enable_debug = true,
-		},
-	) {
+		},) != .Ok {
 		return false
 	}
-	if !gfx.ez_gfx_window_create_surface(&app.window) do return false
-	if !gfx.ez_gfx_ctx_init_device(app.window.surface) do return false
-	if !gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) do return false
+	if gfx.ez_gfx_window_create_surface(&app.window) != .Ok do return false
+	if gfx.ez_gfx_ctx_init_device(app.window.surface) != .Ok do return false
+	if gfx.ez_gfx_window_recreate_swapchain(&app.window, app.window.framebuffer_width, app.window.framebuffer_height) != .Ok do return false
 	return example6_test_init_resources(app)
 }
 
 example6_test_init_resources :: proc(app: ^Example6_Test_App) -> bool {
-	gfx.ez_gfx_enable_ktx2_decoder()
-	if !gfx.ez_gfx_shader_compile(
-		{
+	if gfx.ez_gfx_enable_ktx2_decoder() != .Ok do return false
+	if gfx.ez_gfx_shader_compile({
 			path = EXAMPLE6_COMPUTE_SHADER_PATH,
 			compute_entry = gfx.EZ_GFX_DEFAULT_COMPUTE_ENTRY,
 			kind = .Compute,
 		},
-		&app.compute_shader,
-	) {
+		&app.compute_shader,) != .Ok {
 		return false
 	}
 	app.compute_shader_loaded = true
 
-	if !gfx.ez_gfx_shader_compile(
-		{
+	if gfx.ez_gfx_shader_compile({
 			path = EXAMPLE6_DRAW_SHADER_PATH,
 			vertex_entry = gfx.EZ_GFX_DEFAULT_VERTEX_ENTRY,
 			fragment_entry = gfx.EZ_GFX_DEFAULT_FRAGMENT_ENTRY,
 		},
-		&app.draw_shader,
-	) {
+		&app.draw_shader,) != .Ok {
 		return false
 	}
 	app.draw_shader_loaded = true
@@ -195,7 +191,9 @@ example6_test_init_resources :: proc(app: ^Example6_Test_App) -> bool {
 		uv_stride,
 	)
 
-	example6_upload_gltf_primitives(&app.ctx.vertex_manager, &app.mesh)
+	if !example6_upload_gltf_primitives(&app.ctx.vertex_manager, &app.mesh) {
+		return false
+	}
 	app.primitive_records = make([]Example6_Primitive_Record, len(app.mesh.descriptors))
 	for descriptor, i in app.mesh.descriptors {
 		texture_id := app.fallback_texture_id
@@ -245,7 +243,7 @@ example6_test_load_textures :: proc(app: ^Example6_Test_App) -> bool {
 				generate_mips      = true,
 				min_filter         = .Linear,
 				mag_filter         = .Linear,
-				max_anisotropy    = 16.0,
+				max_anisotropy     = 16.0,
 				address_mode_u     = .Repeat,
 				address_mode_v     = .Repeat,
 				debug_label        = "example 6 base color KTX2",
@@ -277,32 +275,36 @@ example6_descriptor_to_record :: proc(
 example6_upload_gltf_primitives :: proc(
 	manager: ^gfx.Ez_Gfx_Vertex_Manager,
 	mesh: ^shared.Loaded_Mesh,
-) {
+) -> bool {
 	for &cpu, prim_index in mesh.cpu_primitives {
-		position_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+		position_start, position_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			EXAMPLE6_POSITION_HEAP,
 			cpu.positions[:],
 		)
+		if position_status != .Ok do return false
 		global_indices := make([]u32, len(cpu.indices))
 		for index, i in cpu.indices {
 			global_indices[i] = index + position_start
 		}
-		first_index := gfx.ez_gfx_vertex_manager_upload_indices(
+		first_index, index_status := gfx.ez_gfx_vertex_manager_upload_indices(
 			manager,
 			global_indices,
 		)
 		delete(global_indices)
-		normal_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+		if index_status != .Ok do return false
+		normal_start, normal_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			EXAMPLE6_NORMAL_HEAP,
 			cpu.normals[:],
 		)
-		uv_start := gfx.ez_gfx_vertex_manager_upload_vertices(
+		if normal_status != .Ok do return false
+		uv_start, uv_status := gfx.ez_gfx_vertex_manager_upload_vertices(
 			manager,
 			EXAMPLE6_UV_HEAP,
 			cpu.uvs[:],
 		)
+		if uv_status != .Ok do return false
 
 		descriptor := &mesh.descriptors[prim_index]
 		descriptor.first_index = first_index
@@ -310,10 +312,11 @@ example6_upload_gltf_primitives :: proc(
 		descriptor.normal_vertex_offset = normal_start
 		descriptor.uv_offset = uv_start
 	}
+	return true
 }
 
 example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
-	if !gfx.ez_gfx_begin_render(&app.window) do return false
+	if gfx.ez_gfx_begin_render(&app.window) != .Ok do return false
 
 	view := shared.orbit_camera_view(&app.camera)
 	projection := shared.perspective_vk(
@@ -323,22 +326,22 @@ example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 		100.0,
 	)
 	primitive_count := u32(len(app.primitive_records))
-	indirect := gfx.ez_gfx_render_acquire_indirect_buffer(
+	indirect, indirect_status := gfx.ez_gfx_render_acquire_indirect_buffer(
 		vk.DrawIndexedIndirectCommand,
 		primitive_count,
 		"example 6 test draw commands",
 	)
-	if !indirect.ok {
+	if indirect_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
 
-	primitives := gfx.ez_gfx_render_acquire_structured_buffer(
+	primitives, primitives_status := gfx.ez_gfx_render_acquire_structured_buffer(
 		Example6_Primitive_Record,
 		primitive_count,
 		"example 6 test primitives",
 	)
-	if !primitives.handle.ok {
+	if primitives_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
@@ -350,7 +353,7 @@ example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 		{name = "primitives", structured = primitives.handle},
 		{name = "draw_commands", indirect = indirect},
 	}
-	compute := gfx.ez_gfx_render_add_compute_pipeline(
+	_, compute_status := gfx.ez_gfx_render_add_compute_pipeline(
 		&app.compute_shader,
 		primitive_count,
 		1,
@@ -358,11 +361,11 @@ example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 		compute_bindings[:],
 		Example6_Compute_Push_Constants{primitive_count = primitive_count},
 	)
-	if !compute.ok {
+	if compute_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
-	if !gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, primitive_count) {
+	if gfx.ez_gfx_indirect_buffer_set_draw_count(&indirect, primitive_count) != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
@@ -374,23 +377,23 @@ example6_test_draw_frame :: proc(app: ^Example6_Test_App) -> bool {
 		front_face = .COUNTER_CLOCKWISE,
 		cull_mode = {.BACK},
 	}
-	draw := gfx.ez_gfx_render_add_vertex_pipeline(
+	_, draw_status := gfx.ez_gfx_render_add_vertex_pipeline(
 		&app.draw_shader,
 		indirect,
 		draw_bindings[:],
 		dynamic_state,
 		Example6_Draw_Push_Constants{mvp = shared.mat4_mul(projection, view)},
 	)
-	if !draw.ok {
+	if draw_status != .Ok {
 		_ = gfx.ez_gfx_finish_render()
 		return false
 	}
 
-	return gfx.ez_gfx_finish_render()
+	return gfx.ez_gfx_finish_render() == .Ok
 }
 
 example6_test_cleanup :: proc(app: ^Example6_Test_App) {
-	gfx.ez_gfx_set_current_ctx(&app.ctx)
+	context.user_ptr = &app.ctx
 	gfx.ez_gfx_ctx_wait_idle()
 	for texture_id in app.texture_ids {
 		_ = gfx.ez_gfx_unload_texture(texture_id)

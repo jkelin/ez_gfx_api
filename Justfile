@@ -116,8 +116,14 @@ build-native-dll: copy_slang_dll
 verify-native-exports: build-native-dll
   python tools/verify_exports.py --dll out/ez_gfx_native.dll
 
-check-bindings:
-  dotnet build csharp/EzGfx.Native/EzGfx.Native.csproj --configuration Release -p:CheckGeneratedBindingArtifact=true
+generate-bindings:
+  python tools/generate_bindings.py
+
+check-xml-bindings:
+  python tools/generate_bindings.py --check
+
+check-bindings: check-xml-bindings
+  dotnet build csharp/EzGfx.Native/EzGfx.Native.csproj --configuration Release
 
 build-csharp:
   dotnet build csharp/EzGfx.sln --configuration Release

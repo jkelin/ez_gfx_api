@@ -1,3 +1,4 @@
+#+private
 package tests
 
 import gfx "../src"
@@ -8,7 +9,7 @@ vertex_copy_tightly_packed_uses_single_copy :: proc(t: ^testing.T) {
 	source := [6]u32{1, 2, 3, 4, 5, 6}
 	destination: [6]u32
 
-	ok := gfx.ez_gfx_vertex_copy_strided(
+	status := gfx.ez_gfx_vertex_copy_strided(
 		&destination[0],
 		size_of(u32),
 		&source[0],
@@ -17,7 +18,7 @@ vertex_copy_tightly_packed_uses_single_copy :: proc(t: ^testing.T) {
 		len(source),
 	)
 
-	testing.expect(t, ok)
+	testing.expect_value(t, status, gfx.Ez_Gfx_Status.Ok)
 	for value, i in source {
 		testing.expect_value(t, destination[i], value)
 	}
@@ -38,7 +39,7 @@ vertex_copy_gathers_positions_from_interleaved_source :: proc(t: ^testing.T) {
 	}
 	destination: [3][3]f32
 
-	ok := gfx.ez_gfx_vertex_copy_strided(
+	status := gfx.ez_gfx_vertex_copy_strided(
 		&destination[0],
 		size_of([3]f32),
 		&source[0],
@@ -47,7 +48,7 @@ vertex_copy_gathers_positions_from_interleaved_source :: proc(t: ^testing.T) {
 		len(source),
 	)
 
-	testing.expect(t, ok)
+	testing.expect_value(t, status, gfx.Ez_Gfx_Status.Ok)
 	for vertex, i in source {
 		testing.expect_value(t, destination[i], vertex.position)
 	}
@@ -61,7 +62,7 @@ vertex_copy_scatter_leaves_destination_padding_untouched :: proc(t: ^testing.T) 
 	source := [2][3]f32{{1, 2, 3}, {4, 5, 6}}
 	destination := [2][4]f32{{9, 9, 9, 42}, {9, 9, 9, 43}}
 
-	ok := gfx.ez_gfx_vertex_copy_strided(
+	status := gfx.ez_gfx_vertex_copy_strided(
 		&destination[0],
 		size_of([4]f32),
 		&source[0],
@@ -70,7 +71,7 @@ vertex_copy_scatter_leaves_destination_padding_untouched :: proc(t: ^testing.T) 
 		len(source),
 	)
 
-	testing.expect(t, ok)
+	testing.expect_value(t, status, gfx.Ez_Gfx_Status.Ok)
 	testing.expect_value(t, destination[0], [4]f32{1, 2, 3, 42})
 	testing.expect_value(t, destination[1], [4]f32{4, 5, 6, 43})
 }
@@ -95,7 +96,7 @@ vertex_copy_moves_full_float4_elements_between_strided_layouts :: proc(t: ^testi
 		{tag = 8},
 	}
 
-	ok := gfx.ez_gfx_vertex_copy_strided(
+	status := gfx.ez_gfx_vertex_copy_strided(
 		&destination[0],
 		size_of(Padded_Destination),
 		&source[0],
@@ -104,7 +105,7 @@ vertex_copy_moves_full_float4_elements_between_strided_layouts :: proc(t: ^testi
 		len(source),
 	)
 
-	testing.expect(t, ok)
+	testing.expect_value(t, status, gfx.Ez_Gfx_Status.Ok)
 	testing.expect_value(t, destination[0].value, [4]f32{1, 2, 3, 4})
 	testing.expect_value(t, destination[1].value, [4]f32{5, 6, 7, 8})
 	testing.expect_value(t, destination[0].tag, u32(7))
@@ -122,7 +123,7 @@ vertex_copy_gathers_strided_u32_indices :: proc(t: ^testing.T) {
 	}
 	destination: [4]u32
 
-	ok := gfx.ez_gfx_vertex_copy_strided(
+	status := gfx.ez_gfx_vertex_copy_strided(
 		&destination[0],
 		size_of(u32),
 		&source[0],
@@ -131,7 +132,7 @@ vertex_copy_gathers_strided_u32_indices :: proc(t: ^testing.T) {
 		len(source),
 	)
 
-	testing.expect(t, ok)
+	testing.expect_value(t, status, gfx.Ez_Gfx_Status.Ok)
 	testing.expect_value(t, destination, [4]u32{1, 2, 3, 4})
 }
 
@@ -146,7 +147,7 @@ vertex_copy_handles_generic_element_sizes :: proc(t: ^testing.T) {
 	}
 	destination: [3][6]u8
 
-	ok := gfx.ez_gfx_vertex_copy_strided(
+	status := gfx.ez_gfx_vertex_copy_strided(
 		&destination[0],
 		6,
 		&source[0],
@@ -155,7 +156,7 @@ vertex_copy_handles_generic_element_sizes :: proc(t: ^testing.T) {
 		3,
 	)
 
-	testing.expect(t, ok)
+	testing.expect_value(t, status, gfx.Ez_Gfx_Status.Ok)
 	for i in 0 ..< 3 {
 		for j in 0 ..< 6 {
 			testing.expect_value(t, destination[i][j], u8(i * 10 + j + 1))
@@ -174,7 +175,7 @@ vertex_copy_handles_unaligned_simd_payloads :: proc(t: ^testing.T) {
 	}
 
 	// Start one byte in so neither pointer is aligned to the payload size.
-	ok := gfx.ez_gfx_vertex_copy_strided(
+	status := gfx.ez_gfx_vertex_copy_strided(
 		&destination_backing[1],
 		20,
 		&source_backing[1],
@@ -183,7 +184,7 @@ vertex_copy_handles_unaligned_simd_payloads :: proc(t: ^testing.T) {
 		2,
 	)
 
-	testing.expect(t, ok)
+	testing.expect_value(t, status, gfx.Ez_Gfx_Status.Ok)
 	for i in 0 ..< 16 {
 		testing.expect_value(t, destination_backing[1 + i], source_backing[1 + i])
 	}
@@ -197,27 +198,22 @@ vertex_copy_rejects_invalid_arguments :: proc(t: ^testing.T) {
 	source := [2]u32{1, 2}
 	destination: [2]u32
 
-	// Stride smaller than the element payload cannot describe valid data.
-	testing.expect(
+	invalid_statuses := [?]gfx.Ez_Gfx_Status {
+		gfx.ez_gfx_vertex_copy_strided(&destination[0], 2, &source[0], 4, 4, 2),
+		gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, &source[0], 2, 4, 2),
+		gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, &source[0], 4, 0, 2),
+		gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, &source[0], 4, 4, -1),
+		gfx.ez_gfx_vertex_copy_strided(nil, 4, &source[0], 4, 4, 2),
+		gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, nil, 4, 4, 2),
+		gfx.ez_gfx_vertex_copy_strided(&destination[0], max(int), &source[0], max(int), 4, 2),
+	}
+	for status in invalid_statuses {
+		testing.expect_value(t, status, gfx.Ez_Gfx_Status.Invalid_Argument)
+	}
+	// A zero-element copy is a no-op and intentionally permits nil pointers.
+	testing.expect_value(
 		t,
-		!gfx.ez_gfx_vertex_copy_strided(&destination[0], 2, &source[0], 4, 4, 2),
+		gfx.ez_gfx_vertex_copy_strided(nil, 4, nil, 4, 4, 0),
+		gfx.Ez_Gfx_Status.Ok,
 	)
-	testing.expect(
-		t,
-		!gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, &source[0], 2, 4, 2),
-	)
-	// Zero or negative element sizes and negative counts are rejected.
-	testing.expect(
-		t,
-		!gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, &source[0], 4, 0, 2),
-	)
-	testing.expect(
-		t,
-		!gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, &source[0], 4, 4, -1),
-	)
-	// Nil pointers are rejected when there is data to move.
-	testing.expect(t, !gfx.ez_gfx_vertex_copy_strided(nil, 4, &source[0], 4, 4, 2))
-	testing.expect(t, !gfx.ez_gfx_vertex_copy_strided(&destination[0], 4, nil, 4, 4, 2))
-	// A zero-element copy is a no-op and succeeds.
-	testing.expect(t, gfx.ez_gfx_vertex_copy_strided(nil, 4, nil, 4, 4, 0))
 }

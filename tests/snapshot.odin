@@ -1,3 +1,4 @@
+#+private
 package tests
 
 import gfx "../src"
@@ -27,7 +28,7 @@ expect_window_snapshot :: proc(
 	width := int(window.swapchain.extent.width)
 	height := int(window.swapchain.extent.height)
 	bgra: []u8
-	if !testing.expect(t, gfx.ez_gfx_screenshot_read_swapchain_bgra(&window.swapchain, &bgra)) {
+	if !testing.expect(t, gfx.ez_gfx_screenshot_read_swapchain_bgra(&window.swapchain, &bgra) == .Ok) {
 		return
 	}
 	defer delete(bgra)
@@ -42,13 +43,13 @@ expect_window_snapshot :: proc(
 	}
 	testing.expectf(
 		t,
-		gfx.ez_gfx_screenshot_write_png(current_path, width, height, bgra),
+		gfx.ez_gfx_screenshot_write_png(current_path, width, height, bgra) == .Ok,
 		"failed to write current snapshot: %v",
 		current_path,
 	)
 
-	rgba, conv_ok := gfx.ez_gfx_screenshot_bgra_to_rgba(bgra, width, height)
-	if !testing.expect(t, conv_ok, "failed to convert captured snapshot pixels") {
+	rgba, conversion_status := gfx.ez_gfx_screenshot_bgra_to_rgba(bgra, width, height)
+	if !testing.expect(t, conversion_status == .Ok, "failed to convert captured snapshot pixels") {
 		return
 	}
 	defer delete(rgba)

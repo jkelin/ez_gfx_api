@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
@@ -15,46 +16,46 @@ namespace EzGfx.BindingGenerator;
 [Generator(LanguageNames.CSharp)]
 public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 {
-    private static readonly DiagnosticDescriptor MissingHeader = new(
+    private static readonly DiagnosticDescriptor MissingBindings = new(
         "EZGFX001",
-        "C ABI header is missing",
-        "The ez_gfx C header was not supplied as an AdditionalFiles input",
+        "XML bindings are missing",
+        "bindings.xml was not supplied as an AdditionalFiles input",
         "EzGfx",
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
-    private static readonly DiagnosticDescriptor InvalidHeader = new(
+    private static readonly DiagnosticDescriptor InvalidBindings = new(
         "EZGFX002",
-        "C ABI header cannot be parsed",
-        "The ez_gfx C header could not be parsed: {0}",
+        "XML bindings cannot be parsed",
+        "The ez_gfx XML bindings could not be parsed: {0}",
         "EzGfx",
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        IncrementalValueProvider<ImmutableArray<string?>> headers = context.AdditionalTextsProvider
-            .Where(static file => string.Equals(Path.GetFileName(file.Path), "ez_gfx_api.h", StringComparison.OrdinalIgnoreCase))
+        IncrementalValueProvider<ImmutableArray<string?>> bindings = context.AdditionalTextsProvider
+            .Where(static file => string.Equals(Path.GetFileName(file.Path), "bindings.xml", StringComparison.OrdinalIgnoreCase))
             .Select(static (file, cancellationToken) => file.GetText(cancellationToken)?.ToString())
             .Collect();
 
-        context.RegisterSourceOutput(headers, static (productionContext, values) =>
+        context.RegisterSourceOutput(bindings, static (productionContext, values) =>
         {
-            string? header = values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-            if (header is null)
+            string? source = values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+            if (source is null)
             {
-                productionContext.ReportDiagnostic(Diagnostic.Create(MissingHeader, Location.None));
+                productionContext.ReportDiagnostic(Diagnostic.Create(MissingBindings, Location.None));
                 return;
             }
 
             try
             {
-                HeaderModel model = HeaderParser.Parse(header);
+                HeaderModel model = BindingXmlParser.Parse(source);
                 productionContext.AddSource("EzGfxNative.g.cs", SourceText.From(CSharpEmitter.Emit(model), Encoding.UTF8));
             }
             catch (Exception error)
             {
-                productionContext.ReportDiagnostic(Diagnostic.Create(InvalidHeader, Location.None, error.Message));
+                productionContext.ReportDiagnostic(Diagnostic.Create(InvalidBindings, Location.None, error.Message));
             }
         });
     }
@@ -70,6 +71,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
     private sealed class EnumModel
     {
+        public string Doc { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public List<EnumValueModel> Values { get; } = new();
     }
@@ -78,211 +80,287 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
     {
         public string Name { get; set; } = string.Empty;
         public int Value { get; set; }
+        public string Doc { get; set; } = string.Empty;
     }
 
     private sealed class StructModel
     {
         public string Name { get; set; } = string.Empty;
         public List<FieldModel> Fields { get; } = new();
+        public string Doc { get; set; } = string.Empty;
     }
-
     private sealed class FieldModel
     {
         public string Type { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+        public string Doc { get; set; } = string.Empty;
+        public string Validation { get; set; } = string.Empty;
+        public string CountedBy { get; set; } = string.Empty;
+        public string Nullable { get; set; } = string.Empty;
     }
-
     private sealed class FunctionModel
     {
         public string ReturnType { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+        public string Doc { get; set; } = string.Empty;
+        public string Context { get; set; } = string.Empty;
+        public string Managed { get; set; } = string.Empty;
         public List<ParameterModel> Parameters { get; } = new();
     }
-
     private sealed class ParameterModel
     {
         public string Type { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+        public string Doc { get; set; } = string.Empty;
+        public string Direction { get; set; } = string.Empty;
+        public string Validation { get; set; } = string.Empty;
+        public string ArrayLength { get; set; } = string.Empty;
+        public string ArrayByteSize { get; set; } = string.Empty;
+        public string Nullable { get; set; } = string.Empty;
     }
 
-    private static class HeaderParser
+    private static class BindingXmlParser
     {
-        private static readonly Regex AbiRegex = new(
-            @"#define\s+EZ_GFX_ABI_VERSION\s+(?<value>\d+)",
-            RegexOptions.Compiled);
-
-        private static readonly Regex HandleRegex = new(
-            @"typedef\s+uint64_t\s+(?<name>EzGfx[A-Za-z0-9_]+)\s*;",
-            RegexOptions.Compiled);
-
-        private static readonly Regex EnumRegex = new(
-            @"typedef\s+enum\s+(?<name>EzGfx[A-Za-z0-9_]+)\s*\{(?<body>.*?)\}\s*(?<alias>EzGfx[A-Za-z0-9_]+)\s*;",
-            RegexOptions.Compiled | RegexOptions.Singleline);
-
-        private static readonly Regex StructRegex = new(
-            @"typedef\s+struct\s+(?<name>EzGfx[A-Za-z0-9_]+)\s*\{(?<body>.*?)\}\s*(?<alias>EzGfx[A-Za-z0-9_]+)\s*;",
-            RegexOptions.Compiled | RegexOptions.Singleline);
-
-        private static readonly Regex FunctionRegex = new(
-            @"(?m)^\s*(?<return>[A-Za-z_][A-Za-z0-9_\s]*?)\s+(?<name>ez_gfx_[A-Za-z0-9_]+)\s*\((?<parameters>[^;]*)\)\s*;",
-            RegexOptions.Compiled);
-
         public static HeaderModel Parse(string source)
         {
-            string withoutBlockComments = Regex.Replace(source, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
-            string withoutComments = Regex.Replace(withoutBlockComments, @"//[^\r\n]*", string.Empty);
-            Match abi = AbiRegex.Match(withoutComments);
-            if (!abi.Success || !int.TryParse(abi.Groups["value"].Value, out int abiVersion))
+            XDocument document = XDocument.Parse(source, LoadOptions.PreserveWhitespace);
+            XElement root = document.Root ?? throw new InvalidDataException("XML bindings have no root element");
+            if (!string.Equals(root.Name.LocalName, "ez-gfx-bindings", StringComparison.Ordinal))
             {
-                throw new InvalidDataException("EZ_GFX_ABI_VERSION is missing");
+                throw new InvalidDataException("XML bindings root must be ez-gfx-bindings");
             }
 
-            HeaderModel model = new() { AbiVersion = abiVersion };
-            foreach (Match handle in HandleRegex.Matches(withoutComments))
+            HeaderModel model = new()
             {
-                model.Handles.Add(handle.Groups["name"].Value);
-            }
+                AbiVersion = ParseInt(root, "abi-version"),
+            };
 
-            foreach (Match match in EnumRegex.Matches(withoutComments))
+            XElement handles = RequiredChild(root, "handles");
+            foreach (XElement handle in handles.Elements("handle"))
             {
-                string name = match.Groups["name"].Value;
-                string alias = match.Groups["alias"].Value;
-                if (!string.Equals(name, alias, StringComparison.Ordinal))
+                string handleName = RequiredAttribute(handle, "name");
+                if (!model.Handles.Add(handleName))
                 {
-                    throw new InvalidDataException($"enum alias {alias} does not match {name}");
+                    throw new InvalidDataException($"duplicate handle {handleName}");
                 }
+            }
 
-                EnumModel enumModel = new() { Name = name };
-                foreach (Match value in Regex.Matches(match.Groups["body"].Value, @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>-?\d+)"))
+            XElement enums = RequiredChild(root, "enums");
+            foreach (XElement enumElement in enums.Elements("enum"))
+            {
+                EnumModel enumModel = new()
+                {
+                    Name = RequiredAttribute(enumElement, "name"),
+                    Doc = OptionalAttribute(enumElement, "doc"),
+                };
+                foreach (XElement value in enumElement.Elements("value"))
                 {
                     enumModel.Values.Add(new EnumValueModel
                     {
-                        Name = value.Groups["name"].Value,
-                        Value = int.Parse(value.Groups["value"].Value),
+                        Name = RequiredAttribute(value, "name"),
+                        Value = ParseInt(value, "value"),
+                        Doc = OptionalAttribute(value, "doc"),
                     });
                 }
                 if (enumModel.Values.Count == 0)
                 {
-                    throw new InvalidDataException($"enum {name} has no explicit values");
+                    throw new InvalidDataException($"enum {enumModel.Name} has no values");
                 }
                 model.Enums.Add(enumModel);
             }
 
-            foreach (Match match in StructRegex.Matches(withoutComments))
+            XElement structs = RequiredChild(root, "structs");
+            foreach (XElement structElement in structs.Elements("struct"))
             {
-                string name = match.Groups["name"].Value;
-                string alias = match.Groups["alias"].Value;
-                if (!string.Equals(name, alias, StringComparison.Ordinal))
+                StructModel structModel = new()
                 {
-                    throw new InvalidDataException($"struct alias {alias} does not match {name}");
-                }
-
-                StructModel structModel = new() { Name = name };
-                foreach (string rawLine in match.Groups["body"].Value.Split('\n'))
+                    Name = RequiredAttribute(structElement, "name"),
+                    Doc = OptionalAttribute(structElement, "doc"),
+                };
+                foreach (XElement field in structElement.Elements("field"))
                 {
-                    string line = rawLine.Trim().TrimEnd('\r');
-                    if (line.Length == 0)
-                    {
-                        continue;
-                    }
-                    string declaration = line.EndsWith(";", StringComparison.Ordinal)
-                        ? line.Substring(0, line.Length - 1).Trim()
-                        : string.Empty;
-                    int separator = declaration.LastIndexOf(' ');
-                    if (separator <= 0 || separator == declaration.Length - 1)
-                    {
-                        throw new InvalidDataException($"struct {name} has an unsupported field declaration: {line}");
-                    }
-                    string type = declaration.Substring(0, separator).Trim();
-                    string fieldName = declaration.Substring(separator + 1).Trim();
-                    while (fieldName.StartsWith("*", StringComparison.Ordinal))
-                    {
-                        type += " *";
-                        fieldName = fieldName.Substring(1).Trim();
-                    }
-                    if (!Regex.IsMatch(fieldName, @"^[A-Za-z_][A-Za-z0-9_]*$"))
-                    {
-                        throw new InvalidDataException($"struct {name} has an unsupported field declaration: {line}");
-                    }
                     structModel.Fields.Add(new FieldModel
                     {
-                        Type = Normalize(type),
-                        Name = fieldName,
+                        Type = Normalize(RequiredAttribute(field, "type")),
+                        Name = RequiredAttribute(field, "name"),
+                        Doc = OptionalAttribute(field, "doc"),
+                        Validation = OptionalAttribute(field, "validation"),
+                        CountedBy = OptionalAttribute(field, "counted-by"),
+                        Nullable = OptionalAttribute(field, "nullable"),
                     });
                 }
                 model.Structs.Add(structModel);
             }
 
-            foreach (Match match in FunctionRegex.Matches(withoutComments))
+            XElement functions = RequiredChild(root, "functions");
+            foreach (XElement functionElement in functions.Elements("function"))
             {
                 FunctionModel function = new()
                 {
-                    ReturnType = Normalize(match.Groups["return"].Value),
-                    Name = match.Groups["name"].Value,
+                    ReturnType = Normalize(RequiredAttribute(functionElement, "return")),
+                    Name = RequiredAttribute(functionElement, "name"),
+                    Doc = OptionalAttribute(functionElement, "doc"),
+                    Context = OptionalAttribute(functionElement, "context"),
+                    Managed = OptionalAttribute(functionElement, "managed"),
                 };
-                string parameters = match.Groups["parameters"].Value.Trim();
-                if (!string.Equals(parameters, "void", StringComparison.Ordinal))
+                foreach (XElement parameter in functionElement.Elements("param"))
                 {
-                    foreach (string parameterText in SplitParameters(parameters))
+                    function.Parameters.Add(new ParameterModel
                     {
-                        string declaration = parameterText.Trim();
-                        int separator = declaration.LastIndexOf(' ');
-                        if (separator <= 0 || separator == declaration.Length - 1)
-                        {
-                            throw new InvalidDataException($"function {function.Name} has an unsupported parameter: {parameterText}");
-                        }
-                        string type = declaration.Substring(0, separator).Trim();
-                        string parameterName = declaration.Substring(separator + 1).Trim();
-                        while (parameterName.StartsWith("*", StringComparison.Ordinal))
-                        {
-                            type += " *";
-                            parameterName = parameterName.Substring(1).Trim();
-                        }
-                        if (!Regex.IsMatch(parameterName, @"^[A-Za-z_][A-Za-z0-9_]*$"))
-                        {
-                            throw new InvalidDataException($"function {function.Name} has an unsupported parameter: {parameterText}");
-                        }
-                        function.Parameters.Add(new ParameterModel
-                        {
-                            Type = Normalize(type),
-                            Name = parameterName,
-                        });
-                    }
+                        Type = Normalize(RequiredAttribute(parameter, "type")),
+                        Name = RequiredAttribute(parameter, "name"),
+                        Doc = OptionalAttribute(parameter, "doc"),
+                        Direction = OptionalAttribute(parameter, "direction"),
+                        Validation = OptionalAttribute(parameter, "validation"),
+                        ArrayLength = OptionalAttribute(parameter, "array-length"),
+                        ArrayByteSize = OptionalAttribute(parameter, "array-byte-size"),
+                        Nullable = OptionalAttribute(parameter, "nullable"),
+                    });
                 }
                 model.Functions.Add(function);
             }
 
             if (model.Functions.Count == 0)
             {
-                throw new InvalidDataException("no ez_gfx_ function declarations were found");
+                throw new InvalidDataException("XML bindings contain no functions");
             }
+            Validate(model);
             return model;
         }
 
-        private static string Normalize(string value) => Regex.Replace(value.Trim(), @"\s+", " ");
-
-        private static IEnumerable<string> SplitParameters(string value)
+        private static void Validate(HeaderModel model)
         {
-            int start = 0;
-            int depth = 0;
-            for (int index = 0; index < value.Length; index++)
+            ValidateUnique(model.Enums.Select(enumModel => enumModel.Name), "enum");
+            ValidateUnique(model.Structs.Select(structModel => structModel.Name), "struct");
+            ValidateUnique(model.Functions.Select(function => function.Name), "function");
+            foreach (EnumModel enumModel in model.Enums)
             {
-                switch (value[index])
+                ValidateUnique(enumModel.Values.Select(value => value.Name), $"enum {enumModel.Name} value");
+            }
+            foreach (StructModel structModel in model.Structs)
+            {
+                ValidateUnique(structModel.Fields.Select(field => field.Name), $"struct {structModel.Name} field");
+                foreach (FieldModel field in structModel.Fields)
                 {
-                    case '(':
-                        depth++;
-                        break;
-                    case ')':
-                        depth--;
-                        break;
-                    case ',' when depth == 0:
-                        yield return value.Substring(start, index - start);
-                        start = index + 1;
-                        break;
+                    ValidateMetadata(field.Validation, $"struct {structModel.Name}.{field.Name}");
+                    if (!string.IsNullOrEmpty(field.CountedBy) &&
+                        !structModel.Fields.Any(candidate => candidate.Name == field.CountedBy))
+                    {
+                        throw new InvalidDataException($"struct {structModel.Name}.{field.Name} counted-by references missing field {field.CountedBy}");
+                    }
                 }
             }
-            yield return value.Substring(start);
+            foreach (FunctionModel function in model.Functions)
+            {
+                ValidateManagedShape(function);
+                if (!string.IsNullOrEmpty(function.Context) &&
+                    !string.Equals(function.Context, "last", StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException($"function {function.Name} has unsupported context placement {function.Context}");
+                }
+                if (string.Equals(function.Context, "last", StringComparison.Ordinal) &&
+                    (function.Parameters.Count == 0 ||
+                     function.Parameters[function.Parameters.Count - 1].Name != "context"))
+                {
+                    throw new InvalidDataException($"function {function.Name} must place context as its final parameter");
+                }
+                ValidateUnique(function.Parameters.Select(parameter => parameter.Name), $"function {function.Name} parameter");
+                HashSet<string> parameters = new HashSet<string>(
+                    function.Parameters.Select(parameter => parameter.Name),
+                    StringComparer.Ordinal);
+                foreach (ParameterModel parameter in function.Parameters)
+                {
+                    ValidateMetadata(parameter.Validation, $"function {function.Name}.{parameter.Name}");
+                    if (!string.IsNullOrEmpty(parameter.ArrayByteSize) &&
+                        string.IsNullOrEmpty(parameter.ArrayLength))
+                    {
+                        throw new InvalidDataException($"function {function.Name}.{parameter.Name} array-byte-size requires array-length");
+                    }
+                    if (!string.IsNullOrEmpty(parameter.ArrayLength) &&
+                        !parameters.Contains(parameter.ArrayLength))
+                    {
+                        throw new InvalidDataException($"function {function.Name}.{parameter.Name} array-length references missing parameter {parameter.ArrayLength}");
+                    }
+                    if (!string.IsNullOrEmpty(parameter.ArrayByteSize) &&
+                        !parameters.Contains(parameter.ArrayByteSize))
+                    {
+                        throw new InvalidDataException($"function {function.Name}.{parameter.Name} array-byte-size references missing parameter {parameter.ArrayByteSize}");
+                    }
+                }
+            }
         }
+
+        private static void ValidateManagedShape(FunctionModel function)
+        {
+            if (string.IsNullOrEmpty(function.Managed))
+            {
+                return;
+            }
+            switch (function.Managed)
+            {
+                case "context-create":
+                case "surface-create":
+                case "shader-compile":
+                case "utf8-string":
+                case "vertex-upload-indices":
+                case "vertex-upload":
+                case "texture-load":
+                case "draw-command":
+                case "structured-write":
+                case "vertex-pipeline":
+                case "compute-pipeline":
+                    return;
+                default:
+                    throw new InvalidDataException($"function {function.Name} has unsupported managed shape {function.Managed}");
+            }
+        }
+
+        private static void ValidateMetadata(string validation, string owner)
+        {
+            if (string.IsNullOrEmpty(validation) || validation == "non-negative" ||
+                validation == "greater-than-zero" || validation == "zero-or-one" ||
+                validation == "not-empty")
+            {
+                return;
+            }
+            if (validation.StartsWith("at-most-", StringComparison.Ordinal) &&
+                int.TryParse(validation.Substring("at-most-".Length), out int limit) &&
+                limit >= 0)
+            {
+                return;
+            }
+            throw new InvalidDataException($"{owner} has unsupported validation metadata {validation}");
+        }
+
+        private static void ValidateUnique(IEnumerable<string> values, string kind)
+        {
+            HashSet<string> seen = new(StringComparer.Ordinal);
+            foreach (string value in values)
+            {
+                if (!seen.Add(value))
+                {
+                    throw new InvalidDataException($"duplicate {kind} {value}");
+                }
+            }
+        }
+
+
+        private static XElement RequiredChild(XElement parent, string name) =>
+            parent.Element(name) ?? throw new InvalidDataException($"missing {name} section");
+
+        private static string RequiredAttribute(XElement element, string name) =>
+            element.Attribute(name)?.Value
+            ?? throw new InvalidDataException($"{element.Name.LocalName} is missing {name}");
+
+        private static string OptionalAttribute(XElement element, string name) =>
+            element.Attribute(name)?.Value ?? string.Empty;
+
+        private static int ParseInt(XElement element, string name) =>
+            int.TryParse(RequiredAttribute(element, name), out int value)
+                ? value
+                : throw new InvalidDataException($"{element.Name.LocalName}.{name} is not an integer");
+
+        private static string Normalize(string value) => Regex.Replace(value.Trim(), @"\s+", " ");
     }
 
     private static class CSharpEmitter
@@ -292,38 +370,22 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
         private static readonly Dictionary<string, string> PrimitiveTypes = new(StringComparer.Ordinal)
         {
             ["void"] = "void",
+            ["uint8_t"] = "byte",
             ["uint32_t"] = "uint",
             ["int32_t"] = "int",
             ["uint64_t"] = "ulong",
             ["int64_t"] = "long",
+            ["size_t"] = "nuint",
             ["float"] = "float",
         };
 
 
-        private static readonly HashSet<string> GeneratedConvenienceMethods = new(StringComparer.Ordinal)
-        {
-            "ez_gfx_c_context_create",
-            "ez_gfx_c_surface_create",
-            "ez_gfx_c_shader_compile",
-            "ez_gfx_c_vertex_heap_create",
-            "ez_gfx_c_index_heap_create",
-            "ez_gfx_c_vertex_upload_indices",
-            "ez_gfx_c_vertex_upload",
-            "ez_gfx_c_texture_load",
-            "ez_gfx_c_acquire_indirect",
-            "ez_gfx_c_indirect_write_draw",
-            "ez_gfx_c_structured_acquire",
-            "ez_gfx_c_structured_write",
-            "ez_gfx_c_render_add_vertex_pipeline",
-            "ez_gfx_c_render_add_compute_pipeline",
-            "ez_gfx_c_screenshot_save",
-        };
 
         public static string Emit(HeaderModel model)
         {
             StringBuilder output = new();
             output.AppendLine("// <auto-generated />");
-            output.AppendLine("// Generated by EzGfxHeaderGenerator from include/ez_gfx_api.h.");
+            output.AppendLine("// Generated by EzGfxHeaderGenerator from bindings/bindings.xml.");
             output.AppendLine("#nullable enable");
             output.AppendLine("using System;");
             output.AppendLine("using System.Buffers;");
@@ -336,6 +398,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
             foreach (EnumModel enumModel in model.Enums)
             {
+                EmitSummary(output, enumModel.Doc, string.Empty);
                 output.AppendLine($"public enum {enumModel.Name} : int");
                 output.AppendLine("{");
                 foreach (EnumValueModel value in enumModel.Values)
@@ -343,6 +406,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
                     string member = value.Name.StartsWith(enumModel.Name + "_", StringComparison.Ordinal)
                         ? value.Name.Substring(enumModel.Name.Length + 1)
                         : value.Name;
+                    EmitSummary(output, value.Doc, "    ");
                     output.AppendLine($"    {member} = {value.Value},");
                 }
                 output.AppendLine("}");
@@ -351,11 +415,13 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
             foreach (StructModel structModel in model.Structs)
             {
+                EmitSummary(output, structModel.Doc, string.Empty);
                 output.AppendLine("[StructLayout(LayoutKind.Sequential)]");
                 output.AppendLine($"public struct {structModel.Name}");
                 output.AppendLine("{");
                 foreach (FieldModel field in structModel.Fields)
                 {
+                    EmitSummary(output, field.Doc, "    ");
                     output.AppendLine($"    public {StructFieldType(field.Type, model.Handles)} {ToPascal(field.Name)};");
                 }
                 output.AppendLine("}");
@@ -406,9 +472,9 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
             foreach (FunctionModel function in model.Functions)
             {
-                if (GeneratedConvenienceMethods.Contains(function.Name))
+                if (!string.IsNullOrEmpty(function.Managed))
                 {
-                    EmitConvenienceMethod(output, function);
+                    EmitConvenienceMethod(output, function, model.Handles);
                 }
                 else
                 {
@@ -423,62 +489,63 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
         private static void EmitForwardingMethod(StringBuilder output, FunctionModel function, HashSet<string> handleTypes)
         {
             string methodName = ToPascal(function.Name);
+            EmitSummary(output, function.Doc, "    ");
             output.AppendLine($"    public static {ReturnType(function.ReturnType, handleTypes)} {methodName}({string.Join(", ", function.Parameters.Select(parameter => RawParameterDeclaration(parameter, handleTypes)))})");
-            output.AppendLine("        => Raw" + methodName + "(" + string.Join(", ", function.Parameters.Select(RawCallArgument)) + ");");
+            output.AppendLine("    {");
+            EmitRawParameterValidation(output, function, handleTypes);
+            string call = "Raw" + methodName + "(" + string.Join(", ", function.Parameters.Select(RawCallArgument)) + ");";
+            if (function.ReturnType == "void")
+            {
+                output.AppendLine("        " + call);
+            }
+            else
+            {
+                output.AppendLine("        return " + call);
+            }
+            output.AppendLine("    }");
             output.AppendLine();
         }
 
-        private static void EmitConvenienceMethod(StringBuilder output, FunctionModel function)
+        private static void EmitConvenienceMethod(StringBuilder output, FunctionModel function, HashSet<string> handleTypes)
         {
-            switch (function.Name)
+            EmitSummary(output, function.Doc, "    ");
+            switch (function.Managed)
             {
-                case "ez_gfx_c_context_create":
+                case "context-create":
                     EmitContextCreate(output);
                     break;
-                case "ez_gfx_c_surface_create":
+                case "surface-create":
                     EmitSurfaceCreate(output);
                     break;
-                case "ez_gfx_c_shader_compile":
+                case "shader-compile":
                     EmitShaderCompile(output);
                     break;
-                case "ez_gfx_c_vertex_heap_create":
-                    EmitSingleStringCall(output, "EzGfxCVertexHeapCreate", "EzGfxResult", "ulong context, string name, ulong capacity, ulong stride", "context, {string}, capacity, stride", "name");
+                case "utf8-string":
+                    EmitUtf8StringCall(output, function, handleTypes);
                     break;
-                case "ez_gfx_c_index_heap_create":
-                    EmitSingleStringCall(output, "EzGfxCIndexHeapCreate", "EzGfxResult", "ulong context, ulong capacity, string debugName", "context, capacity, {string}", "debugName");
-                    break;
-                case "ez_gfx_c_vertex_upload_indices":
+                case "vertex-upload-indices":
                     EmitVertexUploadIndices(output);
                     break;
-                case "ez_gfx_c_vertex_upload":
+                case "vertex-upload":
                     EmitVertexUpload(output);
                     break;
-                case "ez_gfx_c_texture_load":
+                case "texture-load":
                     EmitTextureLoad(output);
                     break;
-                case "ez_gfx_c_acquire_indirect":
-                    EmitSingleStringCall(output, "EzGfxCAcquireIndirect", "EzGfxResult", "ulong context, uint capacity, string debugName, out ulong indirect", "context, capacity, {string}, out indirect", "debugName");
-                    break;
-                case "ez_gfx_c_indirect_write_draw":
+                case "draw-command":
                     EmitIndirectWriteDraw(output);
                     break;
-                case "ez_gfx_c_structured_acquire":
-                    EmitSingleStringCall(output, "EzGfxCStructuredAcquire", "EzGfxResult", "ulong context, uint elementSize, uint elementCount, string debugName, out ulong structured", "context, elementSize, elementCount, {string}, out structured", "debugName");
-                    break;
-                case "ez_gfx_c_structured_write":
+                case "structured-write":
                     EmitStructuredWrite(output);
                     break;
-                case "ez_gfx_c_render_add_vertex_pipeline":
+                case "vertex-pipeline":
                     EmitRenderPipeline(output, vertex: true);
                     break;
-                case "ez_gfx_c_render_add_compute_pipeline":
+                case "compute-pipeline":
                     EmitRenderPipeline(output, vertex: false);
                     break;
-                case "ez_gfx_c_screenshot_save":
-                    EmitSingleStringCall(output, "EzGfxCScreenshotSave", "EzGfxResult", "ulong surface, string path", "surface, {string}", "path");
-                    break;
                 default:
-                    throw new InvalidOperationException($"No convenience emitter for {function.Name}");
+                    throw new InvalidOperationException($"No convenience emitter for managed shape {function.Managed}");
             }
         }
 
@@ -499,7 +566,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitSurfaceCreate(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCSurfaceCreate(ulong context, IntPtr window, IntPtr display, EzGfxSurfacePlatform platform, uint width, uint height, out ulong surface)");
+            output.AppendLine("    public static EzGfxResult EzGfxCSurfaceCreate(IntPtr window, IntPtr display, EzGfxSurfacePlatform platform, uint width, uint height, out ulong surface, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (window == IntPtr.Zero || display == IntPtr.Zero || width == 0 || height == 0)");
             output.AppendLine("        {");
@@ -513,14 +580,14 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("            Width = width,");
             output.AppendLine("            Height = height,");
             output.AppendLine("        };");
-            output.AppendLine("        return RawEzGfxCSurfaceCreate(context, (IntPtr)(&description), out surface);");
+            output.AppendLine("        return RawEzGfxCSurfaceCreate((IntPtr)(&description), out surface, context);");
             output.AppendLine("    }");
             output.AppendLine();
         }
 
         private static void EmitShaderCompile(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCShaderCompile(ulong context, string path, EzGfxShaderKind kind, string? vertexEntry, string? fragmentEntry, string? computeEntry, out ulong shader)");
+            output.AppendLine("    public static EzGfxResult EzGfxCShaderCompile(string path, EzGfxShaderKind kind, string? vertexEntry, string? fragmentEntry, string? computeEntry, out ulong shader, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        ArgumentException.ThrowIfNullOrWhiteSpace(path);");
             output.AppendLine("        int totalBytes = checked(Utf8ByteCount(path) + Utf8ByteCount(vertexEntry) + Utf8ByteCount(fragmentEntry) + Utf8ByteCount(computeEntry));");
@@ -538,7 +605,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("                    ComputeEntry = PutUtf8(utf8, ref offset, computeEntry),");
             output.AppendLine("                    Kind = (uint)kind,");
             output.AppendLine("                };");
-            output.AppendLine("                return RawEzGfxCShaderCompile(context, (IntPtr)(&description), out shader);");
+            output.AppendLine("                return RawEzGfxCShaderCompile((IntPtr)(&description), out shader, context);");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");
@@ -551,12 +618,12 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitVertexUploadIndices(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCVertexUploadIndices(ulong context, ReadOnlySpan<uint> data, out uint startIndex)");
+            output.AppendLine("    public static EzGfxResult EzGfxCVertexUploadIndices(ReadOnlySpan<uint> data, out uint startIndex, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Index data must not be empty.\", nameof(data));");
             output.AppendLine("        fixed (uint* pointer = data)");
             output.AppendLine("        {");
-            output.AppendLine("            return RawEzGfxCVertexUploadIndices(context, (IntPtr)pointer, checked((uint)data.Length), out startIndex);");
+            output.AppendLine("            return RawEzGfxCVertexUploadIndices((IntPtr)pointer, checked((uint)data.Length), out startIndex, context);");
             output.AppendLine("        }");
             output.AppendLine("    }");
             output.AppendLine();
@@ -564,7 +631,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitVertexUpload(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCVertexUpload(ulong context, string heapName, ReadOnlySpan<byte> data, uint elementCount, ulong elementSize, out uint startIndex)");
+            output.AppendLine("    public static EzGfxResult EzGfxCVertexUpload(string heapName, ReadOnlySpan<byte> data, uint elementCount, ulong elementSize, out uint startIndex, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        ArgumentException.ThrowIfNullOrWhiteSpace(heapName);");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Vertex data must not be empty.\", nameof(data));");
@@ -576,7 +643,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("            fixed (byte* dataPointer = data)");
             output.AppendLine("            {");
             output.AppendLine("                int offset = 0;");
-            output.AppendLine("                return RawEzGfxCVertexUpload(context, PutUtf8(utf8, ref offset, heapName), (IntPtr)dataPointer, elementCount, elementSize, out startIndex);");
+            output.AppendLine("                return RawEzGfxCVertexUpload(PutUtf8(utf8, ref offset, heapName), (IntPtr)dataPointer, elementCount, elementSize, out startIndex, context);");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");
@@ -589,7 +656,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitTextureLoad(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxTextureError EzGfxCTextureLoad(ulong context, ReadOnlySpan<byte> data, uint sourceFormat, uint destinationFormat, uint width, uint height, uint mipCount, bool generateMips, EzGfxTextureFilter minFilter, EzGfxTextureFilter magFilter, float maxAnisotropy, EzGfxTextureAddressMode addressModeU, EzGfxTextureAddressMode addressModeV, EzGfxTextureAddressMode addressModeW, string? debugLabel, out uint textureId)");
+            output.AppendLine("    public static EzGfxTextureError EzGfxCTextureLoad(ReadOnlySpan<byte> data, uint sourceFormat, uint destinationFormat, uint width, uint height, uint mipCount, bool generateMips, EzGfxTextureFilter minFilter, EzGfxTextureFilter magFilter, float maxAnisotropy, EzGfxTextureAddressMode addressModeU, EzGfxTextureAddressMode addressModeV, EzGfxTextureAddressMode addressModeW, string? debugLabel, out uint textureId, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Texture data must not be empty.\", nameof(data));");
             output.AppendLine("        int totalBytes = Utf8ByteCount(debugLabel);");
@@ -616,7 +683,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("                    AddressModeW = (uint)addressModeW,");
             output.AppendLine("                    DebugLabel = PutUtf8(utf8, ref offset, debugLabel),");
             output.AppendLine("                };");
-            output.AppendLine("                return (EzGfxTextureError)RawEzGfxCTextureLoad(context, (IntPtr)dataPointer, checked((ulong)data.Length), (IntPtr)(&description), out textureId);");
+            output.AppendLine("                return (EzGfxTextureError)RawEzGfxCTextureLoad((IntPtr)dataPointer, checked((ulong)data.Length), (IntPtr)(&description), out textureId, context);");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");
@@ -629,7 +696,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
 
         private static void EmitIndirectWriteDraw(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCIndirectWriteDraw(ulong indirect, uint index, uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance)");
+            output.AppendLine("    public static EzGfxResult EzGfxCIndirectWriteDraw(ulong indirect, uint index, uint indexCount, uint instanceCount, uint firstIndex, int vertexOffset, uint firstInstance, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        EzGfxDrawIndexedCommand command = new()");
             output.AppendLine("        {");
@@ -639,19 +706,19 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("            VertexOffset = vertexOffset,");
             output.AppendLine("            FirstInstance = firstInstance,");
             output.AppendLine("        };");
-            output.AppendLine("        return RawEzGfxCIndirectWriteDraw(indirect, index, (IntPtr)(&command));");
+            output.AppendLine("        return RawEzGfxCIndirectWriteDraw(indirect, index, (IntPtr)(&command), context);");
             output.AppendLine("    }");
             output.AppendLine();
         }
 
         private static void EmitStructuredWrite(StringBuilder output)
         {
-            output.AppendLine("    public static EzGfxResult EzGfxCStructuredWrite(ulong structured, ReadOnlySpan<byte> data)");
+            output.AppendLine("    public static EzGfxResult EzGfxCStructuredWrite(ulong structured, ReadOnlySpan<byte> data, ulong context)");
             output.AppendLine("    {");
             output.AppendLine("        if (data.IsEmpty) throw new ArgumentException(\"Structured data must not be empty.\", nameof(data));");
             output.AppendLine("        fixed (byte* pointer = data)");
             output.AppendLine("        {");
-            output.AppendLine("            return RawEzGfxCStructuredWrite(structured, (IntPtr)pointer, checked((ulong)data.Length));");
+            output.AppendLine("            return RawEzGfxCStructuredWrite(structured, (IntPtr)pointer, checked((ulong)data.Length), context);");
             output.AppendLine("        }");
             output.AppendLine("    }");
             output.AppendLine();
@@ -661,8 +728,8 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
         {
             string methodName = vertex ? "EzGfxCRenderAddVertexPipeline" : "EzGfxCRenderAddComputePipeline";
             string parameters = vertex
-                ? "ulong shader, ulong indirect, ReadOnlySpan<TBinding> bindings, uint cullMode, uint frontFace, uint primitiveType, uint blendMode, ReadOnlySpan<byte> pushConstants"
-                : "ulong shader, uint dispatchX, uint dispatchY, uint dispatchZ, ReadOnlySpan<TBinding> bindings, ReadOnlySpan<byte> pushConstants";
+                ? "ulong shader, ulong indirect, ReadOnlySpan<TBinding> bindings, uint cullMode, uint frontFace, uint primitiveType, uint blendMode, ReadOnlySpan<byte> pushConstants, ulong context"
+                : "ulong shader, uint dispatchX, uint dispatchY, uint dispatchZ, ReadOnlySpan<TBinding> bindings, ReadOnlySpan<byte> pushConstants, ulong context";
             output.AppendLine($"    public static EzGfxResult {methodName}<TBinding>({parameters}) where TBinding : IEzGfxBindingInput");
             output.AppendLine("    {");
             output.AppendLine("        if (bindings.Length > 16) throw new ArgumentException(\"Too many render bindings.\", nameof(bindings));");
@@ -706,11 +773,11 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine("                IntPtr pushAddress = pushConstants.Length == 0 ? IntPtr.Zero : (IntPtr)pushPointer;");
             if (vertex)
             {
-                output.AppendLine($"                return Raw{methodName}(shader, indirect, bindingAddress, checked((uint)bindings.Length), (IntPtr)(&dynamicState), pushAddress, checked((uint)pushConstants.Length));");
+                output.AppendLine($"                return Raw{methodName}(shader, indirect, bindingAddress, checked((uint)bindings.Length), (IntPtr)(&dynamicState), pushAddress, checked((uint)pushConstants.Length), context);");
             }
             else
             {
-                output.AppendLine($"                return Raw{methodName}(shader, dispatchX, dispatchY, dispatchZ, bindingAddress, checked((uint)bindings.Length), pushAddress, checked((uint)pushConstants.Length));");
+                output.AppendLine($"                return Raw{methodName}(shader, dispatchX, dispatchY, dispatchZ, bindingAddress, checked((uint)bindings.Length), pushAddress, checked((uint)pushConstants.Length), context);");
             }
             output.AppendLine("            }");
             output.AppendLine("        }");
@@ -722,22 +789,34 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine();
         }
 
-        private static void EmitSingleStringCall(StringBuilder output, string methodName, string returnType, string parameters, string rawArguments, string stringParameter)
+        private static void EmitUtf8StringCall(StringBuilder output, FunctionModel function, HashSet<string> handleTypes)
         {
-            output.AppendLine($"    public static {returnType} {methodName}({parameters})");
+            ParameterModel stringParameter = function.Parameters.Single(parameter =>
+                parameter.Type.IndexOf("char", StringComparison.Ordinal) >= 0 &&
+                parameter.Type.IndexOf('*') >= 0);
+            string methodName = ToPascal(function.Name);
+            string stringName = FriendlyParameterName(stringParameter);
+            string parameters = string.Join(", ", function.Parameters.Select(parameter =>
+                FriendlyParameterDeclaration(parameter, stringParameter, handleTypes)));
+
+            output.AppendLine($"    public static {ReturnType(function.ReturnType, handleTypes)} {methodName}({parameters})");
             output.AppendLine("    {");
-            output.AppendLine($"        ArgumentException.ThrowIfNullOrWhiteSpace({stringParameter});");
-            output.AppendLine($"        int totalBytes = Utf8ByteCount({stringParameter});");
+            EmitFriendlyParameterValidation(output, function);
+            output.AppendLine($"        ArgumentException.ThrowIfNullOrWhiteSpace({stringName});");
+            output.AppendLine($"        int totalBytes = Utf8ByteCount({stringName});");
             EmitStorageSetup(output, "totalBytes", "storage", "rented");
             output.AppendLine("        try");
             output.AppendLine("        {");
             output.AppendLine("            fixed (byte* utf8 = storage)");
             output.AppendLine("            {");
             output.AppendLine("                int offset = 0;");
-            string methodRawName = "Raw" + methodName;
-            string encodedString = "PutUtf8(utf8, ref offset, " + stringParameter + ")";
-            string callArguments = rawArguments.Replace("{string}", encodedString);
-            output.AppendLine($"                return {methodRawName}({callArguments});");
+            string rawArguments = string.Join(", ", function.Parameters.Select(parameter =>
+                parameter.Name == stringParameter.Name
+                    ? $"PutUtf8(utf8, ref offset, {stringName})"
+                    : parameter.Direction == "out" || parameter.Name.StartsWith("out_", StringComparison.Ordinal)
+                        ? "out " + FriendlyParameterName(parameter)
+                        : FriendlyParameterName(parameter)));
+            output.AppendLine($"                return Raw{methodName}({rawArguments});");
             output.AppendLine("            }");
             output.AppendLine("        }");
             output.AppendLine("        finally");
@@ -761,6 +840,113 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
             output.AppendLine($"            {rentedName} = ArrayPool<byte>.Shared.Rent({totalExpression});");
             output.AppendLine($"            {storageName} = {rentedName}.AsSpan(0, {totalExpression});");
             output.AppendLine("        }");
+        }
+
+        private static void EmitRawParameterValidation(StringBuilder output, FunctionModel function, HashSet<string> handleTypes)
+        {
+            foreach (ParameterModel parameter in function.Parameters)
+            {
+                string name = ToPascal(parameter.Name);
+                if (parameter.Type.IndexOf('*') < 0 &&
+                    parameter.Nullable == "false" &&
+                    handleTypes.Contains(parameter.Type))
+                {
+                    output.AppendLine($"        if ({name} == 0) throw new ArgumentException(\"A non-zero handle is required.\", nameof({name}));");
+                }
+                EmitValidation(output, parameter.Validation, name);
+            }
+        }
+
+        private static void EmitFriendlyParameterValidation(StringBuilder output, FunctionModel function)
+        {
+            foreach (ParameterModel parameter in function.Parameters)
+            {
+                string name = FriendlyParameterName(parameter);
+                if (parameter.Name == "context" && parameter.Nullable == "false")
+                {
+                    output.AppendLine($"        if ({name} == 0) throw new ArgumentException(\"A non-zero context is required.\", nameof({name}));");
+                }
+                EmitValidation(output, parameter.Validation, name);
+            }
+        }
+
+        private static void EmitValidation(StringBuilder output, string validation, string name)
+        {
+            if (string.IsNullOrEmpty(validation) || validation == "non-negative")
+            {
+                return;
+            }
+            if (validation == "greater-than-zero")
+            {
+                output.AppendLine($"        if ({name} == 0) throw new ArgumentOutOfRangeException(nameof({name}));");
+                return;
+            }
+            if (validation == "zero-or-one")
+            {
+                output.AppendLine($"        if ({name} != 0 && {name} != 1) throw new ArgumentOutOfRangeException(nameof({name}));");
+                return;
+            }
+            if (validation == "not-empty")
+            {
+                output.AppendLine($"        if ({name}.Length == 0) throw new ArgumentException(\"{name} must not be empty.\", nameof({name}));");
+                return;
+            }
+            const string AtMostPrefix = "at-most-";
+            if (validation.StartsWith(AtMostPrefix, StringComparison.Ordinal) &&
+                int.TryParse(validation.Substring(AtMostPrefix.Length), out int limit))
+            {
+                output.AppendLine($"        if ({name} > {limit}) throw new ArgumentOutOfRangeException(nameof({name}));");
+                return;
+            }
+            throw new InvalidDataException($"unsupported validation metadata {validation}");
+        }
+
+        private static string FriendlyParameterDeclaration(
+            ParameterModel parameter,
+            ParameterModel stringParameter,
+            HashSet<string> handleTypes)
+        {
+            string name = FriendlyParameterName(parameter);
+            if (parameter.Name == stringParameter.Name)
+            {
+                return $"string {name}";
+            }
+            if (parameter.Type.IndexOf('*') >= 0)
+            {
+                string baseType = parameter.Type.Replace("const", string.Empty).Replace("*", string.Empty).Trim();
+                if (parameter.Direction == "out" || parameter.Name.StartsWith("out_", StringComparison.Ordinal))
+                {
+                    return $"out {CSharpType(baseType, handleTypes)} {name}";
+                }
+                return $"IntPtr {name}";
+            }
+            return $"{CSharpType(parameter.Type, handleTypes)} {name}";
+        }
+
+        private static string FriendlyParameterName(ParameterModel parameter)
+        {
+            string value = parameter.Name.StartsWith("out_", StringComparison.Ordinal)
+                ? parameter.Name.Substring("out_".Length)
+                : parameter.Name;
+            string pascal = ToPascal(value);
+            return pascal.Length == 0
+                ? pascal
+                : char.ToLowerInvariant(pascal[0]) + pascal.Substring(1);
+        }
+
+        private static void EmitSummary(StringBuilder output, string documentation, string indent)
+        {
+            if (string.IsNullOrWhiteSpace(documentation))
+            {
+                return;
+            }
+            string summary = documentation
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;")
+                .Replace("\r", " ")
+                .Replace("\n", " ");
+            output.AppendLine($"{indent}/// <summary>{summary}</summary>");
         }
 
         private static string StructFieldType(string type, HashSet<string> handleTypes)
@@ -791,7 +977,7 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
                 return $"{CSharpType(parameter.Type, handleTypes)} {name}";
             }
             string baseType = parameter.Type.Replace("const", string.Empty).Replace("*", string.Empty).Trim();
-            if (parameter.Name.StartsWith("out_", StringComparison.Ordinal))
+            if (parameter.Direction == "out" || parameter.Name.StartsWith("out_", StringComparison.Ordinal))
             {
                 return $"out {CSharpType(baseType, handleTypes)} {name}";
             }
@@ -801,7 +987,9 @@ public sealed class EzGfxHeaderGenerator : IIncrementalGenerator
         private static string RawCallArgument(ParameterModel parameter)
         {
             string name = ToPascal(parameter.Name);
-            return parameter.Name.StartsWith("out_", StringComparison.Ordinal) ? "out " + name : name;
+            return parameter.Direction == "out" || parameter.Name.StartsWith("out_", StringComparison.Ordinal)
+                ? "out " + name
+                : name;
         }
 
         private static string ToPascal(string value) =>

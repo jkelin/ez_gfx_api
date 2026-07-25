@@ -15,45 +15,68 @@ public sealed class EzGfxContextHandle : SafeHandleZeroOrMinusOneIsInvalid
 
 public sealed class EzGfxSurfaceHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
-    public EzGfxSurfaceHandle(ulong value) : base(ownsHandle: true) => SetHandle((nint)value);
+    private readonly ulong _context;
+
+    public EzGfxSurfaceHandle(ulong value, ulong context) : base(ownsHandle: true)
+    {
+        _context = context;
+        SetHandle((nint)value);
+    }
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCSurfaceDestroy((ulong)handle);
+        EzGfxNative.EzGfxCSurfaceDestroy((ulong)handle, _context);
         return true;
     }
 }
 
-
 public sealed class EzGfxShaderHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
-    public EzGfxShaderHandle(ulong value) : base(ownsHandle: true) => SetHandle((nint)value);
+    private readonly ulong _context;
+
+    public EzGfxShaderHandle(ulong value, ulong context) : base(ownsHandle: true)
+    {
+        _context = context;
+        SetHandle((nint)value);
+    }
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCShaderDestroy((ulong)handle);
+        EzGfxNative.EzGfxCShaderDestroy((ulong)handle, _context);
         return true;
     }
 }
 
 public sealed class EzGfxIndirectHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
-    public EzGfxIndirectHandle(ulong value) : base(ownsHandle: true) => SetHandle((nint)value);
+    private readonly ulong _context;
+
+    public EzGfxIndirectHandle(ulong value, ulong context) : base(ownsHandle: true)
+    {
+        _context = context;
+        SetHandle((nint)value);
+    }
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCIndirectRelease((ulong)handle);
+        EzGfxNative.EzGfxCIndirectRelease((ulong)handle, _context);
         return true;
     }
 }
 
 public sealed class EzGfxStructuredHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
-    public EzGfxStructuredHandle(ulong value) : base(ownsHandle: true) => SetHandle((nint)value);
+    private readonly ulong _context;
+
+    public EzGfxStructuredHandle(ulong value, ulong context) : base(ownsHandle: true)
+    {
+        _context = context;
+        SetHandle((nint)value);
+    }
 
     protected override bool ReleaseHandle()
     {
-        EzGfxNative.EzGfxCStructuredRelease((ulong)handle);
+        EzGfxNative.EzGfxCStructuredRelease((ulong)handle, _context);
         return true;
     }
 }

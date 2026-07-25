@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import vma "../vendor/odin-vma"
@@ -6,49 +7,24 @@ import vk "vendor:vulkan"
 
 EZ_GFX_MAX_RENDER_TARGETS :: 16
 
-Ez_Gfx_Render_Target_Texture :: struct {
-	name:                [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:            int,
-	image:               vk.Image,
-	allocation:          vma.Allocation,
-	allocation_info:     vma.Allocation_Info,
-	image_view:          vk.ImageView,
-	attachment_view:     vk.ImageView,
-	sampler:             vk.Sampler,
-	format:              vk.Format,
-	extent:              vk.Extent2D,
-	relative_scale:      f32,
-	kind:                Ez_Gfx_Render_Target_Kind,
-	layout:              vk.ImageLayout,
-	initialized:         bool,
-	load_on_frame_begin: bool,
-	frame_clear_pending: bool,
-	last_write_timeline: u64,
-	generation:          u64,
-	described:           bool,
-	has_image:           bool,
-}
 
-Ez_Gfx_Render_Target_Manager :: struct {
-	targets: [EZ_GFX_MAX_RENDER_TARGETS]Ez_Gfx_Render_Target_Texture,
-	count:   int,
-	version: u64,
-}
 
-ez_gfx_render_target_manager_acquire_shader_targets :: proc(
+
+
+render_target_manager_acquire_shader_targets :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
 	swapchain_extent: vk.Extent2D,
 ) -> bool {
 	for i in 0 ..< shader.target_declaration_count {
 		declaration := &shader.target_declarations[i]
-		_, ok := ez_gfx_render_target_manager_acquire(manager, declaration, swapchain_extent)
+		_, ok := render_target_manager_acquire(manager, declaration, swapchain_extent)
 		if !ok do return false
 	}
 	return true
 }
 
-ez_gfx_render_target_manager_acquire_shader_targets_for_bindings :: proc(
+render_target_manager_acquire_shader_targets_for_bindings :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
 	swapchain_extent: vk.Extent2D,
@@ -56,23 +32,23 @@ ez_gfx_render_target_manager_acquire_shader_targets_for_bindings :: proc(
 ) -> bool {
 	for i in 0 ..< shader.target_declaration_count {
 		declaration := &shader.target_declarations[i]
-		id, has_explicit := ez_gfx_render_binding_find_target_id(
+		id, has_explicit := render_binding_find_target_id(
 			bindings,
 			declaration.name[:],
 			declaration.name_len,
 		)
 		if has_explicit {
-			_, ok := ez_gfx_render_target_manager_acquire_described(manager, id, declaration)
+			_, ok := render_target_manager_acquire_described(manager, id, declaration)
 			if !ok do return false
 			continue
 		}
-		_, ok := ez_gfx_render_target_manager_acquire(manager, declaration, swapchain_extent)
+		_, ok := render_target_manager_acquire(manager, declaration, swapchain_extent)
 		if !ok do return false
 	}
 	return true
 }
 
-ez_gfx_render_target_manager_acquire :: proc(
+render_target_manager_acquire :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	declaration: ^Ez_Gfx_Shader_Target_Declaration,
 	swapchain_extent: vk.Extent2D,
@@ -80,10 +56,10 @@ ez_gfx_render_target_manager_acquire :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	ok: bool,
 ) {
-	extent := ez_gfx_render_target_scaled_extent(swapchain_extent, declaration.relative_scale)
+	extent := render_target_scaled_extent(swapchain_extent, declaration.relative_scale)
 	for i in 0 ..< manager.count {
 		candidate := &manager.targets[i]
-		if ez_gfx_shader_target_name_equals_bytes(
+		if shader_target_name_equals_bytes(
 			   candidate.name[:],
 			   candidate.name_len,
 			   declaration.name[:],
@@ -99,7 +75,7 @@ ez_gfx_render_target_manager_acquire :: proc(
 				return nil, false
 			}
 			if !candidate.has_image {
-				if !ez_gfx_render_target_create_with_name(
+				if !render_target_create_with_name(
 					candidate,
 					declaration,
 					extent,
@@ -122,7 +98,7 @@ ez_gfx_render_target_manager_acquire :: proc(
 
 	slot := &manager.targets[manager.count]
 	manager.count += 1
-	if !ez_gfx_render_target_create_with_name(
+	if !render_target_create_with_name(
 		slot,
 		declaration,
 		extent,
@@ -139,33 +115,20 @@ ez_gfx_render_target_manager_acquire :: proc(
 	return slot, true
 }
 
-ez_gfx_render_target_describe :: proc(
+render_target_describe :: proc(
 	width: u32,
 	height: u32,
 	debug_label: cstring,
 ) -> Ez_Gfx_Render_Target_Id {
-	ctx := ez_gfx_get_current_ctx()
-	if ctx == nil do return {}
-	if debug_label == nil {
-		fmt.eprintln("render target debug label is required")
-		return {}
-	}
-	if width == 0 || height == 0 {
-		fmt.eprintln("render target size must be greater than zero")
-		return {}
-	}
+	ctx := get_current_ctx()
 	size := vk.Extent2D{width = width, height = height}
 	manager := &ctx.render_target_manager
-	label_len := ez_gfx_cstring_len(debug_label)
-	if label_len >= EZ_GFX_SHADER_TARGET_NAME_MAX {
-		fmt.eprintln("render target debug label is too long")
-		return {}
-	}
+	label_len := cstring_len(debug_label)
 	label_bytes := cast([^]byte)debug_label
 	for i in 0 ..< manager.count {
 		target := &manager.targets[i]
 		if !target.described do continue
-		if ez_gfx_shader_target_name_equals_bytes(
+		if shader_target_name_equals_bytes(
 			target.name[:],
 			target.name_len,
 			label_bytes[:label_len],
@@ -174,8 +137,8 @@ ez_gfx_render_target_describe :: proc(
 			if target.extent.width != size.width || target.extent.height != size.height {
 				next_generation := target.generation + 1
 				if next_generation == 0 do next_generation = 1
-				ez_gfx_render_target_destroy(target)
-				_ = ez_gfx_copy_shader_target_name(
+				render_target_destroy(target)
+				_ = copy_shader_target_name(
 					target.name[:],
 					&target.name_len,
 					debug_label,
@@ -197,7 +160,7 @@ ez_gfx_render_target_describe :: proc(
 	target := &manager.targets[index]
 	manager.count += 1
 	target^ = {}
-	if !ez_gfx_copy_shader_target_name(target.name[:], &target.name_len, debug_label, label_len) {
+	if !copy_shader_target_name(target.name[:], &target.name_len, debug_label, label_len) {
 		manager.count -= 1
 		return {}
 	}
@@ -208,7 +171,7 @@ ez_gfx_render_target_describe :: proc(
 	return Ez_Gfx_Render_Target_Id{index = index, generation = target.generation, ok = true}
 }
 
-ez_gfx_render_target_manager_acquire_described :: proc(
+render_target_manager_acquire_described :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	id: Ez_Gfx_Render_Target_Id,
 	declaration: ^Ez_Gfx_Shader_Target_Declaration,
@@ -216,7 +179,7 @@ ez_gfx_render_target_manager_acquire_described :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	ok: bool,
 ) {
-	target = ez_gfx_render_target_manager_resolve_id(manager, id)
+	target = render_target_manager_resolve_id(manager, id)
 	if target == nil {
 		fmt.eprintln("render target id is not valid")
 		return nil, false
@@ -227,7 +190,7 @@ ez_gfx_render_target_manager_acquire_described :: proc(
 		name_len := target.name_len
 		extent := target.extent
 		described := target.described
-		if !ez_gfx_render_target_create_with_name(
+		if !render_target_create_with_name(
 			target,
 			declaration,
 			extent,
@@ -248,7 +211,7 @@ ez_gfx_render_target_manager_acquire_described :: proc(
 	return target, true
 }
 
-ez_gfx_render_target_manager_resolve_id :: proc(
+render_target_manager_resolve_id :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	id: Ez_Gfx_Render_Target_Id,
 ) -> ^Ez_Gfx_Render_Target_Texture {
@@ -258,7 +221,7 @@ ez_gfx_render_target_manager_resolve_id :: proc(
 	return target
 }
 
-ez_gfx_render_target_scaled_extent :: proc(
+render_target_scaled_extent :: proc(
 	swapchain_extent: vk.Extent2D,
 	relative_scale: f32,
 ) -> vk.Extent2D {
@@ -269,12 +232,12 @@ ez_gfx_render_target_scaled_extent :: proc(
 	return vk.Extent2D{width = width, height = height}
 }
 
-ez_gfx_render_target_create :: proc(
+render_target_create :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	declaration: ^Ez_Gfx_Shader_Target_Declaration,
 	extent: vk.Extent2D,
 ) -> bool {
-	return ez_gfx_render_target_create_with_name(
+	return render_target_create_with_name(
 		target,
 		declaration,
 		extent,
@@ -285,7 +248,7 @@ ez_gfx_render_target_create :: proc(
 	)
 }
 
-ez_gfx_render_target_create_with_name :: proc(
+render_target_create_with_name :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	declaration: ^Ez_Gfx_Shader_Target_Declaration,
 	extent: vk.Extent2D,
@@ -294,11 +257,11 @@ ez_gfx_render_target_create_with_name :: proc(
 	generation: u64,
 	described: bool,
 ) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	target^ = {}
-	_ = ez_gfx_copy_shader_target_name(
+	_ = copy_shader_target_name(
 		target.name[:],
 		&target.name_len,
 		cast(cstring)raw_data(name),
@@ -315,7 +278,7 @@ ez_gfx_render_target_create_with_name :: proc(
 	target.described = described
 	target.has_image = true
 
-	usage := ez_gfx_render_target_image_usage(declaration.kind)
+	usage := render_target_image_usage(declaration.kind)
 	create_info := vk.ImageCreateInfo {
 		sType = .IMAGE_CREATE_INFO,
 		imageType = .D2,
@@ -347,18 +310,18 @@ ez_gfx_render_target_create_with_name :: proc(
 		return false
 	}
 	vma.set_allocation_name(ctx.vma_allocator, target.allocation, "ez_gfx render target memory")
-	ez_gfx_debug_set_named_object(
+	debug_set_named_object(
 		ctx,
 		.IMAGE,
-		ez_gfx_debug_handle(target.image),
+		debug_handle(target.image),
 		"ez_gfx render target image",
 		target.name[:],
 		target.name_len,
 	)
-	ez_gfx_debug_set_named_object(
+	debug_set_named_object(
 		ctx,
 		.DEVICE_MEMORY,
-		ez_gfx_debug_handle(target.allocation_info.device_memory),
+		debug_handle(target.allocation_info.device_memory),
 		"ez_gfx render target memory",
 		target.name[:],
 		target.name_len,
@@ -370,7 +333,7 @@ ez_gfx_render_target_create_with_name :: proc(
 		viewType = .D2,
 		format = target.format,
 		subresourceRange = vk.ImageSubresourceRange {
-			aspectMask = ez_gfx_render_target_sampled_aspect(target),
+			aspectMask = render_target_sampled_aspect(target),
 			baseMipLevel = 0,
 			levelCount = 1,
 			baseArrayLayer = 0,
@@ -379,30 +342,30 @@ ez_gfx_render_target_create_with_name :: proc(
 	}
 	if vk.CreateImageView(ctx.device, &view_info, nil, &target.image_view) != .SUCCESS {
 		fmt.eprintln("failed to create render target image view")
-		ez_gfx_render_target_destroy(target)
+		render_target_destroy(target)
 		return false
 	}
-	ez_gfx_debug_set_named_object(
+	debug_set_named_object(
 		ctx,
 		.IMAGE_VIEW,
-		ez_gfx_debug_handle(target.image_view),
+		debug_handle(target.image_view),
 		"ez_gfx render target view",
 		target.name[:],
 		target.name_len,
 	)
 	if target.kind == .Depth {
 		attachment_view_info := view_info
-		attachment_view_info.subresourceRange.aspectMask = ez_gfx_render_target_aspect(target)
+		attachment_view_info.subresourceRange.aspectMask = render_target_aspect(target)
 		if vk.CreateImageView(ctx.device, &attachment_view_info, nil, &target.attachment_view) !=
 		   .SUCCESS {
 			fmt.eprintln("failed to create render target attachment view")
-			ez_gfx_render_target_destroy(target)
+			render_target_destroy(target)
 			return false
 		}
-		ez_gfx_debug_set_named_object(
+		debug_set_named_object(
 			ctx,
 			.IMAGE_VIEW,
-			ez_gfx_debug_handle(target.attachment_view),
+			debug_handle(target.attachment_view),
 			"ez_gfx render target attachment view",
 			target.name[:],
 			target.name_len,
@@ -423,13 +386,13 @@ ez_gfx_render_target_create_with_name :: proc(
 	}
 	if vk.CreateSampler(ctx.device, &sampler_info, nil, &target.sampler) != .SUCCESS {
 		fmt.eprintln("failed to create render target sampler")
-		ez_gfx_render_target_destroy(target)
+		render_target_destroy(target)
 		return false
 	}
-	ez_gfx_debug_set_named_object(
+	debug_set_named_object(
 		ctx,
 		.SAMPLER,
-		ez_gfx_debug_handle(target.sampler),
+		debug_handle(target.sampler),
 		"ez_gfx render target sampler",
 		target.name[:],
 		target.name_len,
@@ -438,43 +401,43 @@ ez_gfx_render_target_create_with_name :: proc(
 	return true
 }
 
-ez_gfx_render_target_image_usage :: proc(kind: Ez_Gfx_Render_Target_Kind) -> vk.ImageUsageFlags {
+render_target_image_usage :: proc(kind: Ez_Gfx_Render_Target_Kind) -> vk.ImageUsageFlags {
 	if kind == .Depth {
 		return {.SAMPLED, .DEPTH_STENCIL_ATTACHMENT, .TRANSFER_DST}
 	}
 	return {.SAMPLED, .STORAGE, .COLOR_ATTACHMENT, .TRANSFER_DST}
 }
 
-ez_gfx_render_target_aspect :: proc(target: ^Ez_Gfx_Render_Target_Texture) -> vk.ImageAspectFlags {
+render_target_aspect :: proc(target: ^Ez_Gfx_Render_Target_Texture) -> vk.ImageAspectFlags {
 	if target.kind == .Depth do return {.DEPTH, .STENCIL}
 	return {.COLOR}
 }
 
-ez_gfx_render_target_sampled_aspect :: proc(
+render_target_sampled_aspect :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 ) -> vk.ImageAspectFlags {
 	if target.kind == .Depth do return {.DEPTH}
 	return {.COLOR}
 }
 
-ez_gfx_render_target_attachment_view :: proc(
+render_target_attachment_view :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 ) -> vk.ImageView {
 	if target.attachment_view != vk.ImageView(0) do return target.attachment_view
 	return target.image_view
 }
 
-ez_gfx_render_target_descriptor_layout :: proc(kind: Ez_Gfx_Render_Target_Kind) -> vk.ImageLayout {
+render_target_descriptor_layout :: proc(kind: Ez_Gfx_Render_Target_Kind) -> vk.ImageLayout {
 	if kind == .Depth do return .DEPTH_STENCIL_READ_ONLY_OPTIMAL
 	return .SHADER_READ_ONLY_OPTIMAL
 }
 
-ez_gfx_render_target_transition_for_access :: proc(
+render_target_transition_for_access :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	access: Ez_Gfx_Target_Access,
 	command_buffer: vk.CommandBuffer,
 ) {
-	new_layout := ez_gfx_render_target_descriptor_layout(target.kind)
+	new_layout := render_target_descriptor_layout(target.kind)
 	src_access := vk.AccessFlags2{}
 	src_stage := vk.PipelineStageFlags2{.ALL_COMMANDS}
 	dst_access := vk.AccessFlags2{.SHADER_SAMPLED_READ}
@@ -490,7 +453,7 @@ ez_gfx_render_target_transition_for_access :: proc(
 	}
 	if target.layout == new_layout do return
 
-	ez_gfx_transition_image_with_aspect(
+	transition_image_with_aspect(
 		command_buffer,
 		target.image,
 		target.layout,
@@ -499,7 +462,7 @@ ez_gfx_render_target_transition_for_access :: proc(
 		dst_access,
 		src_stage,
 		dst_stage,
-		ez_gfx_render_target_aspect(target),
+		render_target_aspect(target),
 	)
 	target.layout = new_layout
 	if access == .Write || access == .Read_Write {
@@ -507,12 +470,12 @@ ez_gfx_render_target_transition_for_access :: proc(
 	}
 }
 
-ez_gfx_render_target_transition_for_sampled_read :: proc(
+render_target_transition_for_sampled_read :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 ) {
-	new_layout := ez_gfx_render_target_descriptor_layout(target.kind)
-	ez_gfx_render_target_transition(
+	new_layout := render_target_descriptor_layout(target.kind)
+	render_target_transition(
 		target,
 		command_buffer,
 		new_layout,
@@ -521,11 +484,11 @@ ez_gfx_render_target_transition_for_sampled_read :: proc(
 	)
 }
 
-ez_gfx_render_target_transition_for_storage_access :: proc(
+render_target_transition_for_storage_access :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 ) {
-	ez_gfx_render_target_transition(
+	render_target_transition(
 		target,
 		command_buffer,
 		.GENERAL,
@@ -535,11 +498,11 @@ ez_gfx_render_target_transition_for_storage_access :: proc(
 	target.initialized = true
 }
 
-ez_gfx_render_target_transition_for_color_attachment :: proc(
+render_target_transition_for_color_attachment :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 ) {
-	ez_gfx_render_target_transition(
+	render_target_transition(
 		target,
 		command_buffer,
 		.COLOR_ATTACHMENT_OPTIMAL,
@@ -548,11 +511,11 @@ ez_gfx_render_target_transition_for_color_attachment :: proc(
 	)
 }
 
-ez_gfx_render_target_transition_for_depth_attachment :: proc(
+render_target_transition_for_depth_attachment :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 ) {
-	ez_gfx_render_target_transition(
+	render_target_transition(
 		target,
 		command_buffer,
 		.DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -561,7 +524,7 @@ ez_gfx_render_target_transition_for_depth_attachment :: proc(
 	)
 }
 
-ez_gfx_render_target_transition :: proc(
+render_target_transition :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 	new_layout: vk.ImageLayout,
@@ -569,39 +532,39 @@ ez_gfx_render_target_transition :: proc(
 	dst_stage: vk.PipelineStageFlags2,
 ) {
 	if target.layout == new_layout do return
-	ez_gfx_transition_image_with_aspect(
+	transition_image_with_aspect(
 		command_buffer,
 		target.image,
 		target.layout,
 		new_layout,
-		ez_gfx_image_layout_src_access(target.layout),
+		image_layout_src_access(target.layout),
 		dst_access,
-		ez_gfx_image_layout_src_stage(target.layout),
+		image_layout_src_stage(target.layout),
 		dst_stage,
-		ez_gfx_render_target_aspect(target),
+		render_target_aspect(target),
 	)
 	target.layout = new_layout
 }
 
-ez_gfx_render_target_clear_initial :: proc(
+render_target_clear_initial :: proc(
 	target: ^Ez_Gfx_Render_Target_Texture,
 	command_buffer: vk.CommandBuffer,
 ) {
 	// Frame-start clears give non-load targets deterministic contents before graph use.
-	ez_gfx_transition_image_with_aspect(
+	transition_image_with_aspect(
 		command_buffer,
 		target.image,
 		target.layout,
 		.TRANSFER_DST_OPTIMAL,
-		ez_gfx_image_layout_src_access(target.layout),
+		image_layout_src_access(target.layout),
 		{.TRANSFER_WRITE},
-		ez_gfx_image_layout_src_stage(target.layout),
+		image_layout_src_stage(target.layout),
 		{.TRANSFER},
-		ez_gfx_render_target_aspect(target),
+		render_target_aspect(target),
 	)
 
 	range_info := vk.ImageSubresourceRange {
-		aspectMask     = ez_gfx_render_target_aspect(target),
+		aspectMask     = render_target_aspect(target),
 		baseMipLevel   = 0,
 		levelCount     = 1,
 		baseArrayLayer = 0,
@@ -637,7 +600,7 @@ ez_gfx_render_target_clear_initial :: proc(
 	target.initialized = true
 }
 
-ez_gfx_render_target_manager_find :: proc(
+render_target_manager_find :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	name: []byte,
 	name_len: int,
@@ -645,7 +608,7 @@ ez_gfx_render_target_manager_find :: proc(
 	for i in 0 ..< manager.count {
 		target := &manager.targets[i]
 		if !target.has_image do continue
-		if ez_gfx_shader_target_name_equals_bytes(
+		if shader_target_name_equals_bytes(
 			target.name[:],
 			target.name_len,
 			name,
@@ -657,7 +620,7 @@ ez_gfx_render_target_manager_find :: proc(
 	return nil
 }
 
-ez_gfx_render_binding_find_target_id :: proc(
+render_binding_find_target_id :: proc(
 	bindings: []Ez_Gfx_Render_Binding,
 	name: []byte,
 	name_len: int,
@@ -668,9 +631,9 @@ ez_gfx_render_binding_find_target_id :: proc(
 	for i in 0 ..< len(bindings) {
 		binding := &bindings[i]
 		if binding.name == nil || !binding.render_target.ok do continue
-		binding_name_len := ez_gfx_cstring_len(binding.name)
+		binding_name_len := cstring_len(binding.name)
 		binding_name := cast([^]byte)binding.name
-		if ez_gfx_shader_target_name_equals_bytes(
+		if shader_target_name_equals_bytes(
 			name,
 			name_len,
 			binding_name[:binding_name_len],
@@ -682,20 +645,20 @@ ez_gfx_render_binding_find_target_id :: proc(
 	return {}, false
 }
 
-ez_gfx_render_find_target_for_binding :: proc(
+render_find_target_for_binding :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	name: []byte,
 	name_len: int,
 	bindings: []Ez_Gfx_Render_Binding,
 ) -> ^Ez_Gfx_Render_Target_Texture {
-	id, has_explicit := ez_gfx_render_binding_find_target_id(bindings, name, name_len)
+	id, has_explicit := render_binding_find_target_id(bindings, name, name_len)
 	if has_explicit {
-		return ez_gfx_render_target_manager_resolve_id(manager, id)
+		return render_target_manager_resolve_id(manager, id)
 	}
-	return ez_gfx_render_target_manager_find(manager, name, name_len)
+	return render_target_manager_find(manager, name, name_len)
 }
 
-ez_gfx_render_target_manager_clear_frame_targets :: proc(
+render_target_manager_clear_frame_targets :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	ctx: ^Ez_Gfx_Ctx,
 	command_buffer: vk.CommandBuffer,
@@ -707,16 +670,16 @@ ez_gfx_render_target_manager_clear_frame_targets :: proc(
 			target.frame_clear_pending = false
 			continue
 		}
-		if !ez_gfx_ctx_wait_timeline(ctx, target.last_write_timeline) {
+		if !ctx_wait_timeline(ctx, target.last_write_timeline) {
 			return false
 		}
-		ez_gfx_render_target_clear_initial(target, command_buffer)
+		render_target_clear_initial(target, command_buffer)
 		target.frame_clear_pending = true
 	}
 	return true
 }
 
-ez_gfx_render_target_manager_mark_frame_clears_submitted :: proc(
+render_target_manager_mark_frame_clears_submitted :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	timeline_value: u64,
 ) {
@@ -729,28 +692,28 @@ ez_gfx_render_target_manager_mark_frame_clears_submitted :: proc(
 	}
 }
 
-ez_gfx_render_target_manager_transition_shader_targets :: proc(
+render_target_manager_transition_shader_targets :: proc(
 	manager: ^Ez_Gfx_Render_Target_Manager,
 	shader: ^Ez_Gfx_Shader_Program,
 	command_buffer: vk.CommandBuffer,
 ) -> bool {
 	for i in 0 ..< shader.target_usage_count {
 		usage := &shader.target_usages[i]
-		if ez_gfx_shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {
+		if shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {
 			continue
 		}
-		target := ez_gfx_render_target_manager_find(manager, usage.name[:], usage.name_len)
+		target := render_target_manager_find(manager, usage.name[:], usage.name_len)
 		if target == nil {
 			fmt.eprintln("shader target was not acquired before rendering")
 			return false
 		}
-		ez_gfx_render_target_transition_for_access(target, usage.access, command_buffer)
+		render_target_transition_for_access(target, usage.access, command_buffer)
 	}
 	return true
 }
 
-ez_gfx_render_target_destroy :: proc(target: ^Ez_Gfx_Render_Target_Texture) {
-	ctx := ez_gfx_get_current_ctx()
+render_target_destroy :: proc(target: ^Ez_Gfx_Render_Target_Texture) {
+	ctx := get_current_ctx()
 	if ctx == nil || ctx.device == nil do return
 	if target.sampler != vk.Sampler(0) {
 		vk.DestroySampler(ctx.device, target.sampler, nil)
@@ -769,14 +732,14 @@ ez_gfx_render_target_destroy :: proc(target: ^Ez_Gfx_Render_Target_Texture) {
 	target^ = {}
 }
 
-ez_gfx_render_target_manager_clear :: proc(manager: ^Ez_Gfx_Render_Target_Manager) {
+render_target_manager_clear :: proc(manager: ^Ez_Gfx_Render_Target_Manager) {
 	for i in 0 ..< manager.count {
-		ez_gfx_render_target_destroy(&manager.targets[i])
+		render_target_destroy(&manager.targets[i])
 	}
 	manager.count = 0
 	manager.version += 1
 }
 
-ez_gfx_render_target_manager_destroy :: proc(manager: ^Ez_Gfx_Render_Target_Manager) {
-	ez_gfx_render_target_manager_clear(manager)
+render_target_manager_destroy :: proc(manager: ^Ez_Gfx_Render_Target_Manager) {
+	render_target_manager_clear(manager)
 }

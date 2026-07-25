@@ -83,7 +83,7 @@ public sealed class GraphicsWindow : GraphicsResource
         }
         NativeErrors.ThrowIfFailed(
             "Framebuffer size query",
-            EzGfxNative.EzGfxCSurfaceGetExtent(NativeValue, out uint width, out uint height));
+            EzGfxNative.EzGfxCSurfaceGetExtent(NativeValue, out uint width, out uint height, Owner.ContextValue));
         return (width, height);
     }
 
@@ -155,7 +155,7 @@ public sealed class VertexManager : GraphicsResource
         }
         NativeErrors.ThrowIfFailed(
             "Vertex heap creation",
-            EzGfxNative.EzGfxCVertexHeapCreate(Owner.ContextValue, name, capacity, stride));
+            EzGfxNative.EzGfxCVertexHeapCreate(name, capacity, stride, Owner.ContextValue));
     }
 
     public uint UploadIndices(ReadOnlySpan<uint> indices) => Owner.UploadIndices(this, indices);
@@ -199,13 +199,14 @@ public sealed class IndirectBuffer : GraphicsResource
                 command.InstanceCount,
                 command.FirstIndex,
                 command.VertexOffset,
-                command.FirstInstance));
+                command.FirstInstance,
+                Owner.ContextValue));
     }
 
     public void SetDrawCount(uint count)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        NativeErrors.ThrowIfFailed("Indirect draw count", EzGfxNative.EzGfxCIndirectSetDrawCount(NativeValue, count));
+        NativeErrors.ThrowIfFailed("Indirect draw count", EzGfxNative.EzGfxCIndirectSetDrawCount(NativeValue, count, Owner.ContextValue));
     }
 
     public override void Dispose()
@@ -240,7 +241,7 @@ public sealed class StructuredBuffer : GraphicsResource
         {
             throw new ArgumentException("Structured data must not be empty.", nameof(data));
         }
-        NativeErrors.ThrowIfFailed("Structured buffer write", EzGfxNative.EzGfxCStructuredWrite(NativeValue, data));
+        NativeErrors.ThrowIfFailed("Structured buffer write", EzGfxNative.EzGfxCStructuredWrite(NativeValue, data, Owner.ContextValue));
     }
 
     public override void Dispose()

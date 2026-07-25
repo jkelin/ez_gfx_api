@@ -270,7 +270,11 @@ orbit_camera_view :: proc(camera: ^Orbit_Camera) -> Mat4 {
 }
 
 window_aspect :: proc(window: ^gfx.Ez_Gfx_Window) -> f32 {
-	width, height := gfx.ez_gfx_window_get_framebuffer_size(window)
+	width, height, framebuffer_status := gfx.ez_gfx_window_get_framebuffer_size(window)
+	if framebuffer_status != .Ok {
+		width = 1
+		height = 1
+	}
 	if width <= 0 do width = 1
 	if height <= 0 do height = 1
 	return f32(width) / f32(height)

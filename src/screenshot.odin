@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import "core:c"
@@ -8,12 +9,12 @@ import "core:sync"
 import stbi "vendor:stb/image"
 import vk "vendor:vulkan"
 
-SCREENSHOT_PATH :: "screenshot.png"
+EZ_GFX_INTERNAL_SCREENSHOT_PATH :: "screenshot.png"
 SCREENSHOT_JPEG_QUALITY :: 90
 
 // Saves the last presented swapchain image to a PNG or JPEG file for automated verification.
-ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> bool {
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	swapchain := &window.swapchain
@@ -30,7 +31,7 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 	}
 
 	bgra: []u8
-	if !ez_gfx_screenshot_read_swapchain_bgra(swapchain, &bgra) {
+	if !screenshot_read_swapchain_bgra(swapchain, &bgra) {
 		fmt.eprintln("failed to read swapchain image")
 		return false
 	}
@@ -39,24 +40,24 @@ ez_gfx_screenshot_save_window :: proc(window: ^Ez_Gfx_Window, path: string) -> b
 	ext := strings.to_lower(filepath.ext(path))
 	switch ext {
 	case ".png":
-		return ez_gfx_screenshot_write_png(path, width, height, bgra)
+		return screenshot_write_png(path, width, height, bgra)
 	case ".jpg", ".jpeg":
-		return ez_gfx_screenshot_write_jpg(path, width, height, bgra)
+		return screenshot_write_jpg(path, width, height, bgra)
 	case:
 		fmt.eprintf("unsupported screenshot extension %q (use .png, .jpg, or .jpeg)\n", ext)
 		return false
 	}
 }
 
-ez_gfx_screenshot_read_swapchain_bgra :: proc(
+screenshot_read_swapchain_bgra :: proc(
 	swapchain: ^Ez_Gfx_Swapchain,
 	pixels: ^[]u8,
 ) -> bool {
 	if swapchain != nil && swapchain.presented_snapshot_valid {
-		return ez_gfx_screenshot_clone_pixels(swapchain.presented_snapshot_pixels, pixels)
+		return screenshot_clone_pixels(swapchain.presented_snapshot_pixels, pixels)
 	}
 
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	width := int(swapchain.extent.width)
@@ -66,7 +67,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 
 	command_buffer := ctx.frame_slots[0].command_buffers[EZ_GFX_MAX_RENDER_PIPELINES]
 
-	staging, staging_ok := ez_gfx_buffer_create(
+	staging, staging_ok := buffer_create(
 		buffer_size,
 		{.TRANSFER_DST},
 		{.HOST_VISIBLE, .HOST_COHERENT},
@@ -74,9 +75,9 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		0.3,
 	)
 	if !staging_ok do return false
-	defer ez_gfx_buffer_destroy(&staging)
+	defer buffer_destroy(&staging)
 
-	if !ez_gfx_ctx_wait_timeline(ctx, ctx.frame_slots[0].last_submitted_timeline) {
+	if !ctx_wait_timeline(ctx, ctx.frame_slots[0].last_submitted_timeline) {
 		return false
 	}
 
@@ -88,10 +89,10 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		fmt.eprintln("failed to create screenshot acquire semaphore")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.SEMAPHORE,
-		ez_gfx_debug_handle(image_available),
+		debug_handle(image_available),
 		"ez_gfx screenshot acquire semaphore",
 	)
 	defer vk.DestroySemaphore(ctx.device, image_available, nil)
@@ -109,7 +110,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		fmt.eprintf("failed to acquire swapchain image for screenshot: %v\n", acquire_result)
 		return false
 	}
-	if !ez_gfx_ctx_wait_timeline(ctx, swapchain.last_write_timeline[image_index]) {
+	if !ctx_wait_timeline(ctx, swapchain.last_write_timeline[image_index]) {
 		return false
 	}
 	image := swapchain.images[image_index]
@@ -125,14 +126,14 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		return false
 	}
 
-	ez_gfx_transition_image(
+	transition_image(
 		command_buffer,
 		image,
 		old_layout,
 		.TRANSFER_SRC_OPTIMAL,
-		ez_gfx_image_layout_src_access(old_layout),
+		image_layout_src_access(old_layout),
 		{.TRANSFER_READ},
-		ez_gfx_image_layout_src_stage(old_layout),
+		image_layout_src_stage(old_layout),
 		{.TRANSFER},
 	)
 
@@ -162,7 +163,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		&region,
 	)
 
-	ez_gfx_transition_image(
+	transition_image(
 		command_buffer,
 		image,
 		.TRANSFER_SRC_OPTIMAL,
@@ -179,12 +180,12 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		return false
 	}
 
-	signal_value := ez_gfx_ctx_next_timeline_value(ctx)
-	if !ez_gfx_screenshot_submit_copy(ctx, command_buffer, image_available, signal_value) {
+	signal_value := ctx_next_timeline_value(ctx)
+	if !screenshot_submit_copy(ctx, command_buffer, image_available, signal_value) {
 		fmt.eprintln("failed to submit screenshot copy")
 		return false
 	}
-	if !ez_gfx_ctx_wait_timeline(ctx, signal_value) {
+	if !ctx_wait_timeline(ctx, signal_value) {
 		fmt.eprintln("failed to wait for screenshot copy")
 		return false
 	}
@@ -212,7 +213,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 		return false
 	}
 
-	if !ez_gfx_buffer_read_at(&staging, 0, pixel_data) {
+	if !buffer_read_at(&staging, 0, pixel_data) {
 		delete(pixel_data)
 		fmt.eprintln("failed to map screenshot staging buffer")
 		return false
@@ -222,7 +223,7 @@ ez_gfx_screenshot_read_swapchain_bgra :: proc(
 	return true
 }
 
-ez_gfx_screenshot_submit_copy :: proc(
+screenshot_submit_copy :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	command_buffer: vk.CommandBuffer,
 	image_available: vk.Semaphore,
@@ -258,8 +259,8 @@ ez_gfx_screenshot_submit_copy :: proc(
 	return result == .SUCCESS
 }
 
-ez_gfx_screenshot_write_png :: proc(path: string, width, height: int, bgra: []u8) -> bool {
-	rgba, conv_ok := ez_gfx_screenshot_bgra_to_rgba(bgra, width, height)
+screenshot_write_png :: proc(path: string, width, height: int, bgra: []u8) -> bool {
+	rgba, conv_ok := screenshot_bgra_to_rgba(bgra, width, height)
 	if !conv_ok do return false
 	defer delete(rgba)
 
@@ -275,8 +276,8 @@ ez_gfx_screenshot_write_png :: proc(path: string, width, height: int, bgra: []u8
 	return true
 }
 
-ez_gfx_screenshot_write_jpg :: proc(path: string, width, height: int, bgra: []u8) -> bool {
-	rgb, conv_ok := ez_gfx_screenshot_bgra_to_rgb(bgra, width, height)
+screenshot_write_jpg :: proc(path: string, width, height: int, bgra: []u8) -> bool {
+	rgb, conv_ok := screenshot_bgra_to_rgb(bgra, width, height)
 	if !conv_ok do return false
 	defer delete(rgb)
 
@@ -298,7 +299,7 @@ ez_gfx_screenshot_write_jpg :: proc(path: string, width, height: int, bgra: []u8
 	return true
 }
 
-ez_gfx_screenshot_bgra_to_rgba :: proc(bgra: []u8, width, height: int) -> (rgba: []u8, ok: bool) {
+screenshot_bgra_to_rgba :: proc(bgra: []u8, width, height: int) -> (rgba: []u8, ok: bool) {
 	pixel_count := width * height
 	out, alloc_err := make([]u8, pixel_count * 4)
 	if alloc_err != nil {
@@ -317,7 +318,7 @@ ez_gfx_screenshot_bgra_to_rgba :: proc(bgra: []u8, width, height: int) -> (rgba:
 	return out, true
 }
 
-ez_gfx_screenshot_bgra_to_rgb :: proc(bgra: []u8, width, height: int) -> (rgb: []u8, ok: bool) {
+screenshot_bgra_to_rgb :: proc(bgra: []u8, width, height: int) -> (rgb: []u8, ok: bool) {
 	pixel_count := width * height
 	out, alloc_err := make([]u8, pixel_count * 3)
 	if alloc_err != nil {
@@ -335,7 +336,7 @@ ez_gfx_screenshot_bgra_to_rgb :: proc(bgra: []u8, width, height: int) -> (rgb: [
 	return out, true
 }
 
-ez_gfx_screenshot_clone_pixels :: proc(source: []u8, pixels: ^[]u8) -> bool {
+screenshot_clone_pixels :: proc(source: []u8, pixels: ^[]u8) -> bool {
 	if len(source) == 0 do return false
 	cloned, alloc_err := make([]u8, len(source))
 	if alloc_err != nil {
@@ -349,11 +350,11 @@ ez_gfx_screenshot_clone_pixels :: proc(source: []u8, pixels: ^[]u8) -> bool {
 
 // Copies the rendered swapchain image to CPU memory before present so hidden test windows
 // can read back the exact frame that was just rendered.
-ez_gfx_swapchain_cache_presented_snapshot :: proc(
+swapchain_cache_presented_snapshot :: proc(
 	swapchain: ^Ez_Gfx_Swapchain,
 	image_index: u32,
 ) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil || swapchain == nil do return false
 
 	width := int(swapchain.extent.width)
@@ -366,7 +367,7 @@ ez_gfx_swapchain_cache_presented_snapshot :: proc(
 	buffer_size := vk.DeviceSize(byte_count)
 
 	command_buffer := ctx.frame_slots[0].command_buffers[EZ_GFX_MAX_RENDER_PIPELINES]
-	staging, staging_ok := ez_gfx_buffer_create(
+	staging, staging_ok := buffer_create(
 		buffer_size,
 		{.TRANSFER_DST},
 		{.HOST_VISIBLE, .HOST_COHERENT},
@@ -374,7 +375,7 @@ ez_gfx_swapchain_cache_presented_snapshot :: proc(
 		0.3,
 	)
 	if !staging_ok do return false
-	defer ez_gfx_buffer_destroy(&staging)
+	defer buffer_destroy(&staging)
 
 	image := swapchain.images[image_index]
 	old_layout := swapchain.image_layouts[image_index]
@@ -389,14 +390,14 @@ ez_gfx_swapchain_cache_presented_snapshot :: proc(
 		return false
 	}
 
-	ez_gfx_transition_image(
+	transition_image(
 		command_buffer,
 		image,
 		old_layout,
 		.TRANSFER_SRC_OPTIMAL,
-		ez_gfx_image_layout_src_access(old_layout),
+		image_layout_src_access(old_layout),
 		{.TRANSFER_READ},
-		ez_gfx_image_layout_src_stage(old_layout),
+		image_layout_src_stage(old_layout),
 		{.TRANSFER},
 	)
 
@@ -426,7 +427,7 @@ ez_gfx_swapchain_cache_presented_snapshot :: proc(
 		&region,
 	)
 
-	ez_gfx_transition_image(
+	transition_image(
 		command_buffer,
 		image,
 		.TRANSFER_SRC_OPTIMAL,
@@ -443,12 +444,12 @@ ez_gfx_swapchain_cache_presented_snapshot :: proc(
 		return false
 	}
 
-	signal_value := ez_gfx_ctx_next_timeline_value(ctx)
-	if !ez_gfx_screenshot_submit_copy_no_wait(ctx, command_buffer, signal_value) {
+	signal_value := ctx_next_timeline_value(ctx)
+	if !screenshot_submit_copy_no_wait(ctx, command_buffer, signal_value) {
 		fmt.eprintln("failed to submit snapshot cache copy")
 		return false
 	}
-	if !ez_gfx_ctx_wait_timeline(ctx, signal_value) {
+	if !ctx_wait_timeline(ctx, signal_value) {
 		fmt.eprintln("failed to wait for snapshot cache copy")
 		return false
 	}
@@ -463,7 +464,7 @@ ez_gfx_swapchain_cache_presented_snapshot :: proc(
 		}
 		swapchain.presented_snapshot_pixels = pixels
 	}
-	if !ez_gfx_buffer_read_at(&staging, 0, swapchain.presented_snapshot_pixels) {
+	if !buffer_read_at(&staging, 0, swapchain.presented_snapshot_pixels) {
 		fmt.eprintln("failed to read cached snapshot staging buffer")
 		return false
 	}
@@ -471,7 +472,7 @@ ez_gfx_swapchain_cache_presented_snapshot :: proc(
 	return true
 }
 
-ez_gfx_screenshot_submit_copy_no_wait :: proc(
+screenshot_submit_copy_no_wait :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	command_buffer: vk.CommandBuffer,
 	signal_value: u64,

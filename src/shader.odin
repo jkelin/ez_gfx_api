@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
@@ -8,9 +9,9 @@ import "core:slice"
 import "core:strings"
 import vk "vendor:vulkan"
 
-EZ_GFX_DEFAULT_VERTEX_ENTRY :: cstring("vertexmain")
-EZ_GFX_DEFAULT_FRAGMENT_ENTRY :: cstring("fragmentmain")
-EZ_GFX_DEFAULT_COMPUTE_ENTRY :: cstring("computemain")
+EZ_GFX_INTERNAL_DEFAULT_VERTEX_ENTRY :: cstring("vertexmain")
+EZ_GFX_INTERNAL_DEFAULT_FRAGMENT_ENTRY :: cstring("fragmentmain")
+EZ_GFX_INTERNAL_DEFAULT_COMPUTE_ENTRY :: cstring("computemain")
 // Slang resolves `import ez_gfx;` against this directory (src/ez_gfx.slang).
 EZ_GFX_SLANG_MODULE_SEARCH_PATH :: cstring("src")
 SLANG_VERTEX_HEAP_ATTRIBUTE :: "VertexHeap"
@@ -28,106 +29,30 @@ EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS :: 8
 EZ_GFX_SHADER_TARGET_NAME_MAX :: 32
 EZ_GFX_MAX_PUSH_CONSTANT_BYTES :: 128
 
-Ez_Gfx_Shader_Stage :: enum u8 {
-	Vertex,
-	Fragment,
-	Compute,
-}
 
-Ez_Gfx_Shader_Kind :: enum u8 {
-	Graphics,
-	Compute,
-}
 
-Ez_Gfx_Target_Access :: enum u8 {
-	Read,
-	Write,
-	Read_Write,
-}
 
-Ez_Gfx_Render_Target_Kind :: enum u8 {
-	Color,
-	Depth,
-}
 
-Ez_Gfx_Blend_Mode :: enum u8 {
-	None,
-	Alpha,
-}
 
-Ez_Gfx_Vertex_Heap_Binding :: struct {
-	name:     [EZ_GFX_VERTEX_HEAP_NAME_MAX]byte,
-	name_len: int,
-	binding:  u32,
-	set:      u32,
-}
 
-Ez_Gfx_Structured_Buffer_Binding :: struct {
-	name:     [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte,
-	name_len: int,
-	binding:  u32,
-	set:      u32,
-	access:   Ez_Gfx_Buffer_Access,
-	stages:   vk.ShaderStageFlags,
-}
 
-Ez_Gfx_Shader_Target_Usage :: struct {
-	name:                   [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:               int,
-	access:                 Ez_Gfx_Target_Access,
-	stage:                  Ez_Gfx_Shader_Stage,
-	core:                   bool,
-	color_attachment_index: u32,
-}
 
-Ez_Gfx_Shader_Target_Declaration :: struct {
-	name:                [EZ_GFX_SHADER_TARGET_NAME_MAX]byte,
-	name_len:            int,
-	relative_scale:      f32,
-	kind:                Ez_Gfx_Render_Target_Kind,
-	format:              vk.Format,
-	binding:             u32,
-	set:                 u32,
-	storage:             bool,
-	load_on_frame_begin: bool,
-}
 
-Ez_Gfx_Shader_Program :: struct {
-	desc:                      Ez_Gfx_Shader_Desc,
-	identity:                  u64,
-	module:                    vk.ShaderModule,
-	vertex_heap_bindings:      [EZ_GFX_MAX_SHADER_VERTEX_HEAP_BINDINGS]Ez_Gfx_Vertex_Heap_Binding,
-	vertex_heap_binding_count: int,
-	structured_buffer_bindings:      [EZ_GFX_MAX_SHADER_STRUCTURED_BUFFER_BINDINGS]Ez_Gfx_Structured_Buffer_Binding,
-	structured_buffer_binding_count: int,
-	target_usages:             [EZ_GFX_MAX_SHADER_TARGET_USAGES]Ez_Gfx_Shader_Target_Usage,
-	target_usage_count:        int,
-	target_declarations:       [EZ_GFX_MAX_SHADER_TARGET_DECLARATIONS]Ez_Gfx_Shader_Target_Declaration,
-	target_declaration_count:  int,
-	push_constant_size:        u32,
-	blend_mode:                Ez_Gfx_Blend_Mode,
-}
 
-Ez_Gfx_Shader_Desc :: struct {
-	path:           cstring,
-	vertex_entry:   cstring,
-	fragment_entry: cstring,
-	compute_entry:  cstring,
-	kind:           Ez_Gfx_Shader_Kind,
-}
 
-@(private)
-Ez_Gfx_Slang_Linked_Program :: struct {
-	session:        ^sp.ISession,
-	shared_module: ^sp.IModule,
-	slang_module:   ^sp.IModule,
-	vertex_entry:   ^sp.IEntryPoint,
-	fragment_entry: ^sp.IEntryPoint,
-	compute_entry:  ^sp.IEntryPoint,
-	linked_program: ^sp.IComponentType,
-}
 
-ez_gfx_slang_check :: proc(result: sp.Result, loc := #caller_location) -> bool {
+
+
+
+
+
+
+
+
+
+
+
+slang_check :: proc(result: sp.Result, loc := #caller_location) -> bool {
 	if sp.FAILED(result) {
 		code := sp.GET_RESULT_CODE(result)
 		facility := sp.GET_RESULT_FACILITY(result)
@@ -138,7 +63,7 @@ ez_gfx_slang_check :: proc(result: sp.Result, loc := #caller_location) -> bool {
 }
 
 @(private)
-ez_gfx_slang_blob_release :: proc(blob: ^^sp.IBlob) {
+slang_blob_release :: proc(blob: ^^sp.IBlob) {
 	if blob != nil && blob^ != nil {
 		blob^->release()
 		blob^ = nil
@@ -146,19 +71,19 @@ ez_gfx_slang_blob_release :: proc(blob: ^^sp.IBlob) {
 }
 
 @(private)
-ez_gfx_slang_diagnostics_check :: proc(diagnostics: ^^sp.IBlob) -> bool {
+slang_diagnostics_check :: proc(diagnostics: ^^sp.IBlob) -> bool {
 	if diagnostics == nil || diagnostics^ == nil do return true
 	buffer := slice.bytes_from_ptr(
 		diagnostics^->getBufferPointer(),
 		int(diagnostics^->getBufferSize()),
 	)
 	fmt.eprintf("Slang diagnostics:\n%v\n", string(buffer))
-	ez_gfx_slang_blob_release(diagnostics)
+	slang_blob_release(diagnostics)
 	return false
 }
 
 @(private)
-ez_gfx_slang_linked_program_release :: proc(program: ^Ez_Gfx_Slang_Linked_Program) {
+slang_linked_program_release :: proc(program: ^Ez_Gfx_Slang_Linked_Program) {
 	if program == nil do return
 	// Directly releasing module/entry/composite handles corrupts Slang's heap; the session owns them.
 	if program.session != nil {
@@ -174,8 +99,8 @@ ez_gfx_slang_linked_program_release :: proc(program: ^Ez_Gfx_Slang_Linked_Progra
 }
 
 // Creates the long-lived Slang global session used for shader compilation.
-ez_gfx_shader_init_session :: proc() -> bool {
-	ctx := ez_gfx_get_current_ctx()
+shader_init_session :: proc() -> bool {
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 	if ctx.slang_session != nil do return true
 	if sp.createGlobalSession(sp.API_VERSION, &ctx.slang_session) != sp.OK {
@@ -185,50 +110,50 @@ ez_gfx_shader_init_session :: proc() -> bool {
 	return true
 }
 
-ez_gfx_shader_destroy_session :: proc(ctx: ^Ez_Gfx_Ctx) {
+shader_destroy_session :: proc(ctx: ^Ez_Gfx_Ctx) {
 	if ctx.slang_session != nil {
 		ctx.slang_session->release()
 		ctx.slang_session = nil
 	}
 }
 
-ez_gfx_shader_prepare_desc :: proc(desc: Ez_Gfx_Shader_Desc) -> Ez_Gfx_Shader_Desc {
+shader_prepare_desc :: proc(desc: Ez_Gfx_Shader_Desc) -> Ez_Gfx_Shader_Desc {
 	shader_desc := desc
 	if shader_desc.kind == .Compute {
-		if shader_desc.compute_entry == nil do shader_desc.compute_entry = EZ_GFX_DEFAULT_COMPUTE_ENTRY
+		if shader_desc.compute_entry == nil do shader_desc.compute_entry = EZ_GFX_INTERNAL_DEFAULT_COMPUTE_ENTRY
 	} else {
-		if shader_desc.vertex_entry == nil do shader_desc.vertex_entry = EZ_GFX_DEFAULT_VERTEX_ENTRY
-		if shader_desc.fragment_entry == nil do shader_desc.fragment_entry = EZ_GFX_DEFAULT_FRAGMENT_ENTRY
+		if shader_desc.vertex_entry == nil do shader_desc.vertex_entry = EZ_GFX_INTERNAL_DEFAULT_VERTEX_ENTRY
+		if shader_desc.fragment_entry == nil do shader_desc.fragment_entry = EZ_GFX_INTERNAL_DEFAULT_FRAGMENT_ENTRY
 	}
 	return shader_desc
 }
 
 // Reflects shader metadata without creating a Vulkan shader module.
-ez_gfx_shader_reflect :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_Program) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+shader_reflect :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_Program) -> bool {
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 	if ctx.slang_session == nil {
-		if !ez_gfx_shader_init_session() do return false
+		if !shader_init_session() do return false
 	}
 	program^ = {}
-	shader_desc := ez_gfx_shader_prepare_desc(desc)
+	shader_desc := shader_prepare_desc(desc)
 	program.desc = shader_desc
-	program.identity = ez_gfx_shader_desc_identity(shader_desc)
+	program.identity = shader_desc_identity(shader_desc)
 
 	// Render targets are part of the engine contract, not just SPIR-V usage.
 	// This unoptimized metadata pass preserves declarations that the final
 	// optimized shader could otherwise remove as unused.
 	diagnostics: ^sp.IBlob
-	linked_program, linked_program_ok := ez_gfx_shader_create_linked_program(
+	linked_program, linked_program_ok := shader_create_linked_program(
 		shader_desc,
 		.NONE,
 		true,
 		&diagnostics,
 	)
 	if !linked_program_ok do return false
-	defer ez_gfx_slang_linked_program_release(&linked_program)
+	defer slang_linked_program_release(&linked_program)
 
-	if !ez_gfx_shader_reflect_metadata(linked_program.linked_program, program, &diagnostics) {
+	if !shader_reflect_metadata(linked_program.linked_program, program, &diagnostics) {
 		return false
 	}
 
@@ -236,31 +161,31 @@ ez_gfx_shader_reflect :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_
 }
 
 // Compiles a Slang shader to SPIR-V and creates a Vulkan shader module.
-ez_gfx_shader_compile :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_Program) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+shader_compile :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_Program) -> bool {
+	ctx := get_current_ctx()
 	if ctx == nil do return false
-	if !ez_gfx_shader_reflect(desc, program) do return false
+	if !shader_reflect(desc, program) do return false
 
 	diagnostics: ^sp.IBlob
-	linked_program, linked_program_ok := ez_gfx_shader_create_linked_program(
+	linked_program, linked_program_ok := shader_create_linked_program(
 		program.desc,
 		.DEFAULT,
 		false,
 		&diagnostics,
 	)
 	if !linked_program_ok do return false
-	defer ez_gfx_slang_linked_program_release(&linked_program)
+	defer slang_linked_program_release(&linked_program)
 
 	target_code: ^sp.IBlob
-	defer ez_gfx_slang_blob_release(&target_code)
+	defer slang_blob_release(&target_code)
 	diagnostics = nil
-	if !ez_gfx_slang_check(
+	if !slang_check(
 		linked_program.linked_program->getTargetCode(0, &target_code, &diagnostics),
 	) {
-		_ = ez_gfx_slang_diagnostics_check(&diagnostics)
+		_ = slang_diagnostics_check(&diagnostics)
 		return false
 	}
-	if !ez_gfx_slang_diagnostics_check(&diagnostics) do return false
+	if !slang_diagnostics_check(&diagnostics) do return false
 
 	code_size := target_code->getBufferSize()
 
@@ -273,17 +198,17 @@ ez_gfx_shader_compile :: proc(desc: Ez_Gfx_Shader_Desc, program: ^Ez_Gfx_Shader_
 		fmt.eprintln("failed to create Vulkan shader module")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.SHADER_MODULE,
-		ez_gfx_debug_handle(program.module),
+		debug_handle(program.module),
 		program.desc.path,
 	)
 
 	return true
 }
 
-ez_gfx_shader_create_linked_program :: proc(
+shader_create_linked_program :: proc(
 	shader_desc: Ez_Gfx_Shader_Desc,
 	optimization: sp.OptimizationLevel,
 	preserve_parameters: bool,
@@ -292,7 +217,7 @@ ez_gfx_shader_create_linked_program :: proc(
 	program: Ez_Gfx_Slang_Linked_Program,
 	ok: bool,
 ) {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return
 
 	target_desc := sp.TargetDesc {
@@ -318,7 +243,7 @@ ez_gfx_shader_create_linked_program :: proc(
 	slang_search_paths: [2]cstring
 	slang_search_paths[0] = EZ_GFX_SLANG_MODULE_SEARCH_PATH
 	search_path_count := 1
-	if resolved_path, resolved_search_path, resolved := ez_gfx_shader_resolve_load_path(
+	if resolved_path, resolved_search_path, resolved := shader_resolve_load_path(
 		shader_desc.path,
 	); resolved {
 		shader_path = resolved_path
@@ -327,7 +252,7 @@ ez_gfx_shader_create_linked_program :: proc(
 			search_path_count += 1
 		}
 	}
-	if !ez_gfx_shader_validate_source_attributes(shader_path) do return
+	if !shader_validate_source_attributes(shader_path) do return
 	session_desc := sp.SessionDesc {
 		structureSize            = size_of(sp.SessionDesc),
 		targets                  = &target_desc,
@@ -341,31 +266,31 @@ ez_gfx_shader_create_linked_program :: proc(
 	cleanup_on_failure := true
 	defer {
 		if cleanup_on_failure {
-			ez_gfx_slang_linked_program_release(&program)
+			slang_linked_program_release(&program)
 		}
 	}
 
-	if !ez_gfx_slang_check(ctx.slang_session->createSession(session_desc, &program.session)) {
+	if !slang_check(ctx.slang_session->createSession(session_desc, &program.session)) {
 		return
 	}
 
 	diagnostics^ = nil
 	program.slang_module = program.session->loadModule(shader_path, diagnostics)
 	if program.slang_module == nil {
-		_ = ez_gfx_slang_diagnostics_check(diagnostics)
+		_ = slang_diagnostics_check(diagnostics)
 		fmt.eprintln("failed to load Slang shader module")
 		return
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
+	if !slang_diagnostics_check(diagnostics) do return
 
 	diagnostics^ = nil
 	program.shared_module = program.session->loadModule("ez_gfx", diagnostics)
 	if program.shared_module == nil {
-		_ = ez_gfx_slang_diagnostics_check(diagnostics)
+		_ = slang_diagnostics_check(diagnostics)
 		fmt.eprintln("failed to load shared ez_gfx Slang module")
 		return
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
+	if !slang_diagnostics_check(diagnostics) do return
 
 	components: [4]^sp.IComponentType
 	component_count := 0
@@ -375,7 +300,7 @@ ez_gfx_shader_create_linked_program :: proc(
 	component_count += 1
 
 	if shader_desc.kind == .Compute {
-		if !ez_gfx_slang_check(
+		if !slang_check(
 			program.slang_module->findEntryPointByName(
 				shader_desc.compute_entry,
 				&program.compute_entry,
@@ -390,7 +315,7 @@ ez_gfx_shader_create_linked_program :: proc(
 		components[component_count] = program.compute_entry
 		component_count += 1
 	} else {
-		if !ez_gfx_slang_check(
+		if !slang_check(
 			program.slang_module->findEntryPointByName(
 				shader_desc.vertex_entry,
 				&program.vertex_entry,
@@ -403,7 +328,7 @@ ez_gfx_shader_create_linked_program :: proc(
 			return
 		}
 
-		if !ez_gfx_slang_check(
+		if !slang_check(
 			program.slang_module->findEntryPointByName(
 				shader_desc.fragment_entry,
 				&program.fragment_entry,
@@ -421,7 +346,7 @@ ez_gfx_shader_create_linked_program :: proc(
 		component_count += 1
 	}
 	diagnostics^ = nil
-	if !ez_gfx_slang_check(
+	if !slang_check(
 		program.session->createCompositeComponentType(
 			&components[0],
 			component_count,
@@ -429,17 +354,17 @@ ez_gfx_shader_create_linked_program :: proc(
 			diagnostics,
 		),
 	) {
-		_ = ez_gfx_slang_diagnostics_check(diagnostics)
+		_ = slang_diagnostics_check(diagnostics)
 		return
 	}
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return
+	if !slang_diagnostics_check(diagnostics) do return
 	cleanup_on_failure = false
 	ok = true
 	return
 }
 
-ez_gfx_shader_validate_source_attributes :: proc(path: cstring) -> bool {
-	source_path := ez_gfx_shader_cstring_to_string(path)
+shader_validate_source_attributes :: proc(path: cstring) -> bool {
+	source_path := shader_cstring_to_string(path)
 	if len(source_path) == 0 do return true
 
 	source_bytes, read_err := os.read_entire_file(source_path, context.temp_allocator)
@@ -447,7 +372,7 @@ ez_gfx_shader_validate_source_attributes :: proc(path: cstring) -> bool {
 		return true
 	}
 	source := string(source_bytes)
-	if ez_gfx_shader_source_has_load_target_arguments(source) {
+	if shader_source_has_load_target_arguments(source) {
 		// Slang currently crashes on this zero-field attribute misuse, so fail before loadModule.
 		fmt.eprintln("LoadTarget attribute does not take arguments")
 		return false
@@ -455,7 +380,7 @@ ez_gfx_shader_validate_source_attributes :: proc(path: cstring) -> bool {
 	return true
 }
 
-ez_gfx_shader_source_has_load_target_arguments :: proc(source: string) -> bool {
+shader_source_has_load_target_arguments :: proc(source: string) -> bool {
 	i := 0
 	for i < len(source) {
 		if i + 1 < len(source) && source[i] == '/' && source[i + 1] == '/' {
@@ -491,12 +416,12 @@ ez_gfx_shader_source_has_load_target_arguments :: proc(source: string) -> bool {
 		}
 		if source[i] == '[' {
 			i += 1
-			i = ez_gfx_shader_skip_slang_whitespace(source, i)
+			i = shader_skip_slang_whitespace(source, i)
 			if i + len(SLANG_LOAD_TARGET_ATTRIBUTE) <= len(source) &&
 			   source[i:i + len(SLANG_LOAD_TARGET_ATTRIBUTE)] == SLANG_LOAD_TARGET_ATTRIBUTE {
 				end := i + len(SLANG_LOAD_TARGET_ATTRIBUTE)
-				if end >= len(source) || !ez_gfx_shader_is_identifier_byte(source[end]) {
-					end = ez_gfx_shader_skip_slang_whitespace(source, end)
+				if end >= len(source) || !shader_is_identifier_byte(source[end]) {
+					end = shader_skip_slang_whitespace(source, end)
 					if end < len(source) && source[end] == '(' {
 						return true
 					}
@@ -509,7 +434,7 @@ ez_gfx_shader_source_has_load_target_arguments :: proc(source: string) -> bool {
 	return false
 }
 
-ez_gfx_shader_skip_slang_whitespace :: proc(source: string, index: int) -> int {
+shader_skip_slang_whitespace :: proc(source: string, index: int) -> int {
 	i := index
 	for i < len(source) {
 		if source[i] != ' ' && source[i] != '\t' && source[i] != '\n' && source[i] != '\r' {
@@ -520,7 +445,7 @@ ez_gfx_shader_skip_slang_whitespace :: proc(source: string, index: int) -> int {
 	return i
 }
 
-ez_gfx_shader_is_identifier_byte :: proc(value: byte) -> bool {
+shader_is_identifier_byte :: proc(value: byte) -> bool {
 	return(
 		('a' <= value && value <= 'z') ||
 		('A' <= value && value <= 'Z') ||
@@ -529,14 +454,14 @@ ez_gfx_shader_is_identifier_byte :: proc(value: byte) -> bool {
 	)
 }
 
-ez_gfx_shader_resolve_load_path :: proc(
+shader_resolve_load_path :: proc(
 	path: cstring,
 ) -> (
 	resolved_path: cstring,
 	resolved_search_path: cstring,
 	ok: bool,
 ) {
-	path_string := ez_gfx_shader_cstring_to_string(path)
+	path_string := shader_cstring_to_string(path)
 	if len(path_string) == 0 || filepath.is_abs(path_string) {
 		return nil, nil, false
 	}
@@ -554,7 +479,7 @@ ez_gfx_shader_resolve_load_path :: proc(
 			if path_err != nil do return nil, nil, false
 
 			search_path, search_err := filepath.join(
-				[]string{dir, ez_gfx_shader_cstring_to_string(EZ_GFX_SLANG_MODULE_SEARCH_PATH)},
+				[]string{dir, shader_cstring_to_string(EZ_GFX_SLANG_MODULE_SEARCH_PATH)},
 				context.temp_allocator,
 			)
 			if search_err != nil do return candidate_c, nil, true
@@ -563,7 +488,7 @@ ez_gfx_shader_resolve_load_path :: proc(
 			return candidate_c, search_c, true
 		}
 
-		parent, has_parent := ez_gfx_shader_parent_dir(dir)
+		parent, has_parent := shader_parent_dir(dir)
 		if !has_parent do break
 		dir = parent
 	}
@@ -571,7 +496,7 @@ ez_gfx_shader_resolve_load_path :: proc(
 	return nil, nil, false
 }
 
-ez_gfx_shader_cstring_to_string :: proc(value: cstring) -> string {
+shader_cstring_to_string :: proc(value: cstring) -> string {
 	if value == nil do return ""
 	bytes := cast([^]byte)value
 	count := 0
@@ -581,7 +506,7 @@ ez_gfx_shader_cstring_to_string :: proc(value: cstring) -> string {
 	return string(bytes[:count])
 }
 
-ez_gfx_shader_parent_dir :: proc(path: string) -> (parent: string, ok: bool) {
+shader_parent_dir :: proc(path: string) -> (parent: string, ok: bool) {
 	if len(path) == 0 do return "", false
 
 	root_len := 0
@@ -611,8 +536,8 @@ ez_gfx_shader_parent_dir :: proc(path: string) -> (parent: string, ok: bool) {
 	return "", false
 }
 
-ez_gfx_shader_destroy :: proc(program: ^Ez_Gfx_Shader_Program) {
-	ctx := ez_gfx_get_current_ctx()
+shader_destroy :: proc(program: ^Ez_Gfx_Shader_Program) {
+	ctx := get_current_ctx()
 	if ctx == nil do return
 	if program.module != vk.ShaderModule(0) {
 		vk.DestroyShaderModule(ctx.device, program.module, nil)
@@ -620,17 +545,17 @@ ez_gfx_shader_destroy :: proc(program: ^Ez_Gfx_Shader_Program) {
 	}
 }
 
-ez_gfx_shader_desc_identity :: proc(desc: Ez_Gfx_Shader_Desc) -> u64 {
+shader_desc_identity :: proc(desc: Ez_Gfx_Shader_Desc) -> u64 {
 	hash: u64 = 14695981039346656037
-	hash = ez_gfx_hash_cstring(hash, desc.path)
-	hash = ez_gfx_hash_cstring(hash, desc.vertex_entry)
-	hash = ez_gfx_hash_cstring(hash, desc.fragment_entry)
-	hash = ez_gfx_hash_cstring(hash, desc.compute_entry)
+	hash = hash_cstring(hash, desc.path)
+	hash = hash_cstring(hash, desc.vertex_entry)
+	hash = hash_cstring(hash, desc.fragment_entry)
+	hash = hash_cstring(hash, desc.compute_entry)
 	hash = (hash ~ u64(desc.kind)) * 1099511628211
 	return hash
 }
 
-ez_gfx_hash_cstring :: proc(hash: u64, value: cstring) -> u64 {
+hash_cstring :: proc(hash: u64, value: cstring) -> u64 {
 	result := hash
 	if value == nil do return result
 	bytes := cast([^]u8)value
@@ -640,38 +565,38 @@ ez_gfx_hash_cstring :: proc(hash: u64, value: cstring) -> u64 {
 	return result
 }
 
-ez_gfx_shader_reflect_metadata :: proc(
+shader_reflect_metadata :: proc(
 	linked_program: ^sp.IComponentType,
 	program: ^Ez_Gfx_Shader_Program,
 	diagnostics: ^^sp.IBlob,
 ) -> bool {
 	diagnostics^ = nil
 	program_layout := linked_program->getLayout(0, diagnostics)
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
+	if !slang_diagnostics_check(diagnostics) do return false
 	if program_layout == nil {
 		fmt.eprintln("failed to get Slang program layout")
 		return false
 	}
 
-	if !ez_gfx_shader_reflect_vertex_heap_bindings_from_layout(program_layout, program) {
+	if !shader_reflect_vertex_heap_bindings_from_layout(program_layout, program) {
 		return false
 	}
-	if !ez_gfx_shader_reflect_structured_buffer_bindings_from_layout(program_layout, program) {
+	if !shader_reflect_structured_buffer_bindings_from_layout(program_layout, program) {
 		return false
 	}
-	if !ez_gfx_shader_reflect_push_constants_from_layout(program_layout, program) {
+	if !shader_reflect_push_constants_from_layout(program_layout, program) {
 		return false
 	}
-	if !ez_gfx_shader_reflect_target_declarations_from_layout(program_layout, program) {
+	if !shader_reflect_target_declarations_from_layout(program_layout, program) {
 		return false
 	}
-	if !ez_gfx_shader_reflect_target_usages_from_layout(program_layout, program) {
+	if !shader_reflect_target_usages_from_layout(program_layout, program) {
 		return false
 	}
-	return ez_gfx_shader_validate_targets(program)
+	return shader_validate_targets(program)
 }
 
-ez_gfx_shader_reflect_push_constants_from_layout :: proc(
+shader_reflect_push_constants_from_layout :: proc(
 	program_layout: ^sp.ProgramLayout,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
@@ -685,7 +610,7 @@ ez_gfx_shader_reflect_push_constants_from_layout :: proc(
 	for i in 0 ..< field_count {
 		field_layout := sp.type_layout_getFieldByIndex(global_type_layout, i)
 		if field_layout == nil do continue
-		if !ez_gfx_shader_variable_layout_has_category(field_layout, .PushConstantBuffer) {
+		if !shader_variable_layout_has_category(field_layout, .PushConstantBuffer) {
 			continue
 		}
 
@@ -698,7 +623,7 @@ ez_gfx_shader_reflect_push_constants_from_layout :: proc(
 		if size == 0 {
 			size = sp.type_layout_getSize(data_layout)
 		}
-		if !ez_gfx_shader_set_push_constant_size(program, size) {
+		if !shader_set_push_constant_size(program, size) {
 			return false
 		}
 	}
@@ -716,7 +641,7 @@ ez_gfx_shader_reflect_push_constants_from_layout :: proc(
 
 		size := sp.type_layout_getSize(data_layout)
 		if size == 0 do continue
-		if !ez_gfx_shader_set_push_constant_size(program, size) {
+		if !shader_set_push_constant_size(program, size) {
 			return false
 		}
 	}
@@ -724,7 +649,7 @@ ez_gfx_shader_reflect_push_constants_from_layout :: proc(
 	return true
 }
 
-ez_gfx_shader_variable_layout_has_category :: proc(
+shader_variable_layout_has_category :: proc(
 	layout: ^sp.VariableLayoutReflection,
 	category: sp.ParameterCategory,
 ) -> bool {
@@ -737,7 +662,7 @@ ez_gfx_shader_variable_layout_has_category :: proc(
 	return sp.variable_layout_getCategory(layout) == category
 }
 
-ez_gfx_shader_set_push_constant_size :: proc(
+shader_set_push_constant_size :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 	size: uint,
 ) -> bool {
@@ -754,26 +679,26 @@ ez_gfx_shader_set_push_constant_size :: proc(
 	return true
 }
 
-ez_gfx_shader_reflect_vertex_heap_bindings :: proc(
+shader_reflect_vertex_heap_bindings :: proc(
 	linked_program: ^sp.IComponentType,
 	program: ^Ez_Gfx_Shader_Program,
 	diagnostics: ^^sp.IBlob,
 ) -> bool {
 	diagnostics^ = nil
 	program_layout := linked_program->getLayout(0, diagnostics)
-	if !ez_gfx_slang_diagnostics_check(diagnostics) do return false
+	if !slang_diagnostics_check(diagnostics) do return false
 	if program_layout == nil {
 		fmt.eprintln("failed to get Slang program layout")
 		return false
 	}
-	return ez_gfx_shader_reflect_vertex_heap_bindings_from_layout(program_layout, program)
+	return shader_reflect_vertex_heap_bindings_from_layout(program_layout, program)
 }
 
-ez_gfx_shader_reflect_vertex_heap_bindings_from_layout :: proc(
+shader_reflect_vertex_heap_bindings_from_layout :: proc(
 	program_layout: ^sp.ProgramLayout,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	global_params := sp.program_layout_getGlobalParamsVarLayout(program_layout)
@@ -812,7 +737,7 @@ ez_gfx_shader_reflect_vertex_heap_bindings_from_layout :: proc(
 		}
 
 		binding := &program.vertex_heap_bindings[program.vertex_heap_binding_count]
-		if !ez_gfx_copy_vertex_heap_binding_name(binding, name, int(name_len)) {
+		if !copy_vertex_heap_binding_name(binding, name, int(name_len)) {
 			return false
 		}
 		binding.binding = sp.variable_layout_getBindingIndex(field_layout)
@@ -823,11 +748,11 @@ ez_gfx_shader_reflect_vertex_heap_bindings_from_layout :: proc(
 	return true
 }
 
-ez_gfx_shader_reflect_structured_buffer_bindings_from_layout :: proc(
+shader_reflect_structured_buffer_bindings_from_layout :: proc(
 	program_layout: ^sp.ProgramLayout,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	global_params := sp.program_layout_getGlobalParamsVarLayout(program_layout)
@@ -867,8 +792,8 @@ ez_gfx_shader_reflect_structured_buffer_bindings_from_layout :: proc(
 
 		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
 		access: Ez_Gfx_Buffer_Access
-		if ez_gfx_shader_try_reflect_structured_buffer_access(field_type_layout, &access) {
-			if !ez_gfx_shader_add_structured_buffer_binding(
+		if shader_try_reflect_structured_buffer_access(field_type_layout, &access) {
+			if !shader_add_structured_buffer_binding(
 				program,
 				name,
 				int(name_len),
@@ -878,7 +803,7 @@ ez_gfx_shader_reflect_structured_buffer_bindings_from_layout :: proc(
 			) {
 				return false
 			}
-		} else if !ez_gfx_shader_reflect_structured_buffer_fields(
+		} else if !shader_reflect_structured_buffer_fields(
 			      program,
 			      name,
 			      int(name_len),
@@ -892,7 +817,7 @@ ez_gfx_shader_reflect_structured_buffer_bindings_from_layout :: proc(
 	return true
 }
 
-ez_gfx_shader_reflect_structured_buffer_fields :: proc(
+shader_reflect_structured_buffer_fields :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 	base_name: cstring,
 	base_name_len: int,
@@ -915,7 +840,7 @@ ez_gfx_shader_reflect_structured_buffer_fields :: proc(
 		if field_layout == nil do continue
 		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
 		access: Ez_Gfx_Buffer_Access
-		if !ez_gfx_shader_try_reflect_structured_buffer_access(field_type_layout, &access) {
+		if !shader_try_reflect_structured_buffer_access(field_type_layout, &access) {
 			continue
 		}
 		field_name := sp.variable_layout_getName(field_layout)
@@ -923,10 +848,10 @@ ez_gfx_shader_reflect_structured_buffer_fields :: proc(
 			fmt.eprintln("StructuredBuffer wrapper field is missing a reflected name")
 			return false
 		}
-		field_name_len := ez_gfx_cstring_len(field_name)
+		field_name_len := cstring_len(field_name)
 		combined_name: [EZ_GFX_STRUCTURED_BUFFER_NAME_MAX]byte
 		combined_name_len: int
-		if !ez_gfx_copy_shader_target_name_with_suffix(
+		if !copy_shader_target_name_with_suffix(
 			combined_name[:],
 			&combined_name_len,
 			base_name,
@@ -936,7 +861,7 @@ ez_gfx_shader_reflect_structured_buffer_fields :: proc(
 		) {
 			return false
 		}
-		if !ez_gfx_shader_add_structured_buffer_binding_bytes(
+		if !shader_add_structured_buffer_binding_bytes(
 			program,
 			combined_name[:],
 			combined_name_len,
@@ -956,7 +881,7 @@ ez_gfx_shader_reflect_structured_buffer_fields :: proc(
 	return true
 }
 
-ez_gfx_shader_add_structured_buffer_binding :: proc(
+shader_add_structured_buffer_binding :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 	name: cstring,
 	name_len: int,
@@ -970,10 +895,10 @@ ez_gfx_shader_add_structured_buffer_binding :: proc(
 		return false
 	}
 	binding := &program.structured_buffer_bindings[program.structured_buffer_binding_count]
-	if !ez_gfx_copy_shader_target_name(binding.name[:], &binding.name_len, name, name_len) {
+	if !copy_shader_target_name(binding.name[:], &binding.name_len, name, name_len) {
 		return false
 	}
-	return ez_gfx_shader_finish_structured_buffer_binding(
+	return shader_finish_structured_buffer_binding(
 		program,
 		binding,
 		layout,
@@ -983,7 +908,7 @@ ez_gfx_shader_add_structured_buffer_binding :: proc(
 	)
 }
 
-ez_gfx_shader_add_structured_buffer_binding_bytes :: proc(
+shader_add_structured_buffer_binding_bytes :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 	name: []byte,
 	name_len: int,
@@ -997,10 +922,10 @@ ez_gfx_shader_add_structured_buffer_binding_bytes :: proc(
 		return false
 	}
 	binding := &program.structured_buffer_bindings[program.structured_buffer_binding_count]
-	if !ez_gfx_copy_shader_target_name(binding.name[:], &binding.name_len, cast(cstring)raw_data(name), name_len) {
+	if !copy_shader_target_name(binding.name[:], &binding.name_len, cast(cstring)raw_data(name), name_len) {
 		return false
 	}
-	return ez_gfx_shader_finish_structured_buffer_binding(
+	return shader_finish_structured_buffer_binding(
 		program,
 		binding,
 		layout,
@@ -1010,7 +935,7 @@ ez_gfx_shader_add_structured_buffer_binding_bytes :: proc(
 	)
 }
 
-ez_gfx_shader_finish_structured_buffer_binding :: proc(
+shader_finish_structured_buffer_binding :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 	binding: ^Ez_Gfx_Structured_Buffer_Binding,
 	layout: ^sp.VariableLayoutReflection,
@@ -1030,12 +955,12 @@ ez_gfx_shader_finish_structured_buffer_binding :: proc(
 		fmt.eprintln("only descriptor set 0 is supported for structured buffers")
 		return false
 	}
-	binding.stages = ez_gfx_shader_desc_stage_flags(program)
+	binding.stages = shader_desc_stage_flags(program)
 	program.structured_buffer_binding_count += 1
 	return true
 }
 
-ez_gfx_shader_try_reflect_structured_buffer_access :: proc(
+shader_try_reflect_structured_buffer_access :: proc(
 	type_layout: ^sp.TypeLayoutReflection,
 	access: ^Ez_Gfx_Buffer_Access,
 ) -> bool {
@@ -1054,7 +979,7 @@ ez_gfx_shader_try_reflect_structured_buffer_access :: proc(
 	return false
 }
 
-ez_gfx_shader_reflect_structured_buffer_access :: proc(
+shader_reflect_structured_buffer_access :: proc(
 	type_layout: ^sp.TypeLayoutReflection,
 	access: ^Ez_Gfx_Buffer_Access,
 ) -> bool {
@@ -1062,17 +987,17 @@ ez_gfx_shader_reflect_structured_buffer_access :: proc(
 		fmt.eprintln("StructuredBuffer reflection is missing type layout")
 		return false
 	}
-	if ez_gfx_shader_try_reflect_structured_buffer_access(type_layout, access) do return true
+	if shader_try_reflect_structured_buffer_access(type_layout, access) do return true
 	fmt.eprintln("StructuredBuffer must reflect as StructuredBuffer or RWStructuredBuffer")
 	return false
 }
 
-ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
+shader_reflect_target_declarations_from_layout :: proc(
 	program_layout: ^sp.ProgramLayout,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
 	if program.desc.kind == .Compute do return true
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	global_params := sp.program_layout_getGlobalParamsVarLayout(program_layout)
@@ -1104,7 +1029,7 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 		}
 
 		relative_scale: f32
-		if !ez_gfx_slang_check(
+		if !slang_check(
 			sp.ReflectionUserAttribute_GetArgumentValueFloat(scale_attribute, 0, &relative_scale),
 		) {
 			fmt.eprintln("RelativeScale attribute argument must be a float")
@@ -1165,14 +1090,14 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 			fmt.eprintln("render target declaration has no reflected name")
 			return false
 		}
-		if !ez_gfx_copy_shader_target_name_cstring(
+		if !copy_shader_target_name_cstring(
 			declaration.name[:],
 			&declaration.name_len,
 			field_name,
 		) {
 			return false
 		}
-		if ez_gfx_shader_find_target_declaration(
+		if shader_find_target_declaration(
 			   program,
 			   declaration.name[:],
 			   declaration.name_len,
@@ -1182,7 +1107,7 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 			return false
 		}
 		declaration.relative_scale = relative_scale
-		if !ez_gfx_shader_parse_target_layout(
+		if !shader_parse_target_layout(
 			kind_name,
 			int(kind_len),
 			format_name,
@@ -1193,7 +1118,7 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 			return false
 		}
 		field_type_layout := sp.variable_layout_getTypeLayout(field_layout)
-		declaration.storage = ez_gfx_shader_target_declaration_is_storage(field_type_layout)
+		declaration.storage = shader_target_declaration_is_storage(field_type_layout)
 		if declaration.storage && declaration.kind != .Color {
 			fmt.eprintln("RW render targets currently support color targets only")
 			return false
@@ -1212,13 +1137,13 @@ ez_gfx_shader_reflect_target_declarations_from_layout :: proc(
 	return true
 }
 
-ez_gfx_shader_target_declaration_is_storage :: proc(type_layout: ^sp.TypeLayoutReflection) -> bool {
+shader_target_declaration_is_storage :: proc(type_layout: ^sp.TypeLayoutReflection) -> bool {
 	if type_layout == nil do return false
 	return sp.type_layout_getResourceAccess(type_layout) == .READ_WRITE ||
 	       sp.type_layout_getResourceAccess(type_layout) == .WRITE
 }
 
-ez_gfx_shader_reflect_target_usages_from_layout :: proc(
+shader_reflect_target_usages_from_layout :: proc(
 	program_layout: ^sp.ProgramLayout,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
@@ -1231,7 +1156,7 @@ ez_gfx_shader_reflect_target_usages_from_layout :: proc(
 		fmt.eprintf("missing reflected vertex entry point: %v\n", program.desc.vertex_entry)
 		return false
 	}
-	if !ez_gfx_shader_reflect_entry_function_target_usage(
+	if !shader_reflect_entry_function_target_usage(
 		vertex_entry,
 		program,
 		SLANG_DEPTH_TARGET_ATTRIBUTE,
@@ -1249,13 +1174,13 @@ ez_gfx_shader_reflect_target_usages_from_layout :: proc(
 		fmt.eprintf("missing reflected fragment entry point: %v\n", program.desc.fragment_entry)
 		return false
 	}
-	if !ez_gfx_shader_reflect_fragment_color_targets(fragment_entry, program) {
+	if !shader_reflect_fragment_color_targets(fragment_entry, program) {
 		return false
 	}
-	if !ez_gfx_shader_reflect_fragment_blend_mode(fragment_entry, program) {
+	if !shader_reflect_fragment_blend_mode(fragment_entry, program) {
 		return false
 	}
-	if !ez_gfx_shader_reflect_entry_function_target_usage(
+	if !shader_reflect_entry_function_target_usage(
 		fragment_entry,
 		program,
 		SLANG_DEPTH_TARGET_ATTRIBUTE,
@@ -1267,11 +1192,11 @@ ez_gfx_shader_reflect_target_usages_from_layout :: proc(
 	return true
 }
 
-ez_gfx_shader_reflect_fragment_blend_mode :: proc(
+shader_reflect_fragment_blend_mode :: proc(
 	entry: ^sp.EntryPointReflection,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	function := sp.entry_point_getFunction(entry)
@@ -1291,7 +1216,7 @@ ez_gfx_shader_reflect_fragment_blend_mode :: proc(
 		return false
 	}
 	mode_bytes := cast([^]byte)mode
-	if ez_gfx_shader_target_name_equals_cstring(mode_bytes[:mode_len], int(mode_len), "alpha") {
+	if shader_target_name_equals_cstring(mode_bytes[:mode_len], int(mode_len), "alpha") {
 		program.blend_mode = .Alpha
 		return true
 	}
@@ -1299,14 +1224,14 @@ ez_gfx_shader_reflect_fragment_blend_mode :: proc(
 	return false
 }
 
-ez_gfx_shader_reflect_entry_function_target_usage :: proc(
+shader_reflect_entry_function_target_usage :: proc(
 	entry: ^sp.EntryPointReflection,
 	program: ^Ez_Gfx_Shader_Program,
 	attribute_name: cstring,
 	stage: Ez_Gfx_Shader_Stage,
 	core: bool,
 ) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	function := sp.entry_point_getFunction(entry)
@@ -1333,10 +1258,10 @@ ez_gfx_shader_reflect_entry_function_target_usage :: proc(
 	}
 
 	usage := &program.target_usages[program.target_usage_count]
-	if !ez_gfx_copy_shader_target_name(usage.name[:], &usage.name_len, name, int(name_len)) {
+	if !copy_shader_target_name(usage.name[:], &usage.name_len, name, int(name_len)) {
 		return false
 	}
-	if !ez_gfx_shader_parse_target_access(access, int(access_len), &usage.access) {
+	if !shader_parse_target_access(access, int(access_len), &usage.access) {
 		return false
 	}
 	usage.stage = stage
@@ -1346,11 +1271,11 @@ ez_gfx_shader_reflect_entry_function_target_usage :: proc(
 	return true
 }
 
-ez_gfx_shader_reflect_fragment_color_targets :: proc(
+shader_reflect_fragment_color_targets :: proc(
 	entry: ^sp.EntryPointReflection,
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	result_layout := sp.entry_point_getResultVarLayout(entry)
@@ -1375,7 +1300,7 @@ ez_gfx_shader_reflect_fragment_color_targets :: proc(
 		)
 		if attribute == nil do continue
 
-		if !ez_gfx_shader_reflect_attribute_target_usage(
+		if !shader_reflect_attribute_target_usage(
 			attribute,
 			program,
 			.Fragment,
@@ -1389,7 +1314,7 @@ ez_gfx_shader_reflect_fragment_color_targets :: proc(
 	return true
 }
 
-ez_gfx_shader_reflect_attribute_target_usage :: proc(
+shader_reflect_attribute_target_usage :: proc(
 	attribute: ^sp.Attribute,
 	program: ^Ez_Gfx_Shader_Program,
 	stage: Ez_Gfx_Shader_Stage,
@@ -1414,10 +1339,10 @@ ez_gfx_shader_reflect_attribute_target_usage :: proc(
 	}
 
 	usage := &program.target_usages[program.target_usage_count]
-	if !ez_gfx_copy_shader_target_name(usage.name[:], &usage.name_len, name, int(name_len)) {
+	if !copy_shader_target_name(usage.name[:], &usage.name_len, name, int(name_len)) {
 		return false
 	}
-	if !ez_gfx_shader_parse_target_access(access, int(access_len), &usage.access) {
+	if !shader_parse_target_access(access, int(access_len), &usage.access) {
 		return false
 	}
 	usage.stage = stage
@@ -1427,7 +1352,7 @@ ez_gfx_shader_reflect_attribute_target_usage :: proc(
 	return true
 }
 
-ez_gfx_copy_vertex_heap_binding_name :: proc(
+copy_vertex_heap_binding_name :: proc(
 	binding: ^Ez_Gfx_Vertex_Heap_Binding,
 	name: cstring,
 	name_len: int,
@@ -1448,7 +1373,7 @@ ez_gfx_copy_vertex_heap_binding_name :: proc(
 	return true
 }
 
-ez_gfx_copy_shader_target_name :: proc(
+copy_shader_target_name :: proc(
 	dst: []byte,
 	dst_len: ^int,
 	name: cstring,
@@ -1470,16 +1395,16 @@ ez_gfx_copy_shader_target_name :: proc(
 	return true
 }
 
-ez_gfx_copy_shader_target_name_cstring :: proc(dst: []byte, dst_len: ^int, name: cstring) -> bool {
+copy_shader_target_name_cstring :: proc(dst: []byte, dst_len: ^int, name: cstring) -> bool {
 	name_len := 0
 	bytes := cast([^]byte)name
 	for bytes[name_len] != 0 {
 		name_len += 1
 	}
-	return ez_gfx_copy_shader_target_name(dst, dst_len, name, name_len)
+	return copy_shader_target_name(dst, dst_len, name, name_len)
 }
 
-ez_gfx_copy_shader_target_name_with_suffix :: proc(
+copy_shader_target_name_with_suffix :: proc(
 	dst: []byte,
 	dst_len: ^int,
 	base: cstring,
@@ -1509,7 +1434,7 @@ ez_gfx_copy_shader_target_name_with_suffix :: proc(
 	return true
 }
 
-ez_gfx_shader_target_name_equals_cstring :: proc(
+shader_target_name_equals_cstring :: proc(
 	name: []byte,
 	name_len: int,
 	other: cstring,
@@ -1521,7 +1446,7 @@ ez_gfx_shader_target_name_equals_cstring :: proc(
 	return other_bytes[name_len] == 0
 }
 
-ez_gfx_shader_target_name_equals_bytes :: proc(
+shader_target_name_equals_bytes :: proc(
 	a: []byte,
 	a_len: int,
 	b: []byte,
@@ -1534,7 +1459,7 @@ ez_gfx_shader_target_name_equals_bytes :: proc(
 	return true
 }
 
-ez_gfx_shader_cstring_arg_equals :: proc(
+shader_cstring_arg_equals :: proc(
 	value: cstring,
 	value_len: int,
 	expected: string,
@@ -1547,20 +1472,20 @@ ez_gfx_shader_cstring_arg_equals :: proc(
 	return true
 }
 
-ez_gfx_shader_parse_target_access :: proc(
+shader_parse_target_access :: proc(
 	value: cstring,
 	value_len: int,
 	access: ^Ez_Gfx_Target_Access,
 ) -> bool {
-	if ez_gfx_shader_cstring_arg_equals(value, value_len, "read") {
+	if shader_cstring_arg_equals(value, value_len, "read") {
 		access^ = .Read
 		return true
 	}
-	if ez_gfx_shader_cstring_arg_equals(value, value_len, "write") {
+	if shader_cstring_arg_equals(value, value_len, "write") {
 		access^ = .Write
 		return true
 	}
-	if ez_gfx_shader_cstring_arg_equals(value, value_len, "read_write") {
+	if shader_cstring_arg_equals(value, value_len, "read_write") {
 		access^ = .Read_Write
 		return true
 	}
@@ -1568,20 +1493,20 @@ ez_gfx_shader_parse_target_access :: proc(
 	return false
 }
 
-ez_gfx_shader_parse_buffer_access :: proc(
+shader_parse_buffer_access :: proc(
 	value: cstring,
 	value_len: int,
 	access: ^Ez_Gfx_Buffer_Access,
 ) -> bool {
-	if ez_gfx_shader_cstring_arg_equals(value, value_len, "read") {
+	if shader_cstring_arg_equals(value, value_len, "read") {
 		access^ = .Read
 		return true
 	}
-	if ez_gfx_shader_cstring_arg_equals(value, value_len, "write") {
+	if shader_cstring_arg_equals(value, value_len, "write") {
 		access^ = .Write
 		return true
 	}
-	if ez_gfx_shader_cstring_arg_equals(value, value_len, "read_write") {
+	if shader_cstring_arg_equals(value, value_len, "read_write") {
 		access^ = .Read_Write
 		return true
 	}
@@ -1589,14 +1514,14 @@ ez_gfx_shader_parse_buffer_access :: proc(
 	return false
 }
 
-ez_gfx_shader_desc_stage_flags :: proc(program: ^Ez_Gfx_Shader_Program) -> vk.ShaderStageFlags {
+shader_desc_stage_flags :: proc(program: ^Ez_Gfx_Shader_Program) -> vk.ShaderStageFlags {
 	if program.desc.kind == .Compute {
 		return {.COMPUTE}
 	}
 	return {.VERTEX, .FRAGMENT}
 }
 
-ez_gfx_shader_parse_target_layout :: proc(
+shader_parse_target_layout :: proc(
 	kind_value: cstring,
 	kind_len: int,
 	format_value: cstring,
@@ -1604,22 +1529,22 @@ ez_gfx_shader_parse_target_layout :: proc(
 	kind: ^Ez_Gfx_Render_Target_Kind,
 	format: ^vk.Format,
 ) -> bool {
-	if ez_gfx_shader_cstring_arg_equals(kind_value, kind_len, "depth") {
+	if shader_cstring_arg_equals(kind_value, kind_len, "depth") {
 		kind^ = .Depth
-		if ez_gfx_shader_cstring_arg_equals(format_value, format_len, "d32_float") {
+		if shader_cstring_arg_equals(format_value, format_len, "d32_float") {
 			format^ = .D24_UNORM_S8_UINT
 			return true
 		}
 		fmt.eprintln("unsupported depth target format")
 		return false
 	}
-	if ez_gfx_shader_cstring_arg_equals(kind_value, kind_len, "color") {
+	if shader_cstring_arg_equals(kind_value, kind_len, "color") {
 		kind^ = .Color
-		if ez_gfx_shader_cstring_arg_equals(format_value, format_len, "rgba8") {
+		if shader_cstring_arg_equals(format_value, format_len, "rgba8") {
 			format^ = .R8G8B8A8_UNORM
 			return true
 		}
-		if ez_gfx_shader_cstring_arg_equals(format_value, format_len, "rgba16f") {
+		if shader_cstring_arg_equals(format_value, format_len, "rgba16f") {
 			format^ = .R16G16B16A16_SFLOAT
 			return true
 		}
@@ -1630,14 +1555,14 @@ ez_gfx_shader_parse_target_layout :: proc(
 	return false
 }
 
-ez_gfx_shader_find_target_declaration :: proc(
+shader_find_target_declaration :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 	name: []byte,
 	name_len: int,
 ) -> ^Ez_Gfx_Shader_Target_Declaration {
 	for i in 0 ..< program.target_declaration_count {
 		declaration := &program.target_declarations[i]
-		if ez_gfx_shader_target_name_equals_bytes(
+		if shader_target_name_equals_bytes(
 			declaration.name[:],
 			declaration.name_len,
 			name,
@@ -1649,14 +1574,14 @@ ez_gfx_shader_find_target_declaration :: proc(
 	return nil
 }
 
-ez_gfx_shader_validate_unique_target_declarations :: proc(
+shader_validate_unique_target_declarations :: proc(
 	program: ^Ez_Gfx_Shader_Program,
 ) -> bool {
 	for i in 0 ..< program.target_declaration_count {
 		a := &program.target_declarations[i]
 		for j in i + 1 ..< program.target_declaration_count {
 			b := &program.target_declarations[j]
-			if ez_gfx_shader_target_name_equals_bytes(
+			if shader_target_name_equals_bytes(
 				a.name[:],
 				a.name_len,
 				b.name[:],
@@ -1670,13 +1595,13 @@ ez_gfx_shader_validate_unique_target_declarations :: proc(
 	return true
 }
 
-ez_gfx_shader_validate_targets :: proc(program: ^Ez_Gfx_Shader_Program) -> bool {
-	if !ez_gfx_shader_validate_unique_target_declarations(program) {
+shader_validate_targets :: proc(program: ^Ez_Gfx_Shader_Program) -> bool {
+	if !shader_validate_unique_target_declarations(program) {
 		return false
 	}
 	for i in 0 ..< program.target_usage_count {
 		usage := &program.target_usages[i]
-		if ez_gfx_shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {
+		if shader_target_name_equals_cstring(usage.name[:], usage.name_len, "swapchain") {
 			if usage.access != .Write {
 				fmt.eprintln("swapchain target currently supports write access only")
 				return false
@@ -1684,7 +1609,7 @@ ez_gfx_shader_validate_targets :: proc(program: ^Ez_Gfx_Shader_Program) -> bool 
 			continue
 		}
 
-		declaration := ez_gfx_shader_find_target_declaration(
+		declaration := shader_find_target_declaration(
 			program,
 			usage.name[:],
 			usage.name_len,

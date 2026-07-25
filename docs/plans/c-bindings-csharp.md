@@ -4,7 +4,7 @@
 
 - The existing branch has a handwritten C ABI header, Odin wrappers, a Roslyn header generator, managed API, and six example entry points.
 - The existing ImGui demo remains a first-class C ABI and C# example path; this refactor deletes only the JSON/Python metadata path and makes the C# source generator the only managed binding generator.
-- The generator emits one tracked snapshot at `csharp/EzGfx.Native/Generated/EzGfxNative.g.cs`; the compiler's nested generated output is ignored intermediate output and both forms are never hand-edited.
+- The generator emits compiler-generated source under the build's intermediate `obj/` directory; no duplicate generated binding file is tracked in the repository.
 
 ## Execution order
 

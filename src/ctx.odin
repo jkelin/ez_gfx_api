@@ -1,3 +1,4 @@
+#+private
 package ez_gfx
 
 import sp "../vendor/odin-slang/slang"
@@ -15,126 +16,39 @@ EZ_GFX_FRAMES_IN_FLIGHT :: 2
 EZ_GFX_FRAME_COMMAND_BUFFERS :: EZ_GFX_MAX_RENDER_PIPELINES + 1
 EZ_GFX_MAX_PRESENT_MODES :: 8
 
-Ez_Gfx_Frame_Slot :: struct {
-	command_buffers:         [EZ_GFX_FRAME_COMMAND_BUFFERS]vk.CommandBuffer,
-	image_available:         vk.Semaphore,
-	last_submitted_timeline: u64,
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Odin context carries the active graphics context. Callers bind their context
+// before crossing the public API boundary; worker procedures do the same for
+// their owned context before calling engine helpers.
+get_current_ctx :: proc() -> ^Ez_Gfx_Ctx {
+	return cast(^Ez_Gfx_Ctx)context.user_ptr
 }
 
-Ez_Gfx_Validation_Message :: struct {
-	severity:        vk.DebugUtilsMessageSeverityFlagsEXT,
-	message_type:    vk.DebugUtilsMessageTypeFlagsEXT,
-	message_id_name: cstring,
-	message:         cstring,
-}
 
-Ez_Gfx_Validation_Callback :: #type proc(
-	ctx: ^Ez_Gfx_Ctx,
-	message: Ez_Gfx_Validation_Message,
-	user_data: rawptr,
-)
 
-Ez_Gfx_Ctx_Desc :: struct {
-	enable_validation:    bool,
-	validation_callback:  Ez_Gfx_Validation_Callback,
-	validation_user_data: rawptr,
-	enable_debug:         bool,
-	texture_loaded_callback:  Ez_Gfx_Texture_Loaded_Callback,
-	texture_loaded_user_data: rawptr,
-	vertex_uploaded_callback:  Ez_Gfx_Vertex_Uploaded_Callback,
-	vertex_uploaded_user_data: rawptr,
-	texture_decode_worker_count: u32,
-	surface_platform: u32,
-	instance_extensions: []cstring,
-}
-
-Ez_Gfx_Validation_Counts :: struct {
-	verbose: u32,
-	info:    u32,
-	warning: u32,
-	error:   u32,
-}
-
-Ez_Gfx_Ctx_Info :: struct {
-	swapchain_present_modes:      [EZ_GFX_MAX_PRESENT_MODES]vk.PresentModeKHR,
-	swapchain_present_mode_count: u32,
-	swapchain_present_mode:       vk.PresentModeKHR,
-}
-
-Ez_Gfx_Ctx :: struct {
-	instance:                             vk.Instance,
-	surface_platform:                    u32,
-	debug_messenger:                      vk.DebugUtilsMessengerEXT,
-	physical_device:                      vk.PhysicalDevice,
-	device:                               vk.Device,
-	queue_family_index:                   u32,
-	transfer_queue_family_index:          u32,
-	graphics_queue:                       vk.Queue,
-	transfer_queue:                       vk.Queue,
-	queue_mutex:                          sync.Mutex,
-	command_pool:                         vk.CommandPool,
-	frame_slots:                          [EZ_GFX_FRAMES_IN_FLIGHT]Ez_Gfx_Frame_Slot,
-	current_frame_slot:                   u32,
-	render_frame_counter:                 u64,
-	timeline_semaphore:                   vk.Semaphore,
-	timeline_counter:                     u64,
-	vma_vulkan_functions:                 vma.Vulkan_Functions,
-	vma_allocator:                        vma.Allocator,
-	slang_session:                        ^sp.IGlobalSession,
-	vertex_manager:                       Ez_Gfx_Vertex_Manager,
-	texture_manager:                      Ez_Gfx_Texture_Manager,
-	pipeline_manager:                     Ez_Gfx_Pipeline_Manager,
-	indirect_manager:                     Ez_Gfx_Multi_Draw_Indirect_Buffer_Manager,
-	structured_buffer_manager:            Ez_Gfx_Structured_Buffer_Manager,
-	render_target_manager:                Ez_Gfx_Render_Target_Manager,
-	max_sampler_anisotropy:               f32,
-	min_storage_buffer_offset_alignment:  vk.DeviceSize,
-	enable_validation:                    bool,
-	enable_debug:                         bool,
-	debug_utils_enabled:                  bool,
-	memory_priority_enabled:              bool,
-	sampler_anisotropy_enabled:            bool,
-	pageable_device_local_memory_enabled: bool,
-	present_mode_fifo_latest_enabled:     bool,
-	shared_presentable_image_enabled:     bool,
-	swapchain_present_mode:               vk.PresentModeKHR,
-	swapchain_present_modes:              [EZ_GFX_MAX_PRESENT_MODES]vk.PresentModeKHR,
-	swapchain_present_mode_count:         u32,
-	validation_callback:                  Ez_Gfx_Validation_Callback,
-	validation_user_data:                 rawptr,
-	texture_loaded_callback:              Ez_Gfx_Texture_Loaded_Callback,
-	texture_loaded_user_data:             rawptr,
-	vertex_uploaded_callback:             Ez_Gfx_Vertex_Uploaded_Callback,
-	vertex_uploaded_user_data:            rawptr,
-	texture_decode_worker_count:          u32,
-	validation_counts:                    Ez_Gfx_Validation_Counts,
-}
-
-@(thread_local)
-ez_gfx_current_ctx: ^Ez_Gfx_Ctx
-
-ez_gfx_set_current_ctx :: proc(ctx: ^Ez_Gfx_Ctx) {
-	ez_gfx_current_ctx = ctx
-}
-
-ez_gfx_get_current_ctx :: proc() -> ^Ez_Gfx_Ctx {
-	if ez_gfx_current_ctx == nil {
-		fmt.eprintln("ez_gfx: no current context set")
-	}
-	return ez_gfx_current_ctx
-}
-
-ez_gfx_ctx_resolve_texture_decode_worker_count :: proc(requested: u32) -> u32 {
+ctx_resolve_texture_decode_worker_count :: proc(requested: u32) -> u32 {
 	if requested > 0 do return requested
 
 	_, logical, ok := sysinfo.cpu_core_count()
 	if !ok || logical <= 2 {
 		return 1
 	}
-	return ez_gfx_texture_decode_worker_count_from_logical(logical)
+	return texture_decode_worker_count_from_logical(logical)
 }
 
-ez_gfx_texture_decode_worker_count_from_logical :: proc(logical_cpu_count: int) -> u32 {
+texture_decode_worker_count_from_logical :: proc(logical_cpu_count: int) -> u32 {
 	if logical_cpu_count <= 2 do return 1
 	return u32(logical_cpu_count - 2)
 }
@@ -146,8 +60,6 @@ vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
 		when ODIN_OS == .Windows {
 			vulkan_library, _ = dynlib.load_library("vulkan-1.dll")
 		} else when ODIN_OS == .Linux {
-			vulkan_library, _ = dynlib.load_library("libvulkan.so.1")
-		} else when ODIN_OS == .Darwin {
 			vulkan_library, _ = dynlib.load_library("libvulkan.dylib")
 		}
 	}
@@ -159,8 +71,8 @@ vulkan_global_proc_loader :: proc(p: rawptr, name: cstring) {
 }
 
 // Creates the Vulkan instance; call before creating any window surface.
-ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {}) -> bool {
-	ez_gfx_set_current_ctx(ctx)
+ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {}) -> bool {
+	context.user_ptr = ctx
 	vk.load_proc_addresses_custom(vulkan_global_proc_loader)
 
 	ctx.enable_validation = desc.enable_validation
@@ -173,7 +85,7 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 	ctx.vertex_uploaded_callback = desc.vertex_uploaded_callback
 	ctx.vertex_uploaded_user_data = desc.vertex_uploaded_user_data
 	ctx.texture_decode_worker_count =
-		ez_gfx_ctx_resolve_texture_decode_worker_count(desc.texture_decode_worker_count)
+		ctx_resolve_texture_decode_worker_count(desc.texture_decode_worker_count)
 	ctx.validation_counts = {}
 	ctx.debug_utils_enabled = desc.enable_validation || desc.enable_debug
 	ctx.swapchain_present_mode = .FIFO
@@ -183,7 +95,7 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 		"VK_KHR_win32_surface",
 	}
 	instance_extensions := desc.instance_extensions
-	if len(instance_extensions) == 0 && desc.surface_platform == EZ_GFX_SURFACE_PLATFORM_WIN32 {
+	if len(instance_extensions) == 0 && desc.surface_platform == EZ_GFX_INTERNAL_SURFACE_PLATFORM_WIN32 {
 		instance_extensions = default_extensions[:]
 	}
 	if len(instance_extensions) == 0 {
@@ -192,19 +104,19 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 	}
 
 	if ctx.enable_validation &&
-	   !ez_gfx_ctx_instance_layer_available("VK_LAYER_KHRONOS_validation") {
+	   !ctx_instance_layer_available("VK_LAYER_KHRONOS_validation") {
 		fmt.eprintln("Vulkan validation requested but VK_LAYER_KHRONOS_validation is unavailable")
 		return false
 	}
 	if ctx.enable_validation &&
-	   !ez_gfx_ctx_instance_layer_available("VK_LAYER_KHRONOS_synchronization2") {
+	   !ctx_instance_layer_available("VK_LAYER_KHRONOS_synchronization2") {
 		fmt.eprintln(
 			"Vulkan validation requested but VK_LAYER_KHRONOS_synchronization2 is unavailable",
 		)
 		return false
 	}
 	if ctx.debug_utils_enabled &&
-	   !ez_gfx_ctx_instance_extension_available(vk.EXT_DEBUG_UTILS_EXTENSION_NAME) {
+	   !ctx_instance_extension_available(vk.EXT_DEBUG_UTILS_EXTENSION_NAME) {
 		fmt.eprintln("Vulkan debug utils requested but VK_EXT_debug_utils is unavailable")
 		return false
 	}
@@ -226,7 +138,7 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 		layer_names_ptr = &layer_names[0]
 	}
 
-	debug_create_info := ez_gfx_ctx_debug_messenger_create_info(ctx)
+	debug_create_info := ctx_debug_messenger_create_info(ctx)
 	create_info_next: rawptr
 	if ctx.debug_utils_enabled {
 		create_info_next = &debug_create_info
@@ -275,27 +187,27 @@ ez_gfx_ctx_create_instance :: proc(ctx: ^Ez_Gfx_Ctx, desc: Ez_Gfx_Ctx_Desc = {})
 }
 
 // Selects a present-capable device and creates command/sync resources; requires a valid surface.
-ez_gfx_ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+ctx_init_device :: proc(surface: vk.SurfaceKHR) -> bool {
+	ctx := get_current_ctx()
 	if ctx == nil do return false
-	if !ez_gfx_ctx_pick_physical_device(ctx, surface) do return false
-	if !ez_gfx_ctx_cache_device_limits(ctx) do return false
-	if !ez_gfx_ctx_cache_swapchain_present_modes(ctx, surface) do return false
-	ez_gfx_ctx_enable_optional_device_features(ctx)
-	if !ez_gfx_ctx_create_device(ctx) do return false
+	if !ctx_pick_physical_device(ctx, surface) do return false
+	if !ctx_cache_device_limits(ctx) do return false
+	if !ctx_cache_swapchain_present_modes(ctx, surface) do return false
+	ctx_enable_optional_device_features(ctx)
+	if !ctx_create_device(ctx) do return false
 	vk.load_proc_addresses(ctx.device)
-	if !ez_gfx_ctx_create_vma_allocator(ctx) do return false
+	if !ctx_create_vma_allocator(ctx) do return false
 
-	ez_gfx_ctx_name_device_objects(ctx)
-	if !ez_gfx_ctx_create_command_resources(ctx) do return false
-	if !ez_gfx_ctx_create_sync_objects(ctx) do return false
-	ez_gfx_vertex_manager_create(&ctx.vertex_manager, {}, 16)
-	if !ez_gfx_texture_manager_create(&ctx.texture_manager, ctx) do return false
+	ctx_name_device_objects(ctx)
+	if !ctx_create_command_resources(ctx) do return false
+	if !ctx_create_sync_objects(ctx) do return false
+	vertex_manager_create(&ctx.vertex_manager, {}, 16)
+	if !texture_manager_create(&ctx.texture_manager, ctx) do return false
 	return true
 }
 
-ez_gfx_ctx_wait_idle :: proc() {
-	ctx := ez_gfx_get_current_ctx()
+ctx_wait_idle :: proc() {
+	ctx := get_current_ctx()
 	if ctx == nil do return
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
@@ -303,8 +215,8 @@ ez_gfx_ctx_wait_idle :: proc() {
 }
 
 // Returns cached public context metadata without exposing internal ownership.
-ez_gfx_ctx_get_info :: proc(info: ^Ez_Gfx_Ctx_Info) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+ctx_get_info :: proc(info: ^Ez_Gfx_Ctx_Info) -> bool {
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
 	info^ = {}
@@ -317,38 +229,38 @@ ez_gfx_ctx_get_info :: proc(info: ^Ez_Gfx_Ctx_Info) -> bool {
 }
 
 // Updates the presentation mode used by the next swapchain recreation.
-ez_gfx_ctx_set_swapchain_present_mode :: proc(mode: vk.PresentModeKHR) -> bool {
-	ctx := ez_gfx_get_current_ctx()
+ctx_set_swapchain_present_mode :: proc(mode: vk.PresentModeKHR) -> bool {
+	ctx := get_current_ctx()
 	if ctx == nil do return false
 
-	ctx.swapchain_present_mode = ez_gfx_swapchain_choose_present_mode(
+	ctx.swapchain_present_mode = swapchain_choose_present_mode(
 		ctx.swapchain_present_modes[:ctx.swapchain_present_mode_count],
 		mode,
 	)
 	return ctx.swapchain_present_mode == mode
 }
 
-ez_gfx_ctx_destroy :: proc() {
-	ctx := ez_gfx_get_current_ctx()
+ctx_destroy :: proc() {
+	ctx := get_current_ctx()
 	if ctx == nil do return
 	if ctx.device != nil {
 		vk.DeviceWaitIdle(ctx.device)
-		ez_gfx_texture_manager_destroy(&ctx.texture_manager, ctx)
-		ez_gfx_vertex_manager_destroy(&ctx.vertex_manager)
-		ez_gfx_pipeline_manager_destroy(&ctx.pipeline_manager)
-		ez_gfx_indirect_buffer_manager_destroy(&ctx.indirect_manager)
-		ez_gfx_structured_buffer_manager_destroy(&ctx.structured_buffer_manager)
-		ez_gfx_render_target_manager_destroy(&ctx.render_target_manager)
-		ez_gfx_ctx_destroy_sync_objects(ctx)
+		texture_manager_destroy(&ctx.texture_manager, ctx)
+		vertex_manager_destroy(&ctx.vertex_manager)
+		pipeline_manager_destroy(&ctx.pipeline_manager)
+		indirect_buffer_manager_destroy(&ctx.indirect_manager)
+		structured_buffer_manager_destroy(&ctx.structured_buffer_manager)
+		render_target_manager_destroy(&ctx.render_target_manager)
+		ctx_destroy_sync_objects(ctx)
 		if ctx.command_pool != vk.CommandPool(0) {
 			vk.DestroyCommandPool(ctx.device, ctx.command_pool, nil)
 			ctx.command_pool = vk.CommandPool(0)
 		}
-		ez_gfx_ctx_destroy_vma_allocator(ctx)
+		ctx_destroy_vma_allocator(ctx)
 		vk.DestroyDevice(ctx.device, nil)
 		ctx.device = nil
 	}
-	ez_gfx_shader_destroy_session(ctx)
+	shader_destroy_session(ctx)
 	if ctx.instance != nil {
 		if ctx.debug_messenger != vk.DebugUtilsMessengerEXT(0) {
 			vk.DestroyDebugUtilsMessengerEXT(ctx.instance, ctx.debug_messenger, nil)
@@ -357,12 +269,12 @@ ez_gfx_ctx_destroy :: proc() {
 		vk.DestroyInstance(ctx.instance, nil)
 		ctx.instance = nil
 	}
-	if ez_gfx_current_ctx == ctx {
-		ez_gfx_current_ctx = nil
+	if get_current_ctx() == ctx {
+		context.user_ptr = nil
 	}
 }
 
-ez_gfx_ctx_pick_physical_device :: proc(ctx: ^Ez_Gfx_Ctx, surface: vk.SurfaceKHR) -> bool {
+ctx_pick_physical_device :: proc(ctx: ^Ez_Gfx_Ctx, surface: vk.SurfaceKHR) -> bool {
 	count: u32
 	vk.EnumeratePhysicalDevices(ctx.instance, &count, nil)
 	if count == 0 {
@@ -377,7 +289,7 @@ ez_gfx_ctx_pick_physical_device :: proc(ctx: ^Ez_Gfx_Ctx, surface: vk.SurfaceKHR
 	for device in devices[:count] {
 		queue_index: u32
 		transfer_queue_index: u32
-		if ez_gfx_ctx_is_device_suitable(device, surface, &queue_index, &transfer_queue_index) {
+		if ctx_is_device_suitable(device, surface, &queue_index, &transfer_queue_index) {
 			ctx.physical_device = device
 			ctx.queue_family_index = queue_index
 			ctx.transfer_queue_family_index = transfer_queue_index
@@ -391,16 +303,16 @@ ez_gfx_ctx_pick_physical_device :: proc(ctx: ^Ez_Gfx_Ctx, surface: vk.SurfaceKHR
 	return false
 }
 
-ez_gfx_ctx_is_device_suitable :: proc(
+ctx_is_device_suitable :: proc(
 	device: vk.PhysicalDevice,
 	surface: vk.SurfaceKHR,
 	queue_index: ^u32,
 	transfer_queue_index: ^u32,
 ) -> bool {
-	if !ez_gfx_ctx_device_supports_extension(device, vk.KHR_SWAPCHAIN_EXTENSION_NAME) {
+	if !ctx_device_supports_extension(device, vk.KHR_SWAPCHAIN_EXTENSION_NAME) {
 		return false
 	}
-	if !ez_gfx_ctx_device_supports_required_features(device) {
+	if !ctx_device_supports_required_features(device) {
 		return false
 	}
 
@@ -426,11 +338,11 @@ ez_gfx_ctx_is_device_suitable :: proc(
 
 	queue_index^ = graphics_queue_index
 	transfer_queue_index^ =
-		ez_gfx_ctx_choose_transfer_queue_family(queues[:queue_count], graphics_queue_index)
+		ctx_choose_transfer_queue_family(queues[:queue_count], graphics_queue_index)
 	return true
 }
 
-ez_gfx_ctx_choose_transfer_queue_family :: proc(
+ctx_choose_transfer_queue_family :: proc(
 	queues: []vk.QueueFamilyProperties,
 	graphics_queue_index: u32,
 ) -> u32 {
@@ -449,7 +361,7 @@ ez_gfx_ctx_choose_transfer_queue_family :: proc(
 	return graphics_queue_index
 }
 
-ez_gfx_ctx_device_supports_extension :: proc(
+ctx_device_supports_extension :: proc(
 	device: vk.PhysicalDevice,
 	extension_name: cstring,
 ) -> bool {
@@ -465,14 +377,14 @@ ez_gfx_ctx_device_supports_extension :: proc(
 	defer delete(properties)
 	vk.EnumerateDeviceExtensionProperties(device, nil, &count, raw_data(properties))
 	for prop in properties[:count] {
-		if ez_gfx_ctx_cstring_equals_extension(prop.extensionName, extension_name) {
+		if ctx_cstring_equals_extension(prop.extensionName, extension_name) {
 			return true
 		}
 	}
 	return false
 }
 
-ez_gfx_ctx_cache_device_limits :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+ctx_cache_device_limits :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	properties: vk.PhysicalDeviceProperties
 	vk.GetPhysicalDeviceProperties(ctx.physical_device, &properties)
 	ctx.max_sampler_anisotropy = properties.limits.maxSamplerAnisotropy
@@ -484,7 +396,7 @@ ez_gfx_ctx_cache_device_limits :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	return true
 }
 
-ez_gfx_ctx_cache_swapchain_present_modes :: proc(
+ctx_cache_swapchain_present_modes :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	surface: vk.SurfaceKHR,
 ) -> bool {
@@ -518,39 +430,39 @@ ez_gfx_ctx_cache_swapchain_present_modes :: proc(
 		return false
 	}
 
-	fifo_latest_available := ez_gfx_ctx_present_mode_fifo_latest_available(ctx.physical_device)
-	shared_present_available := ez_gfx_ctx_device_supports_extension(
+	fifo_latest_available := ctx_present_mode_fifo_latest_available(ctx.physical_device)
+	shared_present_available := ctx_device_supports_extension(
 		ctx.physical_device,
 		vk.KHR_SHARED_PRESENTABLE_IMAGE_EXTENSION_NAME,
 	)
 
 	for mode in modes[:count] {
-		if ez_gfx_ctx_present_mode_requires_fifo_latest(mode) && !fifo_latest_available {
+		if ctx_present_mode_requires_fifo_latest(mode) && !fifo_latest_available {
 			continue
 		}
-		if ez_gfx_ctx_present_mode_requires_shared_present(mode) && !shared_present_available {
+		if ctx_present_mode_requires_shared_present(mode) && !shared_present_available {
 			continue
 		}
-		ez_gfx_ctx_append_swapchain_present_mode(ctx, mode)
+		ctx_append_swapchain_present_mode(ctx, mode)
 		if mode == .FIFO_LATEST_READY_EXT {
 			ctx.present_mode_fifo_latest_enabled = true
 		}
-		if ez_gfx_ctx_present_mode_requires_shared_present(mode) {
+		if ctx_present_mode_requires_shared_present(mode) {
 			ctx.shared_presentable_image_enabled = true
 		}
 	}
 	if ctx.swapchain_present_mode_count == 0 {
-		ez_gfx_ctx_append_swapchain_present_mode(ctx, .FIFO)
+		ctx_append_swapchain_present_mode(ctx, .FIFO)
 	}
-	ctx.swapchain_present_mode = ez_gfx_swapchain_choose_present_mode(
+	ctx.swapchain_present_mode = swapchain_choose_present_mode(
 		ctx.swapchain_present_modes[:ctx.swapchain_present_mode_count],
 		ctx.swapchain_present_mode,
 	)
 	return true
 }
 
-ez_gfx_ctx_append_swapchain_present_mode :: proc(ctx: ^Ez_Gfx_Ctx, mode: vk.PresentModeKHR) {
-	if ez_gfx_swapchain_present_mode_supported(
+ctx_append_swapchain_present_mode :: proc(ctx: ^Ez_Gfx_Ctx, mode: vk.PresentModeKHR) {
+	if swapchain_present_mode_supported(
 		ctx.swapchain_present_modes[:ctx.swapchain_present_mode_count],
 		mode,
 	) {
@@ -563,8 +475,8 @@ ez_gfx_ctx_append_swapchain_present_mode :: proc(ctx: ^Ez_Gfx_Ctx, mode: vk.Pres
 	ctx.swapchain_present_mode_count += 1
 }
 
-ez_gfx_ctx_present_mode_fifo_latest_available :: proc(device: vk.PhysicalDevice) -> bool {
-	if !ez_gfx_ctx_device_supports_extension(
+ctx_present_mode_fifo_latest_available :: proc(device: vk.PhysicalDevice) -> bool {
+	if !ctx_device_supports_extension(
 		device,
 		vk.EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME,
 	) {
@@ -582,15 +494,15 @@ ez_gfx_ctx_present_mode_fifo_latest_available :: proc(device: vk.PhysicalDevice)
 	return bool(fifo_latest_features.presentModeFifoLatestReady)
 }
 
-ez_gfx_ctx_present_mode_requires_fifo_latest :: proc(mode: vk.PresentModeKHR) -> bool {
+ctx_present_mode_requires_fifo_latest :: proc(mode: vk.PresentModeKHR) -> bool {
 	return mode == .FIFO_LATEST_READY_EXT
 }
 
-ez_gfx_ctx_present_mode_requires_shared_present :: proc(mode: vk.PresentModeKHR) -> bool {
+ctx_present_mode_requires_shared_present :: proc(mode: vk.PresentModeKHR) -> bool {
 	return mode == .SHARED_DEMAND_REFRESH || mode == .SHARED_CONTINUOUS_REFRESH
 }
 
-ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	priority: f32 = 1.0
 	queue_infos: [2]vk.DeviceQueueCreateInfo
 	queue_infos[0] = vk.DeviceQueueCreateInfo {
@@ -705,7 +617,7 @@ ez_gfx_ctx_create_device :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	return true
 }
 
-ez_gfx_ctx_create_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+ctx_create_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	ctx.vma_vulkan_functions = vma.create_vulkan_functions()
 	flags := vma.Allocator_Create_Flags{.Buffer_Device_Address}
 	if ctx.memory_priority_enabled {
@@ -728,7 +640,7 @@ ez_gfx_ctx_create_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	return true
 }
 
-ez_gfx_ctx_destroy_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) {
+ctx_destroy_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) {
 	if ctx.vma_allocator != vma.Allocator(nil) {
 		vma.destroy_allocator(ctx.vma_allocator)
 		ctx.vma_allocator = vma.Allocator(nil)
@@ -736,18 +648,18 @@ ez_gfx_ctx_destroy_vma_allocator :: proc(ctx: ^Ez_Gfx_Ctx) {
 	ctx.vma_vulkan_functions = {}
 }
 
-ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) -> bool {
+ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) -> bool {
 	pageable_features := vk.PhysicalDevicePageableDeviceLocalMemoryFeaturesEXT {
 		sType = .PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT,
 	}
 	memory_priority_features := vk.PhysicalDeviceMemoryPriorityFeaturesEXT {
 		sType = .PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT,
 	}
-	pageable_extension_supported := ez_gfx_ctx_device_supports_extension(
+	pageable_extension_supported := ctx_device_supports_extension(
 		device,
 		vk.EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME,
 	)
-	memory_priority_extension_supported := ez_gfx_ctx_device_supports_extension(
+	memory_priority_extension_supported := ctx_device_supports_extension(
 		device,
 		vk.EXT_MEMORY_PRIORITY_EXTENSION_NAME,
 	)
@@ -804,7 +716,7 @@ ez_gfx_ctx_device_supports_required_features :: proc(device: vk.PhysicalDevice) 
 	return true
 }
 
-ez_gfx_ctx_enable_optional_device_features :: proc(ctx: ^Ez_Gfx_Ctx) {
+ctx_enable_optional_device_features :: proc(ctx: ^Ez_Gfx_Ctx) {
 	ctx.memory_priority_enabled = false
 	ctx.pageable_device_local_memory_enabled = false
 	ctx.sampler_anisotropy_enabled = false
@@ -814,14 +726,14 @@ ez_gfx_ctx_enable_optional_device_features :: proc(ctx: ^Ez_Gfx_Ctx) {
 	vk.GetPhysicalDeviceFeatures2(ctx.physical_device, &core_features)
 	ctx.sampler_anisotropy_enabled = bool(core_features.features.samplerAnisotropy)
 
-	if !ez_gfx_ctx_device_supports_extension(
+	if !ctx_device_supports_extension(
 		ctx.physical_device,
 		vk.EXT_MEMORY_PRIORITY_EXTENSION_NAME,
 	) {
 		return
 	}
 
-	pageable_extension_supported := ez_gfx_ctx_device_supports_extension(
+	pageable_extension_supported := ctx_device_supports_extension(
 		ctx.physical_device,
 		vk.EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME,
 	)
@@ -859,7 +771,7 @@ ez_gfx_ctx_enable_optional_device_features :: proc(ctx: ^Ez_Gfx_Ctx) {
 		bool(pageable_features.pageableDeviceLocalMemory)
 }
 
-ez_gfx_ctx_create_command_resources :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+ctx_create_command_resources :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	pool_info := vk.CommandPoolCreateInfo {
 		sType            = .COMMAND_POOL_CREATE_INFO,
 		flags            = {.RESET_COMMAND_BUFFER},
@@ -869,10 +781,10 @@ ez_gfx_ctx_create_command_resources :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		fmt.eprintln("failed to create command pool")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.COMMAND_POOL,
-		ez_gfx_debug_handle(ctx.command_pool),
+		debug_handle(ctx.command_pool),
 		"ez_gfx command pool",
 	)
 
@@ -893,10 +805,10 @@ ez_gfx_ctx_create_command_resources :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 			return false
 		}
 		for command_buffer, command_index in ctx.frame_slots[i].command_buffers {
-			ez_gfx_debug_set_indexed_name(
+			debug_set_indexed_name(
 				ctx,
 				.COMMAND_BUFFER,
-				ez_gfx_debug_handle(command_buffer),
+				debug_handle(command_buffer),
 				"ez_gfx frame command buffer",
 				int(i) * EZ_GFX_FRAME_COMMAND_BUFFERS + command_index,
 			)
@@ -905,7 +817,7 @@ ez_gfx_ctx_create_command_resources :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	return true
 }
 
-ez_gfx_ctx_create_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
+ctx_create_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	binary_info := vk.SemaphoreCreateInfo {
 		sType = .SEMAPHORE_CREATE_INFO,
 	}
@@ -923,10 +835,10 @@ ez_gfx_ctx_create_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 		fmt.eprintln("failed to create timeline semaphore")
 		return false
 	}
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.SEMAPHORE,
-		ez_gfx_debug_handle(ctx.timeline_semaphore),
+		debug_handle(ctx.timeline_semaphore),
 		"ez_gfx timeline semaphore",
 	)
 
@@ -936,10 +848,10 @@ ez_gfx_ctx_create_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 			fmt.eprintln("failed to create frame acquire semaphore")
 			return false
 		}
-		ez_gfx_debug_set_indexed_name(
+		debug_set_indexed_name(
 			ctx,
 			.SEMAPHORE,
-			ez_gfx_debug_handle(slot.image_available),
+			debug_handle(slot.image_available),
 			"ez_gfx image available semaphore",
 			int(i),
 		)
@@ -947,7 +859,7 @@ ez_gfx_ctx_create_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) -> bool {
 	return true
 }
 
-ez_gfx_ctx_destroy_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) {
+ctx_destroy_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) {
 	for i in 0 ..< EZ_GFX_FRAMES_IN_FLIGHT {
 		slot := &ctx.frame_slots[i]
 		if slot.image_available != vk.Semaphore(0) {
@@ -963,12 +875,12 @@ ez_gfx_ctx_destroy_sync_objects :: proc(ctx: ^Ez_Gfx_Ctx) {
 	ctx.timeline_counter = 0
 }
 
-ez_gfx_ctx_next_timeline_value :: proc(ctx: ^Ez_Gfx_Ctx) -> u64 {
+ctx_next_timeline_value :: proc(ctx: ^Ez_Gfx_Ctx) -> u64 {
 	previous := intrinsics.atomic_add_explicit(&ctx.timeline_counter, u64(1), .Seq_Cst)
 	return previous + 1
 }
 
-ez_gfx_ctx_wait_timeline :: proc(ctx: ^Ez_Gfx_Ctx, value: u64) -> bool {
+ctx_wait_timeline :: proc(ctx: ^Ez_Gfx_Ctx, value: u64) -> bool {
 	if value == 0 do return true
 	wait_value := value
 	wait_info := vk.SemaphoreWaitInfo {
@@ -984,11 +896,11 @@ ez_gfx_ctx_wait_timeline :: proc(ctx: ^Ez_Gfx_Ctx, value: u64) -> bool {
 	return true
 }
 
-ez_gfx_ctx_current_frame_slot :: proc(ctx: ^Ez_Gfx_Ctx) -> ^Ez_Gfx_Frame_Slot {
+ctx_current_frame_slot :: proc(ctx: ^Ez_Gfx_Ctx) -> ^Ez_Gfx_Frame_Slot {
 	return &ctx.frame_slots[ctx.current_frame_slot]
 }
 
-ez_gfx_ctx_cstring_equals_extension :: proc(
+ctx_cstring_equals_extension :: proc(
 	a: [vk.MAX_EXTENSION_NAME_SIZE]byte,
 	b: cstring,
 ) -> bool {
@@ -1000,7 +912,7 @@ ez_gfx_ctx_cstring_equals_extension :: proc(
 	return false
 }
 
-ez_gfx_ctx_instance_layer_available :: proc(layer_name: cstring) -> bool {
+ctx_instance_layer_available :: proc(layer_name: cstring) -> bool {
 	count: u32
 	if vk.EnumerateInstanceLayerProperties(&count, nil) != .SUCCESS {
 		return false
@@ -1013,14 +925,14 @@ ez_gfx_ctx_instance_layer_available :: proc(layer_name: cstring) -> bool {
 		return false
 	}
 	for prop in properties[:count] {
-		if ez_gfx_ctx_cstring_equals_extension(prop.layerName, layer_name) {
+		if ctx_cstring_equals_extension(prop.layerName, layer_name) {
 			return true
 		}
 	}
 	return false
 }
 
-ez_gfx_ctx_instance_extension_available :: proc(extension_name: cstring) -> bool {
+ctx_instance_extension_available :: proc(extension_name: cstring) -> bool {
 	count: u32
 	if vk.EnumerateInstanceExtensionProperties(nil, &count, nil) != .SUCCESS {
 		return false
@@ -1033,26 +945,26 @@ ez_gfx_ctx_instance_extension_available :: proc(extension_name: cstring) -> bool
 		return false
 	}
 	for prop in properties[:count] {
-		if ez_gfx_ctx_cstring_equals_extension(prop.extensionName, extension_name) {
+		if ctx_cstring_equals_extension(prop.extensionName, extension_name) {
 			return true
 		}
 	}
 	return false
 }
 
-ez_gfx_ctx_debug_messenger_create_info :: proc(
+ctx_debug_messenger_create_info :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 ) -> vk.DebugUtilsMessengerCreateInfoEXT {
 	return vk.DebugUtilsMessengerCreateInfoEXT {
 		sType = .DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
 		messageSeverity = {.VERBOSE, .INFO, .WARNING, .ERROR},
 		messageType = {.GENERAL, .VALIDATION, .PERFORMANCE},
-		pfnUserCallback = ez_gfx_vulkan_debug_callback,
+		pfnUserCallback = vulkan_debug_callback,
 		pUserData = ctx,
 	}
 }
 
-ez_gfx_vulkan_debug_callback :: proc "system" (
+vulkan_debug_callback :: proc "system" (
 	message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
 	message_types: vk.DebugUtilsMessageTypeFlagsEXT,
 	callback_data: ^vk.DebugUtilsMessengerCallbackDataEXT,
@@ -1089,7 +1001,7 @@ ez_gfx_vulkan_debug_callback :: proc "system" (
 	return false
 }
 
-ez_gfx_debug_set_object_name :: proc(
+debug_set_object_name :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	object_type: vk.ObjectType,
 	object_handle: u64,
@@ -1115,7 +1027,7 @@ ez_gfx_debug_set_object_name :: proc(
 	_ = vk.SetDebugUtilsObjectNameEXT(ctx.device, &name_info)
 }
 
-ez_gfx_debug_set_indexed_name :: proc(
+debug_set_indexed_name :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	object_type: vk.ObjectType,
 	object_handle: u64,
@@ -1123,14 +1035,14 @@ ez_gfx_debug_set_indexed_name :: proc(
 	index: int,
 ) {
 	name: [96]byte
-	name_len := ez_gfx_debug_write_name_prefix(name[:], prefix)
-	name_len = ez_gfx_debug_append_u64(name[:], name_len, u64(index))
+	name_len := debug_write_name_prefix(name[:], prefix)
+	name_len = debug_append_u64(name[:], name_len, u64(index))
 	if name_len >= len(name) do return
 	name[name_len] = 0
-	ez_gfx_debug_set_object_name(ctx, object_type, object_handle, cstring(&name[0]))
+	debug_set_object_name(ctx, object_type, object_handle, cstring(&name[0]))
 }
 
-ez_gfx_debug_set_named_object :: proc(
+debug_set_named_object :: proc(
 	ctx: ^Ez_Gfx_Ctx,
 	object_type: vk.ObjectType,
 	object_handle: u64,
@@ -1139,17 +1051,17 @@ ez_gfx_debug_set_named_object :: proc(
 	name_len: int,
 ) {
 	name: [128]byte
-	offset := ez_gfx_debug_write_name_prefix(name[:], prefix)
+	offset := debug_write_name_prefix(name[:], prefix)
 	for i in 0 ..< name_len {
 		if offset + i >= len(name) - 1 do return
 		name[offset + i] = name_bytes[i]
 	}
 	offset += name_len
 	name[offset] = 0
-	ez_gfx_debug_set_object_name(ctx, object_type, object_handle, cstring(&name[0]))
+	debug_set_object_name(ctx, object_type, object_handle, cstring(&name[0]))
 }
 
-ez_gfx_debug_write_name_prefix :: proc(dst: []byte, prefix: string) -> int {
+debug_write_name_prefix :: proc(dst: []byte, prefix: string) -> int {
 	offset := 0
 	for i in 0 ..< len(prefix) {
 		if offset >= len(dst) - 1 do return offset
@@ -1163,7 +1075,7 @@ ez_gfx_debug_write_name_prefix :: proc(dst: []byte, prefix: string) -> int {
 	return offset
 }
 
-ez_gfx_debug_append_u64 :: proc(dst: []byte, offset: int, value: u64) -> int {
+debug_append_u64 :: proc(dst: []byte, offset: int, value: u64) -> int {
 	offset := offset
 	digits: [20]byte
 	count := 0
@@ -1186,37 +1098,37 @@ ez_gfx_debug_append_u64 :: proc(dst: []byte, offset: int, value: u64) -> int {
 	return offset
 }
 
-ez_gfx_ctx_name_device_objects :: proc(ctx: ^Ez_Gfx_Ctx) {
-	ez_gfx_debug_set_object_name(
+ctx_name_device_objects :: proc(ctx: ^Ez_Gfx_Ctx) {
+	debug_set_object_name(
 		ctx,
 		.INSTANCE,
-		ez_gfx_debug_handle(ctx.instance),
+		debug_handle(ctx.instance),
 		"ez_gfx instance",
 	)
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(
 		ctx,
 		.PHYSICAL_DEVICE,
-		ez_gfx_debug_handle(ctx.physical_device),
+		debug_handle(ctx.physical_device),
 		"ez_gfx physical device",
 	)
-	ez_gfx_debug_set_object_name(ctx, .DEVICE, ez_gfx_debug_handle(ctx.device), "ez_gfx device")
-	ez_gfx_debug_set_object_name(
+	debug_set_object_name(ctx, .DEVICE, debug_handle(ctx.device), "ez_gfx device")
+	debug_set_object_name(
 		ctx,
 		.QUEUE,
-		ez_gfx_debug_handle(ctx.graphics_queue),
+		debug_handle(ctx.graphics_queue),
 		"ez_gfx graphics queue",
 	)
 	if ctx.transfer_queue != ctx.graphics_queue {
-		ez_gfx_debug_set_object_name(
+		debug_set_object_name(
 			ctx,
 			.QUEUE,
-			ez_gfx_debug_handle(ctx.transfer_queue),
+			debug_handle(ctx.transfer_queue),
 			"ez_gfx transfer queue",
 		)
 	}
 }
 
-ez_gfx_debug_handle :: proc(handle: $T) -> u64 {
+debug_handle :: proc(handle: $T) -> u64 {
 	when T ==
 		vk.Instance || T == vk.PhysicalDevice || T == vk.Device || T == vk.Queue || T == vk.CommandBuffer {
 		return u64(uintptr(handle))
